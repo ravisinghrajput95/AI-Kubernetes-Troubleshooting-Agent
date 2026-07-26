@@ -14,6 +14,7 @@ from app.collectors.base import (
     ProgressReporter,
 )
 from app.collectors.kubernetes import build_default_collectors
+from app.core.config import settings
 from app.evidence.models import EvidenceKind
 from app.evidence.store import EvidenceStore
 from app.kubernetes.errors import friendly_error
@@ -93,6 +94,7 @@ class InvestigationService:
     ) -> None:
         self.max_playbook_rounds = max_playbook_rounds
         self.principal = principal
+        self.budget_max_items = settings.max_list_items
         self.context = context
         self.namespace = namespace
         self.resource_kind = resource_kind.lower() if resource_kind else None
@@ -115,9 +117,24 @@ class InvestigationService:
         store, rounds = await self._collect()
         investigation = self._build_view(store)
         investigation["playbook_rounds"] = rounds
+        investigation["collection_limits"] = self._collection_limits()
         investigation["timeline"] = self._timeline(store, started_at)
         investigation["executed_commands"] = self.kubectl.executed_commands
         return investigation
+
+    def _collection_limits(self) -> dict[str, Any]:
+        """Where the cluster was larger than this investigation looked.
+
+        A partial view is a legitimate outcome on a large cluster, but it has to
+        be visible: a diagnosis drawn from the first 2000 of 40000 pods is not
+        the same claim as one drawn from all of them.
+        """
+        truncations = list(self.kubectl.truncations)
+        return {
+            "max_list_items": self.budget_max_items,
+            "truncated": bool(truncations),
+            "reads": truncations,
+        }
 
     def _build_view(self, store: EvidenceStore) -> dict[str, Any]:
         """Assemble the investigation payload from collected evidence.

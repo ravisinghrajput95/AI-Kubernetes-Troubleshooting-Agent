@@ -2,8 +2,9 @@
 
 Findings from the 2026-07-26 engineering review, and their current state.
 
-**Do not deploy this against a production cluster until the P0 section is
-empty.** One P0 remains.
+**The P0 section is closed.** That makes a controlled pilot defensible; it does
+not make this a finished product — see P1, which still contains the items that
+decide whether it survives a real incident at scale.
 
 Scores at review time: architecture 7/10 · Kubernetes 5/10 · AI 6/10 ·
 security 3/10 · performance 5/10 · maintainability 6/10 · OSS 2/10 ·
@@ -13,18 +14,25 @@ enterprise 3/10.
 
 ## P0 — blocks any deployment
 
-### F13 · No authentication or authorization · **OPEN**
+### F13 · No authentication or authorization · **FIXED**
 
 Every endpoint is unauthenticated. The service holds a kubeconfig, so anyone who
 can reach the port has read access to everything that kubeconfig can reach, plus
 the full archive of previous investigations. CORS is not a security control — it
 constrains browsers, not `curl`.
 
-**Required:** OIDC bearer validation; **per-request Kubernetes impersonation** so
-the *user's* RBAC applies rather than the service account's; history scoped by
-owner; rate limiting.
-**Effort:** ~8 days. **Risk:** impersonation is correct but touches every kubectl
-call site.
+**Fixed by:** pluggable authentication (OIDC against the provider's JWKS, static
+tokens, or explicitly-acknowledged disabled), applied as a router-level
+dependency so a new endpoint is protected by default. **Per-request Kubernetes
+impersonation** means every cluster read runs as the calling user, so the
+cluster applies their RBAC rather than the service account's — authentication
+alone would decide *whether* you get in, not *what you can see*. History and
+jobs are owner-scoped, and denial returns 404 rather than 403 so it does not
+confirm an id exists.
+
+**Remaining (P1):** no rate limiting; no multi-tenancy beyond per-user
+ownership; `disabled` mode still ships as the default, so a careless deployment
+that sets `ALLOW_INSECURE_NO_AUTH` is unprotected.
 
 ### F14 · Prompt injection reached operator-facing commands · **FIXED**
 
@@ -87,7 +95,7 @@ Apache-2.0 added. Without it the work was legally unusable by any enterprise.
 | # | Finding | Effort |
 |---|---|---|
 | F17 | No audit logging (actor/action/target/outcome). Disqualifying for SOC2. | 2d |
-| F5 | Nine unbounded all-namespace reads, no pagination. Measured 10.7 MB stdout at 10k pods, run concurrently so peak is the sum. | 3d |
+| F5 | ~~Unbounded all-namespace reads~~ **partially fixed**: API-server paging via `--chunk-size`, retained items capped, truncation recorded as an evidence gap. Peak *parse* memory is still proportional to cluster size — kubectl assembles the whole list before writing it, so removing that ceiling needs a streaming client. | 3d done, 5d remaining |
 | F9 | Grounding validates provenance, not semantics — a response can cite correctly and assert the opposite. | 3d |
 | — | In-process job store: no HA, single worker mandated. | 3d |
 | — | No platform self-observability (metrics, traces). Ironic for an observability tool. | 3d |

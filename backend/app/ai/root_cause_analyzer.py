@@ -329,6 +329,14 @@ class RootCauseAnalyzer:
         if investigation.get("nodes", {}).get("error"):
             gaps.append("Node conditions could not be inspected.")
 
+        limits = investigation.get("collection_limits", {})
+        for read in limits.get("reads", []):
+            gaps.append(
+                f"Only {read.get('retained')} of {read.get('returned')} objects were "
+                f"examined for: {read.get('command', '')}. The cluster is larger than "
+                f"this investigation looked."
+            )
+
         for degraded in investigation.get("evidence_coverage", {}).get("degraded", []):
             detail = degraded.get("detail")
             if detail and detail not in gaps:

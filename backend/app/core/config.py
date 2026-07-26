@@ -18,6 +18,16 @@ class Settings(BaseSettings):
     kubectl_timeout_seconds: int = 30
     llm_timeout_seconds: int = 45
 
+    # --- Collection limits --------------------------------------------------
+    # Page size the API server serves list requests in. Lower values reduce
+    # apiserver and etcd memory pressure on large clusters at the cost of more
+    # round trips.
+    kubectl_chunk_size: int = Field(default=500, validation_alias="KUBECTL_CHUNK_SIZE")
+    # Hard cap on list items retained from any single read. A cluster with more
+    # objects than this is investigated from a partial view, and the truncation
+    # is recorded as evidence rather than applied silently.
+    max_list_items: int = Field(default=2000, validation_alias="MAX_LIST_ITEMS")
+
     # Optional observability backends. Empty means "not deployed": the
     # collectors record unavailable evidence rather than failing, so an
     # investigation degrades instead of breaking.
