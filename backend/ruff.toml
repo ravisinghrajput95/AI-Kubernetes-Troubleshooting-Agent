@@ -1,0 +1,21 @@
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # import sorting
+    "B",         # bugbear
+    "UP",        # pyupgrade
+    "SIM",       # simplify
+    "C4",        # comprehensions
+    "RUF",       # ruff-specific
+]
+ignore = [
+    "E501",      # line length is handled by the formatter, not enforced hard
+    "B008",      # FastAPI Depends() in defaults is the framework idiom
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["B011"]

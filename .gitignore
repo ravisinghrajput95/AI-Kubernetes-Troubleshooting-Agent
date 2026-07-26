@@ -54,7 +54,6 @@ docs.pkl
 # UPLOADS / EXTRACTED REPOS
 # =========================================================
 
-docs/
 # =========================================================
 # BUILD / DIST
 # =========================================================
@@ -120,3 +119,5 @@ node_modules/
 # =========================================================
 
 *.zip
+# Local Claude Code permissions (per-developer, not shared)
+.claude/settings.local.json
