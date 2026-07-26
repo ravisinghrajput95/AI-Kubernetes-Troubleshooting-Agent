@@ -22,6 +22,7 @@ from app.playbooks.kubernetes import (
 )
 from app.playbooks.orchestrator import InvestigationOrchestrator
 from app.playbooks.registry import PlaybookRegistry
+from app.providers.local_kubectl import LocalKubectlProvider
 
 
 def pod_signal(signal_type, name="web-0", namespace="prod", severity=Severity.CRITICAL):
@@ -196,7 +197,7 @@ class StubEngine(AnalysisEngine):
 def make_context(budget=None):
     return CollectionContext(
         scope=InvestigationScope(context="test"),
-        kubectl=None,
+        provider=LocalKubectlProvider(context="test"),
         budget=budget or CollectionBudget(),
     )
 

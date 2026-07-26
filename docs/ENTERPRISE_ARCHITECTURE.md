@@ -517,11 +517,20 @@ the redaction corpus already exists and is the right shape for this.
 Nine milestones. Each compiles, deploys, passes CI, and is independently
 revertible. No milestone requires the next.
 
-**M1 — Provider abstraction (no behaviour change).**
+**M1 — Provider abstraction (no behaviour change). ✅ Delivered.**
 Introduce `ClusterProvider`; implement `LocalKubectlProvider` wrapping today's
 executor; replace `CollectionContext.kubectl` with `CollectionContext.provider`.
 Because the reasoning stack has zero Kubernetes imports, the blast radius is the
 collector layer only. *Exit:* all 438 tests pass unchanged; behaviour identical.
+
+*Outcome:* the prediction held — the abstraction was a substitution at one field,
+not a refactor. Every targeted collector plus `RawNodesCollector` and
+`ResourceMetricsCollector` now issue `ResourceRequest`s; the eleven commands they
+produce are byte-identical to the ones they replaced and are pinned as a
+translation table in `tests/test_providers.py` (mutation-tested: dropping `-n`,
+`-A` or `--all-containers` each fails the suite). 438 → 461 tests, evals
+unchanged at 10/10 and 11/11. The remaining `raw_executor()` users are
+`LegacyInspectorCollector` and the nine inspectors, which M6 migrates.
 
 **M2 — Evidence as a wire contract.**
 Define `/proto/`; generate Python; assert protobuf ↔ `Evidence` round-trips

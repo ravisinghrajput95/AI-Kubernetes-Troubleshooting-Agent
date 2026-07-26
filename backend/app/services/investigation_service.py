@@ -18,10 +18,10 @@ from app.core.config import settings
 from app.evidence.models import EvidenceKind
 from app.evidence.store import EvidenceStore
 from app.kubernetes.errors import friendly_error
-from app.kubernetes.kubectl_executor import KubectlExecutor
 from app.playbooks.kubernetes import DEFAULT_PLAYBOOKS
 from app.playbooks.orchestrator import DEFAULT_MAX_ROUNDS, InvestigationOrchestrator
 from app.playbooks.registry import PlaybookRegistry
+from app.providers.local_kubectl import LocalKubectlProvider
 
 # Evidence kinds already surfaced through a named investigation section.
 BASELINE_KINDS = frozenset(
@@ -102,7 +102,9 @@ class InvestigationService:
         self.budget = budget or CollectionBudget()
         self.reporter = reporter or NullProgressReporter()
         # Every cluster read runs as the calling user when impersonation is on.
-        self.kubectl = KubectlExecutor(context=context, principal=principal)
+        # The engine reaches the cluster only through the provider; the executor
+        # is exposed for collectors not yet migrated to ResourceRequest.
+        self.provider = LocalKubectlProvider(context=context, principal=principal)
         self.scope = InvestigationScope(
             context=context,
             namespace=namespace,
@@ -121,6 +123,11 @@ class InvestigationService:
         investigation["timeline"] = self._timeline(store, started_at)
         investigation["executed_commands"] = self.kubectl.executed_commands
         return investigation
+
+    @property
+    def kubectl(self):
+        """Executor behind the provider, for the audit trail and legacy collectors."""
+        return self.provider.raw_executor()
 
     def _collection_limits(self) -> dict[str, Any]:
         """Where the cluster was larger than this investigation looked.
@@ -185,7 +192,7 @@ class InvestigationService:
     async def _collect(self) -> tuple[EvidenceStore, list[dict[str, Any]]]:
         context = CollectionContext(
             scope=self.scope,
-            kubectl=self.kubectl,
+            provider=self.provider,
             budget=self.budget,
             reporter=self.reporter,
         )

@@ -9,6 +9,7 @@ from app.collectors.base import (
 from app.collectors.registry import CollectorRegistry
 from app.collectors.scheduler import CollectionScheduler
 from app.evidence.models import Evidence, EvidenceStatus
+from app.providers.local_kubectl import LocalKubectlProvider
 
 
 class RecordingCollector(BaseCollector):
@@ -41,7 +42,7 @@ class RecordingCollector(BaseCollector):
 def make_context(budget=None):
     return CollectionContext(
         scope=InvestigationScope(context="test-cluster"),
-        kubectl=None,
+        provider=LocalKubectlProvider(context="test"),
         budget=budget or CollectionBudget(),
     )
 

@@ -7,6 +7,7 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 from app.evidence.models import Evidence, ResourceRef
 from app.evidence.store import EvidenceStore
 from app.kubernetes.kubectl_executor import KubectlExecutor
+from app.providers.base import ClusterProvider, ProviderResult, ResourceRequest
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,11 +66,25 @@ class CollectionContext:
     """Everything a collector needs, and nothing more."""
 
     scope: InvestigationScope
-    kubectl: KubectlExecutor
+    provider: ClusterProvider
     store: EvidenceStore = field(default_factory=EvidenceStore)
     budget: CollectionBudget = field(default_factory=CollectionBudget)
     reporter: ProgressReporter = field(default_factory=NullProgressReporter)
     started_at: float = field(default_factory=time.monotonic)
+
+    @property
+    def kubectl(self) -> KubectlExecutor:
+        """Direct executor, for collectors not yet on `ResourceRequest`.
+
+        Migration seam, not the intended interface. Remote providers raise
+        `ProviderUnsupported`, so an unmigrated collector fails loudly against a
+        fleet rather than appearing to work in development.
+        """
+        return self.provider.raw_executor()
+
+    async def fetch(self, request: ResourceRequest) -> ProviderResult:
+        """Fetch evidence declaratively. The interface collectors should use."""
+        return await self.provider.fetch(request)
 
     def report(self, message: str, **data: Any) -> None:
         self.reporter.report(message, **data)

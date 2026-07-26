@@ -9,6 +9,7 @@ from app.collectors.base import CollectionContext, InvestigationScope
 from app.collectors.registry import CollectorRegistry
 from app.collectors.scheduler import CollectionScheduler
 from app.evidence.models import Evidence, EvidenceStatus
+from app.providers.local_kubectl import LocalKubectlProvider
 from tests.test_collection_scheduler import RecordingCollector
 
 
@@ -25,7 +26,10 @@ async def collect_payload(payload):
         ]
 
     collector = RecordingCollector("secretive", "k.secret", behaviour=behaviour)
-    context = CollectionContext(scope=InvestigationScope(context="test"), kubectl=None)
+    context = CollectionContext(
+        scope=InvestigationScope(context="test"),
+        provider=LocalKubectlProvider(context="test"),
+    )
     store = await CollectionScheduler(CollectorRegistry([collector])).run(context)
     return store.data("k.secret"), store.first("k.secret")
 

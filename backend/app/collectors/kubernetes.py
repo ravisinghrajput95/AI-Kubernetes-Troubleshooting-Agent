@@ -22,6 +22,7 @@ from app.kubernetes.node_inspector import NodeInspector
 from app.kubernetes.pod_inspector import PodInspector
 from app.kubernetes.storage_inspector import StorageInspector
 from app.kubernetes.workload_inspector import WorkloadInspector
+from app.providers.base import OutputFormat, ProviderResult, ReadVerb, ResourceRequest
 
 InspectFn = Callable[[CollectionContext], dict[str, Any]]
 
@@ -85,18 +86,17 @@ class RawNodesCollector(BaseCollector):
     provides = frozenset({EvidenceKind.NODES_RAW})
 
     async def collect(self, context: CollectionContext) -> Sequence[Evidence]:
-        args = ["get", "nodes", "-o", "json"]
-        result = await asyncio.to_thread(context.kubectl.run, args, True)
+        result = await context.fetch(ResourceRequest(verb=ReadVerb.GET, resource="nodes"))
 
         if not result.success or not isinstance(result.data, dict):
-            status, detail = classify_error(result.stderr)
+            status, detail = classify_error(result.error)
             return [
                 Evidence.create(
                     kind=EvidenceKind.NODES_RAW,
                     status=status,
                     target=context.scope.cluster_ref,
                     detail=detail,
-                    command=" ".join(result.command),
+                    command=result.equivalent_command,
                     collector_id=self.id,
                 )
             ]
@@ -108,7 +108,7 @@ class RawNodesCollector(BaseCollector):
                 status=EvidenceStatus.OK if items else EvidenceStatus.EMPTY,
                 target=context.scope.cluster_ref,
                 data={"items": items},
-                command=" ".join(result.command),
+                command=result.equivalent_command,
                 collector_id=self.id,
             )
         ]
@@ -127,9 +127,16 @@ class ResourceMetricsCollector(BaseCollector):
     provides = frozenset({EvidenceKind.METRICS_NODES, EvidenceKind.METRICS_PODS})
 
     async def collect(self, context: CollectionContext) -> Sequence[Evidence]:
-        node_result, pod_result = await asyncio.gather(
-            asyncio.to_thread(context.kubectl.run, ["top", "nodes", "--no-headers"], False),
-            asyncio.to_thread(context.kubectl.run, ["top", "pods", "-A", "--no-headers"], False),
+        node_result, pod_result = await context.provider.fetch_many(
+            [
+                ResourceRequest(verb=ReadVerb.TOP, resource="nodes", output=OutputFormat.TEXT),
+                ResourceRequest(
+                    verb=ReadVerb.TOP,
+                    resource="pods",
+                    all_namespaces=True,
+                    output=OutputFormat.TEXT,
+                ),
+            ]
         )
 
         return [
@@ -137,24 +144,24 @@ class ResourceMetricsCollector(BaseCollector):
             self._evidence(EvidenceKind.METRICS_PODS, pod_result, context),
         ]
 
-    def _evidence(self, kind: str, result: Any, context: CollectionContext) -> Evidence:
+    def _evidence(self, kind: str, result: ProviderResult, context: CollectionContext) -> Evidence:
         if not result.success:
             return Evidence.create(
                 kind=kind,
                 status=EvidenceStatus.UNAVAILABLE,
                 target=context.scope.cluster_ref,
                 detail="metrics-server is unavailable or kubectl top is not permitted.",
-                command=" ".join(result.command),
+                command=result.equivalent_command,
                 collector_id=self.id,
             )
 
-        lines = [line for line in result.stdout.splitlines() if line.strip()]
+        lines = [line for line in result.text.splitlines() if line.strip()]
         return Evidence.create(
             kind=kind,
             status=EvidenceStatus.OK if lines else EvidenceStatus.EMPTY,
             target=context.scope.cluster_ref,
             data={"lines": lines},
-            command=" ".join(result.command),
+            command=result.equivalent_command,
             collector_id=self.id,
         )
 

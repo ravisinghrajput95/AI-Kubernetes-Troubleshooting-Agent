@@ -24,6 +24,7 @@ from app.evidence.models import (
     ResourceRef,
 )
 from app.kubernetes.errors import classify_error
+from app.providers.base import OutputFormat, ProviderResult, ReadVerb, ResourceRequest
 
 
 class TargetedCollector(BaseCollector):
@@ -58,13 +59,25 @@ class TargetedCollector(BaseCollector):
             collector_id=self.id,
         )
 
-    async def _run(self, context: CollectionContext, args: list[str], parse_json: bool = True):
-        return await asyncio.to_thread(context.kubectl.run, args, parse_json)
+    async def _fetch(self, context: CollectionContext, request: ResourceRequest) -> ProviderResult:
+        """Describe the evidence needed; the provider decides how to obtain it."""
+        return await context.fetch(request)
 
-    def _namespaced(self, args: list[str]) -> list[str]:
-        if self.target.namespace:
-            args.extend(["-n", self.target.namespace])
-        return args
+    def _get(
+        self,
+        resource: str,
+        *,
+        name: str | None = None,
+        namespaced: bool = True,
+        **kwargs,
+    ) -> ResourceRequest:
+        return ResourceRequest(
+            verb=ReadVerb.GET,
+            resource=resource,
+            name=name,
+            namespace=self.target.namespace if namespaced else None,
+            **kwargs,
+        )
 
 
 def _probe_summary(container: dict[str, Any]) -> dict[str, Any]:
@@ -158,13 +171,12 @@ class PodSpecCollector(TargetedCollector):
     label = "Inspected Pod Specification"
 
     async def collect(self, context: CollectionContext) -> Sequence[Evidence]:
-        args = self._namespaced(["get", "pod", self.target.name, "-o", "json"])
-        result = await self._run(context, args)
+        result = await self._fetch(context, self._get("pod", name=self.target.name))
 
         if not result.success or not isinstance(result.data, dict):
-            status, detail = classify_error(result.stderr)
+            status, detail = classify_error(result.error)
             return [
-                self._evidence(context, status, detail=detail, command=" ".join(result.command))
+                self._evidence(context, status, detail=detail, command=result.equivalent_command)
             ]
 
         return [
@@ -172,7 +184,7 @@ class PodSpecCollector(TargetedCollector):
                 context,
                 EvidenceStatus.OK,
                 data=self._summarize(result.data),
-                command=" ".join(result.command),
+                command=result.equivalent_command,
             )
         ]
 
@@ -289,16 +301,22 @@ class PodPreviousLogsCollector(TargetedCollector):
     label = "Read Previous Container Logs"
 
     async def collect(self, context: CollectionContext) -> Sequence[Evidence]:
-        args = self._namespaced(
-            ["logs", self.target.name, "--previous", "--tail=200", "--all-containers=true"]
+        result = await self._fetch(
+            context,
+            ResourceRequest(
+                verb=ReadVerb.LOGS,
+                name=self.target.name,
+                namespace=self.target.namespace,
+                output=OutputFormat.TEXT,
+                options={"previous": True, "tail": 200, "all_containers": True},
+            ),
         )
-        result = await self._run(context, args, parse_json=False)
-        command = " ".join(result.command)
+        command = result.equivalent_command
 
         if not result.success:
             # A pod that has never restarted has no previous instance; that is a
             # normal answer, not a failure of the platform.
-            lowered = result.stderr.lower()
+            lowered = result.error.lower()
             if "not found" in lowered or "previous terminated" in lowered:
                 return [
                     self._evidence(
@@ -309,10 +327,10 @@ class PodPreviousLogsCollector(TargetedCollector):
                         command=command,
                     )
                 ]
-            status, detail = classify_error(result.stderr)
+            status, detail = classify_error(result.error)
             return [self._evidence(context, status, detail=detail, command=command)]
 
-        lines = [line[:500] for line in result.stdout.splitlines() if line.strip()]
+        lines = [line[:500] for line in result.text.splitlines() if line.strip()]
         return [
             self._evidence(
                 context,
@@ -331,21 +349,18 @@ class ResourceEventsCollector(TargetedCollector):
     label = "Read Resource Events"
 
     async def collect(self, context: CollectionContext) -> Sequence[Evidence]:
-        args = self._namespaced(
-            [
-                "get",
+        result = await self._fetch(
+            context,
+            self._get(
                 "events",
-                f"--field-selector=involvedObject.name={self.target.name}",
-                "-o",
-                "json",
-            ]
+                field_selector=f"involvedObject.name={self.target.name}",
+            ),
         )
-        result = await self._run(context, args)
 
         if not result.success or not isinstance(result.data, dict):
-            status, detail = classify_error(result.stderr)
+            status, detail = classify_error(result.error)
             return [
-                self._evidence(context, status, detail=detail, command=" ".join(result.command))
+                self._evidence(context, status, detail=detail, command=result.equivalent_command)
             ]
 
         events = [
@@ -364,7 +379,7 @@ class ResourceEventsCollector(TargetedCollector):
                 context,
                 EvidenceStatus.OK if events else EvidenceStatus.EMPTY,
                 data={"events": events[:30]},
-                command=" ".join(result.command),
+                command=result.equivalent_command,
             )
         ]
 
@@ -466,13 +481,12 @@ class ConfigReferenceCollector(TargetedCollector):
         context: CollectionContext,
         name: str,
     ) -> tuple[list[str], bool, str]:
-        args = self._namespaced(["get", "configmap", name, "-o", "json"])
-        result = await self._run(context, args)
+        result = await self._fetch(context, self._get("configmap", name=name))
 
         if not result.success or not isinstance(result.data, dict):
-            if "not found" in result.stderr.lower():
+            if "not found" in result.error.lower():
                 return [], False, "ConfigMap does not exist."
-            return [], False, classify_error(result.stderr)[1]
+            return [], False, classify_error(result.error)[1]
 
         # Key names only; ConfigMap values can carry connection strings.
         keys = sorted(result.data.get("data", {}))
@@ -485,15 +499,23 @@ class ConfigReferenceCollector(TargetedCollector):
         name: str,
     ) -> tuple[list[str], bool, str]:
         # `describe` never prints secret values, so no value ever enters memory.
-        args = self._namespaced(["describe", "secret", name])
-        result = await self._run(context, args, parse_json=False)
+        result = await self._fetch(
+            context,
+            ResourceRequest(
+                verb=ReadVerb.DESCRIBE,
+                resource="secret",
+                name=name,
+                namespace=self.target.namespace,
+                output=OutputFormat.TEXT,
+            ),
+        )
 
         if not result.success:
-            if "not found" in result.stderr.lower():
+            if "not found" in result.error.lower():
                 return [], False, "Secret does not exist."
-            return [], False, classify_error(result.stderr)[1]
+            return [], False, classify_error(result.error)[1]
 
-        return self._parse_described_keys(result.stdout), True, ""
+        return self._parse_described_keys(result.text), True, ""
 
     def _parse_described_keys(self, output: str) -> list[str]:
         keys = []
@@ -517,18 +539,14 @@ class NamespacedListCollector(TargetedCollector):
     resource: str = ""
 
     async def collect(self, context: CollectionContext) -> Sequence[Evidence]:
-        args = ["get", self.resource]
-        if self.target.namespace:
-            args.extend(["-n", self.target.namespace])
-        else:
-            args.append("-A")
-        args.extend(["-o", "json"])
-
-        result = await self._run(context, args)
+        result = await self._fetch(
+            context,
+            self._get(self.resource, all_namespaces=not self.target.namespace),
+        )
         if not result.success or not isinstance(result.data, dict):
-            status, detail = classify_error(result.stderr)
+            status, detail = classify_error(result.error)
             return [
-                self._evidence(context, status, detail=detail, command=" ".join(result.command))
+                self._evidence(context, status, detail=detail, command=result.equivalent_command)
             ]
 
         items = [self.summarize(item) for item in result.data.get("items", [])]
@@ -537,7 +555,7 @@ class NamespacedListCollector(TargetedCollector):
                 context,
                 EvidenceStatus.OK if items else EvidenceStatus.EMPTY,
                 data={"items": items},
-                command=" ".join(result.command),
+                command=result.equivalent_command,
             )
         ]
 
@@ -685,15 +703,20 @@ class DnsWorkloadCollector(TargetedCollector):
     label = "Checked Cluster DNS"
 
     async def collect(self, context: CollectionContext) -> Sequence[Evidence]:
-        result = await self._run(
+        result = await self._fetch(
             context,
-            ["get", "pods", "-n", "kube-system", "-l", "k8s-app=kube-dns", "-o", "json"],
+            ResourceRequest(
+                verb=ReadVerb.GET,
+                resource="pods",
+                namespace="kube-system",
+                label_selector="k8s-app=kube-dns",
+            ),
         )
 
         if not result.success or not isinstance(result.data, dict):
-            status, detail = classify_error(result.stderr)
+            status, detail = classify_error(result.error)
             return [
-                self._evidence(context, status, detail=detail, command=" ".join(result.command))
+                self._evidence(context, status, detail=detail, command=result.equivalent_command)
             ]
 
         pods = [
@@ -718,7 +741,7 @@ class DnsWorkloadCollector(TargetedCollector):
                 EvidenceStatus.OK if pods else EvidenceStatus.EMPTY,
                 data={"pods": pods, "ready_count": sum(1 for pod in pods if pod["ready"])},
                 detail="" if pods else "No CoreDNS pods matched k8s-app=kube-dns.",
-                command=" ".join(result.command),
+                command=result.equivalent_command,
             )
         ]
 
@@ -731,13 +754,12 @@ class ServiceAccountCollector(TargetedCollector):
     label = "Checked Service Account"
 
     async def collect(self, context: CollectionContext) -> Sequence[Evidence]:
-        args = self._namespaced(["get", "serviceaccount", self.target.name, "-o", "json"])
-        result = await self._run(context, args)
+        result = await self._fetch(context, self._get("serviceaccount", name=self.target.name))
 
         if not result.success or not isinstance(result.data, dict):
-            status, detail = classify_error(result.stderr)
+            status, detail = classify_error(result.error)
             return [
-                self._evidence(context, status, detail=detail, command=" ".join(result.command))
+                self._evidence(context, status, detail=detail, command=result.equivalent_command)
             ]
 
         return [
@@ -750,6 +772,6 @@ class ServiceAccountCollector(TargetedCollector):
                         item.get("name", "") for item in result.data.get("imagePullSecrets", [])
                     ],
                 },
-                command=" ".join(result.command),
+                command=result.equivalent_command,
             )
         ]

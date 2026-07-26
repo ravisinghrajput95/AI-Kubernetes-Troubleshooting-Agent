@@ -18,6 +18,7 @@ from app.collectors.observability import (
 from app.evidence.models import EvidenceStatus, ResourceRef
 from app.integrations.loki import LokiClient
 from app.integrations.prometheus import PrometheusClient
+from app.providers.local_kubectl import LocalKubectlProvider
 
 POD = ResourceRef(kind="Pod", name="web-0", namespace="prod")
 NODE = ResourceRef(kind="Node", name="node-1")
@@ -156,7 +157,10 @@ class TestLokiClient:
 
 
 def context():
-    return CollectionContext(scope=InvestigationScope(context="test"), kubectl=None)
+    return CollectionContext(
+        scope=InvestigationScope(context="test"),
+        provider=LocalKubectlProvider(context="test"),
+    )
 
 
 class TestCollectors:

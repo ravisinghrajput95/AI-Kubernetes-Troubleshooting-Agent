@@ -110,6 +110,14 @@ Testing note: `TestClient` must be used as a context manager (`with TestClient(a
 
 Every collected fact is an `Evidence` record with a **deterministic id** (`kind:target.key`), a `status`, and its originating command. This is the citation spine: conclusions reference evidence ids rather than copying payloads. `EvidenceStatus.usable` covers `OK` and `EMPTY`; everything else (`UNAVAILABLE`, `FORBIDDEN`, `TIMEOUT`, `NOT_APPLICABLE`, `FAILED`) records *why* a fact is missing, so a degraded backend becomes citable data instead of an exception. `EvidenceStore.coverage()` reports completeness and is the intended input for evidence-completeness confidence scoring.
 
+### Cluster access (`app/providers/`)
+
+`ClusterProvider` is the engine's **only** route to a cluster, reached through `CollectionContext.provider` / `context.fetch(request)`. A collector describes *what* evidence it needs as a `ResourceRequest`; the provider decides *how* to obtain it. `LocalKubectlProvider.to_args()` is the single place `ResourceRequest` → argv exists — a remote-agent provider replaces that translation and nothing above it changes. See `docs/ENTERPRISE_ARCHITECTURE.md` ADR-003.
+
+`ReadVerb` is a **closed enum** (`get`/`describe`/`logs`/`top`/`config`) and `ResourceRequest` has no field that can carry a command, a flag string, or a shell fragment. That is the security property, not a validation step: a hostile value lands as one argv element and can never become the verb. It is what makes it safe to send a request to a remote agent. `tests/test_providers.py` pins both the translation table and this property.
+
+`CollectionContext.kubectl` remains as a delegating property (`provider.raw_executor()`) for collectors not yet migrated — `LegacyInspectorCollector` and the nine inspectors still take a `KubectlExecutor`. **`raw_executor()` is deliberately absent from the `ClusterProvider` protocol**, so an unmigrated collector fails loudly against a remote cluster rather than appearing to work because development happens to run locally. All of `app/collectors/targeted.py`, `RawNodesCollector` and `ResourceMetricsCollector` are on the seam.
+
 ### Collection (`app/collectors/`)
 
 Collectors declare `provides` / `requires` / `optional_requires`; `CollectorRegistry.resolve()` topologically sorts them into waves. `requires` must have a registered provider (a missing one raises `CollectorGraphError` at resolve time); `optional_requires` only affects ordering when a provider exists, which is how optional backends like Prometheus stay absent without breaking the graph.
@@ -126,7 +134,7 @@ The nine existing inspectors are **adapted, not rewritten** (`app/collectors/kub
 
 Constructor takes the shared `KubectlExecutor`; `inspect()` returns a plain dict, returning `{"error": <stderr>, ...}` on kubectl failure rather than raising. Findings-producing inspectors return a `findings` list; pods return `problematic_pods` + `pod_inventory`; deployments return `unhealthy_deployments`. Severity, health, and overview logic count exactly those keys, so **a new inspector still needs wiring into `_health_summary` and `_severity_summary`** or its findings are ignored. (Collapsing that into the evidence layer is the natural next refactor.)
 
-All cluster access is **read-only by construction**: `KubectlExecutor.run()` calls `assert_read_only()` from `app/kubernetes/command_policy.py`, which allowlists verbs and sub-verbs. A mutating command raises `UnsafeKubectlCommand`, which the scheduler's fault boundary records as failed evidence. `executed_commands` is guarded by a lock because collectors run in worker threads.
+All cluster access is **read-only by construction**, now at two layers: `ReadVerb` cannot express a mutation, and `KubectlExecutor.run()` calls `assert_read_only()` from `app/kubernetes/command_policy.py`, which allowlists verbs and sub-verbs. A mutating command raises `UnsafeKubectlCommand`, which the scheduler's fault boundary records as failed evidence. `executed_commands` is guarded by a lock because collectors run in worker threads.
 
 `InvestigationService` derives the rest from the store: `metrics` (parses `kubectl top` lines), `security`, `topology`, `timeline`, plus the additive `evidence` (citation index) and `evidence_coverage` keys.
 

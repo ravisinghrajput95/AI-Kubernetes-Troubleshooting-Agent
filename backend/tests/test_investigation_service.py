@@ -7,6 +7,7 @@ every built-in collector issues commands permitted by the read-only policy.
 import json
 
 from app.kubernetes.kubectl_executor import KubectlExecutor, KubectlResult
+from app.providers.local_kubectl import LocalKubectlProvider
 from app.services.investigation_service import InvestigationService
 
 LEAKED_PASSWORD = "hunter2"
@@ -213,8 +214,13 @@ class FakeKubectl(KubectlExecutor):
 
 
 def build_service(kubectl: FakeKubectl) -> InvestigationService:
+    """Inject the fake cluster at the provider seam.
+
+    The engine reaches a cluster only through a provider, so tests substitute
+    one rather than reaching past it.
+    """
     service = InvestigationService(context="test-cluster")
-    service.kubectl = kubectl
+    service.provider = LocalKubectlProvider(executor=kubectl)
     return service
 
 
