@@ -103,6 +103,7 @@ kubectl ─► Evidence ─► Signals ─► Hypotheses ─┬─► Playbooks 
 | Console | Panels for signals, hypotheses, evidence, remediation | [SRE_CONSOLE](docs/SRE_CONSOLE.md) |
 | Reports | One composition rendered as PDF, Markdown, JSON | [INCIDENT_REPORTS](docs/INCIDENT_REPORTS.md) |
 | Evaluation | Golden corpus gating reasoning quality in CI | [EVALUATION](docs/EVALUATION.md) |
+| **Enterprise** | **Proposed fleet architecture: agents, tenancy, scale** | [ENTERPRISE_ARCHITECTURE](docs/ENTERPRISE_ARCHITECTURE.md) |
 
 ### Failure classes it investigates deeply
 
