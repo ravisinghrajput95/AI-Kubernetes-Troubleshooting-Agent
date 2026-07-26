@@ -180,7 +180,7 @@ The platform deliberately refuses to generate secret values, a memory limit when
 
 **Commands are never taken from the model.** `_normalize()` uses the deterministic command set regardless of what the model returns, and every surfaced command passes `classify_command()` — unrecognised strings are dropped, mutating ones labelled. This closes a verified injection chain: hostile pod-log text reached the prompt and produced `kubectl delete ns kube-system` as an operator-facing recommendation. The read-only executor does *not* mitigate that, because the human is the execution path. Regression tests: `tests/test_prompt_injection.py`.
 
-`GroundingValidator` (`app/analysis/grounding.py`) enforces **citation integrity** — not semantic correctness. It guarantees every citation resolves to a real signal; it does **not** check that the prose agrees with the evidence. A response citing a real signal while asserting the opposite is accepted (verified). Do not describe this as a no-hallucination guarantee. The checks are:
+`GroundingValidator` (`app/analysis/grounding.py`) enforces **citation integrity** *and* **semantic consistency**. Citation checks:
 
 - A fabricated hypothesis id **rejects** the response.
 - Fabricated signal ids are **stripped** and recorded in `grounding.rejected_citations`; if signals existed and none of the model's citations survive, the response is **rejected**.
@@ -189,7 +189,15 @@ The platform deliberately refuses to generate secret values, a memory limit when
 
 A rejected response falls back to the deterministic ranking. Do not weaken this to "log a warning and use it anyway" — the tests in `tests/test_grounding.py` and the two `*_is_discarded` tests in `tests/test_root_cause_analyzer.py` exist to catch that.
 
-`root_cause`, `explanation`, `fix` and `prevention` remain model-authored prose and are therefore still influenceable by injected cluster text. That is tracked as F9 in `docs/PRODUCTION_READINESS.md`; the command path is closed, the prose path is not.
+Semantic checks then reject prose that misrepresents what it cites — citation integrity alone let a response cite a genuine CrashLoopBackOff while concluding "resolved, no action needed":
+
+- **Contradiction**: reassurance language ("no action needed", "appears healthy") over CRITICAL/HIGH signals. The same wording passes on a genuinely healthy cluster, where there are no severe signals to contradict.
+- **Citation relevance**: at least one cited signal must be one the selected hypothesis actually rests on. Citing real but unrelated signals explains nothing.
+- **Invented resources**: `namespace/name` references appearing in no evidence. The regex is case-sensitive and excludes paths, so `512Mi/1Gi` and `/healthz` are not mistaken for resources.
+
+These are deterministic — a second model call would add latency and cost per investigation and would itself need grounding. Matching is deliberately lenient: **an over-strict check does not fail loudly, it silently routes every investigation to the fallback**, so `TestGenuineDiagnosesStillPass` and the false-positive cases in `tests/test_semantic_grounding.py` guard the fallback rate and must not be weakened.
+
+`fix` and `prevention` remain model-authored prose. Commands never are.
 
 Confidence is composed, not asserted (`app/analysis/confidence.py`): evidence strength / AI confidence / evidence completeness at 0.5·0.3·0.2 on the grounded path, 0.7·0.3 (capped 95) on the deterministic one. `confidence_breakdown` exposes each component's weight and contribution.
 

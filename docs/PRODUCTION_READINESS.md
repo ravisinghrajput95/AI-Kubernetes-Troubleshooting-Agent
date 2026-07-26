@@ -76,6 +76,23 @@ re-scrubbed. `PromptBuilder` re-runs the redactor so the model is covered, but
 the API response and reports are not. Add a redaction pass at the persistence
 boundary as defence in depth.
 
+### F9 · Grounding validated provenance, not semantics · **FIXED**
+
+A response could cite a genuine CrashLoopBackOff signal and still conclude
+"Resolved - no action needed"; every id resolved, so it was accepted.
+
+**Fixed by** three deterministic checks on top of citation integrity:
+contradiction (reassurance language over severe signals), citation relevance (a
+citation must support the selected hypothesis), and invented resources
+(`namespace/name` references appearing in no evidence).
+
+Deliberately lenient, because an over-strict check does not fail loudly — it
+silently sends every investigation to the fallback. False-positive tests guard
+the fallback rate alongside the rejection tests.
+
+**Remaining:** `fix` and `prevention` are still model-authored prose. Commands
+never are.
+
 ### F16 · Path traversal in report id handling · **FIXED**
 
 Ids were interpolated into filesystem paths unchecked. **Not reachable over
@@ -96,7 +113,6 @@ Apache-2.0 added. Without it the work was legally unusable by any enterprise.
 |---|---|---|
 | F17 | No audit logging (actor/action/target/outcome). Disqualifying for SOC2. | 2d |
 | F5 | ~~Unbounded all-namespace reads~~ **partially fixed**: API-server paging via `--chunk-size`, retained items capped, truncation recorded as an evidence gap. Peak *parse* memory is still proportional to cluster size — kubectl assembles the whole list before writing it, so removing that ceiling needs a streaming client. | 3d done, 5d remaining |
-| F9 | Grounding validates provenance, not semantics — a response can cite correctly and assert the opposite. | 3d |
 | — | In-process job store: no HA, single worker mandated. | 3d |
 | — | No platform self-observability (metrics, traces). Ironic for an observability tool. | 3d |
 | F11 | No LLM eval harness — prompt changes are unmeasurable. No provider abstraction. | 5d |
