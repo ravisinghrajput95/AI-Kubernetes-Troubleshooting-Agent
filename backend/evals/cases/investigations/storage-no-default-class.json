@@ -1,0 +1,97 @@
+{
+  "id": "storage-no-default-class",
+  "description": "A claim cannot bind because the cluster has no default StorageClass.",
+  "investigation": {
+    "context": "prod-east",
+    "health": {
+      "status": "issues_found"
+    },
+    "severity": {
+      "severity": "Critical"
+    },
+    "evidence": [
+      {
+        "id": "k8s.pods:cluster/_cluster/prod-east",
+        "kind": "k8s.pods"
+      },
+      {
+        "id": "k8s.pods.logs:cluster/_cluster/prod-east",
+        "kind": "k8s.pods.logs"
+      },
+      {
+        "id": "k8s.events:cluster/_cluster/prod-east",
+        "kind": "k8s.events"
+      },
+      {
+        "id": "k8s.deployments:cluster/_cluster/prod-east",
+        "kind": "k8s.deployments"
+      },
+      {
+        "id": "k8s.network:cluster/_cluster/prod-east",
+        "kind": "k8s.network"
+      },
+      {
+        "id": "k8s.nodes:cluster/_cluster/prod-east",
+        "kind": "k8s.nodes"
+      },
+      {
+        "id": "k8s.storage:cluster/_cluster/prod-east",
+        "kind": "k8s.storage"
+      }
+    ],
+    "evidence_coverage": {
+      "completeness": 100,
+      "degraded": []
+    },
+    "pods": {
+      "problematic_pods": [
+        {
+          "name": "db-0",
+          "namespace": "prod",
+          "status": "Pending"
+        }
+      ]
+    },
+    "storage": {
+      "findings": [
+        {
+          "namespace": "prod",
+          "name": "db-data",
+          "phase": "Pending",
+          "issue": "PersistentVolumeClaim is not bound"
+        }
+      ]
+    },
+    "deep_evidence": {
+      "k8s.storageclasses": [
+        {
+          "id": "k8s.storageclasses:cluster/_cluster/prod-east",
+          "target": {
+            "kind": "Cluster",
+            "name": "prod-east",
+            "namespace": null
+          },
+          "status": "ok",
+          "data": {
+            "items": [
+              {
+                "name": "slow",
+                "is_default": false,
+                "volume_binding_mode": "Immediate"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "hypotheses_present": [
+      "storage.no_default_storage_class",
+      "storage.volume_unavailable"
+    ],
+    "signals_present": [
+      "storage.no_default_class:cluster/_cluster/prod-east"
+    ]
+  }
+}

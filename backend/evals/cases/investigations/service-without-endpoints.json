@@ -1,0 +1,73 @@
+{
+  "id": "service-without-endpoints",
+  "description": "Service resolves but routes nowhere while its backing pod crash-loops.",
+  "investigation": {
+    "context": "prod-east",
+    "health": {
+      "status": "issues_found"
+    },
+    "severity": {
+      "severity": "Critical"
+    },
+    "evidence": [
+      {
+        "id": "k8s.pods:cluster/_cluster/prod-east",
+        "kind": "k8s.pods"
+      },
+      {
+        "id": "k8s.pods.logs:cluster/_cluster/prod-east",
+        "kind": "k8s.pods.logs"
+      },
+      {
+        "id": "k8s.events:cluster/_cluster/prod-east",
+        "kind": "k8s.events"
+      },
+      {
+        "id": "k8s.deployments:cluster/_cluster/prod-east",
+        "kind": "k8s.deployments"
+      },
+      {
+        "id": "k8s.network:cluster/_cluster/prod-east",
+        "kind": "k8s.network"
+      },
+      {
+        "id": "k8s.nodes:cluster/_cluster/prod-east",
+        "kind": "k8s.nodes"
+      },
+      {
+        "id": "k8s.storage:cluster/_cluster/prod-east",
+        "kind": "k8s.storage"
+      }
+    ],
+    "evidence_coverage": {
+      "completeness": 100,
+      "degraded": []
+    },
+    "pods": {
+      "problematic_pods": [
+        {
+          "name": "web-0",
+          "namespace": "prod",
+          "status": "CrashLoopBackOff"
+        }
+      ]
+    },
+    "network": {
+      "findings": [
+        {
+          "namespace": "prod",
+          "service": "api",
+          "issue": "Service has no ready endpoints; selector may not match any pods"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "hypotheses_present": [
+      "network.service_without_endpoints"
+    ],
+    "signals_present": [
+      "network.no_endpoints:service/prod/api"
+    ]
+  }
+}

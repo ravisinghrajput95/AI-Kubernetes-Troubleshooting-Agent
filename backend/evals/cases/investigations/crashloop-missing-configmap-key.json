@@ -1,0 +1,109 @@
+{
+  "id": "crashloop-missing-configmap-key",
+  "description": "Container crash-loops because a referenced ConfigMap key does not exist. The missing key should outrank the generic startup-failure reading.",
+  "investigation": {
+    "context": "prod-east",
+    "health": {
+      "status": "issues_found"
+    },
+    "severity": {
+      "severity": "Critical"
+    },
+    "evidence": [
+      {
+        "id": "k8s.pods:cluster/_cluster/prod-east",
+        "kind": "k8s.pods"
+      },
+      {
+        "id": "k8s.pods.logs:cluster/_cluster/prod-east",
+        "kind": "k8s.pods.logs"
+      },
+      {
+        "id": "k8s.events:cluster/_cluster/prod-east",
+        "kind": "k8s.events"
+      },
+      {
+        "id": "k8s.deployments:cluster/_cluster/prod-east",
+        "kind": "k8s.deployments"
+      },
+      {
+        "id": "k8s.network:cluster/_cluster/prod-east",
+        "kind": "k8s.network"
+      },
+      {
+        "id": "k8s.nodes:cluster/_cluster/prod-east",
+        "kind": "k8s.nodes"
+      },
+      {
+        "id": "k8s.storage:cluster/_cluster/prod-east",
+        "kind": "k8s.storage"
+      }
+    ],
+    "evidence_coverage": {
+      "completeness": 100,
+      "degraded": []
+    },
+    "pods": {
+      "problematic_pods": [
+        {
+          "name": "web-0",
+          "namespace": "prod",
+          "status": "CrashLoopBackOff"
+        }
+      ]
+    },
+    "logs": {
+      "logs": [
+        {
+          "name": "web-0",
+          "namespace": "prod",
+          "relevant_lines": [
+            "FATAL config key DB_HOST is not set"
+          ]
+        }
+      ]
+    },
+    "deep_evidence": {
+      "k8s.pod.config_refs": [
+        {
+          "id": "k8s.pod.config_refs:pod/prod/web-0",
+          "target": {
+            "kind": "Pod",
+            "name": "web-0",
+            "namespace": "prod"
+          },
+          "status": "ok",
+          "data": {
+            "references": [
+              {
+                "kind": "ConfigMap",
+                "name": "web-config",
+                "exists": true,
+                "available_keys": [
+                  "LOG_LEVEL"
+                ],
+                "required_keys": [
+                  "DB_HOST"
+                ],
+                "missing_keys": [
+                  "DB_HOST"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "top_hypothesis": "workload.missing_configuration",
+    "hypotheses_present": [
+      "workload.application_startup_failure"
+    ],
+    "signals_present": [
+      "config.key_missing:pod/prod/web-0",
+      "pod.crash_loop:pod/prod/web-0"
+    ],
+    "min_confidence": 80
+  }
+}

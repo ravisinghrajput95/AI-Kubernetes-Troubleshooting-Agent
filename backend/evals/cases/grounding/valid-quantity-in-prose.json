@@ -1,0 +1,15 @@
+{
+  "id": "valid-quantity-in-prose",
+  "investigation_case": "oom-confirmed-by-exit-code",
+  "description": "Quantities containing a slash must not be read as resource references.",
+  "expect_valid": true,
+  "response": {
+    "selected_hypothesis": "workload.out_of_memory",
+    "root_cause": "Raise the container limit from 512Mi/1Gi and re-observe.",
+    "explanation": "The probe at /healthz is unaffected.",
+    "cited_signals": [
+      "container.oom_exit_code:pod/prod/web-0"
+    ],
+    "confidence": 75
+  }
+}

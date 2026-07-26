@@ -1,0 +1,16 @@
+{
+  "id": "valid-missing-config",
+  "investigation_case": "crashloop-missing-configmap-key",
+  "description": "A correct, well-cited diagnosis. Must be accepted, or the model path is off.",
+  "expect_valid": true,
+  "response": {
+    "selected_hypothesis": "workload.missing_configuration",
+    "root_cause": "ConfigMap prod/web-config is missing the DB_HOST key the container reads.",
+    "explanation": "The container exits during startup because the reference cannot resolve.",
+    "cited_signals": [
+      "config.key_missing:pod/prod/web-0",
+      "pod.crash_loop:pod/prod/web-0"
+    ],
+    "confidence": 88
+  }
+}

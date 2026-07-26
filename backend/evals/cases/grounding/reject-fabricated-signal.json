@@ -1,0 +1,15 @@
+{
+  "id": "reject-fabricated-signal",
+  "investigation_case": "oom-confirmed-by-exit-code",
+  "description": "Every citation invented.",
+  "expect_valid": false,
+  "expect_reason_contains": "cited no valid signal",
+  "response": {
+    "selected_hypothesis": "workload.out_of_memory",
+    "root_cause": "Disk pressure on node-9.",
+    "cited_signals": [
+      "node.disk_full:node/_cluster/node-9"
+    ],
+    "confidence": 90
+  }
+}

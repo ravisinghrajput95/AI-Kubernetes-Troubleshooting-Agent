@@ -1,0 +1,13 @@
+{
+  "id": "valid-healthy-cluster",
+  "investigation_case": "healthy-cluster",
+  "description": "With no signals, reassurance is the correct conclusion and needs no citation.",
+  "expect_valid": true,
+  "response": {
+    "selected_hypothesis": null,
+    "root_cause": "No critical issues detected; the cluster appears healthy.",
+    "explanation": "No failure signals were extracted from the collected evidence.",
+    "cited_signals": [],
+    "confidence": 70
+  }
+}

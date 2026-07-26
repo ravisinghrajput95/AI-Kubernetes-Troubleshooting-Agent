@@ -1,0 +1,15 @@
+{
+  "id": "valid-oom",
+  "investigation_case": "oom-confirmed-by-exit-code",
+  "description": "Exit code 137 correctly attributed to the memory limit.",
+  "expect_valid": true,
+  "response": {
+    "selected_hypothesis": "workload.out_of_memory",
+    "root_cause": "Container web exceeded its 512Mi memory limit and was OOM-killed.",
+    "explanation": "Exit code 137 confirms termination by the kernel OOM killer.",
+    "cited_signals": [
+      "container.oom_exit_code:pod/prod/web-0"
+    ],
+    "confidence": 90
+  }
+}

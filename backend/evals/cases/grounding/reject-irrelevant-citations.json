@@ -1,0 +1,16 @@
+{
+  "id": "reject-irrelevant-citations",
+  "investigation_case": "oom-confirmed-by-exit-code",
+  "description": "Cites only a signal that refutes the selected hypothesis. Every id resolves, but the citation argues against the conclusion it is offered as support for.",
+  "expect_valid": false,
+  "expect_reason_contains": "support the selected hypothesis",
+  "response": {
+    "selected_hypothesis": "workload.application_startup_failure",
+    "root_cause": "The application fails during startup and restarts.",
+    "explanation": "Derived from the container exit behaviour.",
+    "cited_signals": [
+      "container.oom_exit_code:pod/prod/web-0"
+    ],
+    "confidence": 70
+  }
+}

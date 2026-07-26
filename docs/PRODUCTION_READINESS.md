@@ -115,7 +115,7 @@ Apache-2.0 added. Without it the work was legally unusable by any enterprise.
 | F5 | ~~Unbounded all-namespace reads~~ **partially fixed**: API-server paging via `--chunk-size`, retained items capped, truncation recorded as an evidence gap. Peak *parse* memory is still proportional to cluster size — kubectl assembles the whole list before writing it, so removing that ceiling needs a streaming client. | 3d done, 5d remaining |
 | — | In-process job store: no HA, single worker mandated. | 3d |
 | — | No platform self-observability (metrics, traces). Ironic for an observability tool. | 3d |
-| F11 | No LLM eval harness — prompt changes are unmeasurable. No provider abstraction. | 5d |
+| F11 | ~~No LLM eval harness~~ **partially fixed**: a golden corpus of 21 cases gates reasoning accuracy and grounding behaviour in CI (`docs/EVALUATION.md`). No provider abstraction yet, and no live-model evaluation. | 3d done, 2d remaining |
 
 ## P2 — blocks scale and adoption
 
@@ -141,7 +141,7 @@ no frontend component tests · no runtime plugin discovery (entry points).
 Present: 318 backend + 47 frontend tests covering unit, integration, API,
 fault-injection, safety-property, contract, and opt-in live-transport.
 
-Missing: **LLM evaluation with golden investigations** (highest value) · real
+Missing: real
 cluster fixtures (kind/envtest, multi-version) · snapshot tests for the PDF and
 Markdown renderers · load tests (no test exceeds one pod) · frontend component
 tests · automated mutation testing.

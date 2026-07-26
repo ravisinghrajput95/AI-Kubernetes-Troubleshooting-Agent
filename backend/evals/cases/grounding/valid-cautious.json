@@ -1,0 +1,15 @@
+{
+  "id": "valid-cautious",
+  "investigation_case": "pending-quota-exhausted",
+  "description": "A hedged answer citing real evidence. Caution must not be punished.",
+  "expect_valid": true,
+  "response": {
+    "selected_hypothesis": "scheduling.quota_exhausted",
+    "root_cause": "The prod namespace quota for requests.memory is fully consumed.",
+    "explanation": "Admission is refused before scheduling. Node capacity was not the constraint.",
+    "cited_signals": [
+      "quota.exceeded:namespace/prod/prod"
+    ],
+    "confidence": 70
+  }
+}

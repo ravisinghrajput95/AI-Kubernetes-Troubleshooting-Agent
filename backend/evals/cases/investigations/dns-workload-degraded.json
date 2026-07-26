@@ -1,0 +1,87 @@
+{
+  "id": "dns-workload-degraded",
+  "description": "CoreDNS is deployed but no replica is ready \u2014 cluster-wide impact.",
+  "investigation": {
+    "context": "prod-east",
+    "health": {
+      "status": "issues_found"
+    },
+    "severity": {
+      "severity": "Critical"
+    },
+    "evidence": [
+      {
+        "id": "k8s.pods:cluster/_cluster/prod-east",
+        "kind": "k8s.pods"
+      },
+      {
+        "id": "k8s.pods.logs:cluster/_cluster/prod-east",
+        "kind": "k8s.pods.logs"
+      },
+      {
+        "id": "k8s.events:cluster/_cluster/prod-east",
+        "kind": "k8s.events"
+      },
+      {
+        "id": "k8s.deployments:cluster/_cluster/prod-east",
+        "kind": "k8s.deployments"
+      },
+      {
+        "id": "k8s.network:cluster/_cluster/prod-east",
+        "kind": "k8s.network"
+      },
+      {
+        "id": "k8s.nodes:cluster/_cluster/prod-east",
+        "kind": "k8s.nodes"
+      },
+      {
+        "id": "k8s.storage:cluster/_cluster/prod-east",
+        "kind": "k8s.storage"
+      }
+    ],
+    "evidence_coverage": {
+      "completeness": 100,
+      "degraded": []
+    },
+    "network": {
+      "findings": [
+        {
+          "namespace": "kube-system",
+          "service": "kube-dns/coredns",
+          "issue": "Cluster DNS service was not found"
+        }
+      ]
+    },
+    "deep_evidence": {
+      "k8s.dns.workload": [
+        {
+          "id": "k8s.dns.workload:cluster/_cluster/prod-east",
+          "target": {
+            "kind": "Cluster",
+            "name": "prod-east",
+            "namespace": null
+          },
+          "status": "ok",
+          "data": {
+            "pods": [
+              {
+                "name": "coredns-1",
+                "ready": false
+              }
+            ],
+            "ready_count": 0
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "hypotheses_present": [
+      "network.dns_workload_degraded",
+      "network.cluster_dns_unavailable"
+    ],
+    "signals_present": [
+      "network.dns_workload_unhealthy:cluster/_cluster/prod-east"
+    ]
+  }
+}

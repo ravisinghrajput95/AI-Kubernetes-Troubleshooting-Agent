@@ -1,0 +1,16 @@
+{
+  "id": "reject-contradicts-evidence",
+  "investigation_case": "crashloop-missing-configmap-key",
+  "description": "The verified F9 gap: real citation, opposite conclusion.",
+  "expect_valid": false,
+  "expect_reason_contains": "severe signal",
+  "response": {
+    "selected_hypothesis": "workload.missing_configuration",
+    "root_cause": "Resolved - no action needed.",
+    "explanation": "All clear.",
+    "cited_signals": [
+      "pod.crash_loop:pod/prod/web-0"
+    ],
+    "confidence": 95
+  }
+}

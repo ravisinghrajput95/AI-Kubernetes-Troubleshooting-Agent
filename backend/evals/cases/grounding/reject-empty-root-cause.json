@@ -1,0 +1,15 @@
+{
+  "id": "reject-empty-root-cause",
+  "investigation_case": "oom-confirmed-by-exit-code",
+  "description": "No conclusion at all.",
+  "expect_valid": false,
+  "expect_reason_contains": "no root cause",
+  "response": {
+    "selected_hypothesis": "workload.out_of_memory",
+    "root_cause": "   ",
+    "cited_signals": [
+      "container.oom_exit_code:pod/prod/web-0"
+    ],
+    "confidence": 50
+  }
+}

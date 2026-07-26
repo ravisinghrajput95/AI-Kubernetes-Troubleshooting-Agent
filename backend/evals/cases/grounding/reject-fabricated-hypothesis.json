@@ -1,0 +1,15 @@
+{
+  "id": "reject-fabricated-hypothesis",
+  "investigation_case": "oom-confirmed-by-exit-code",
+  "description": "Selecting a hypothesis that was never proposed.",
+  "expect_valid": false,
+  "expect_reason_contains": "unknown hypothesis",
+  "response": {
+    "selected_hypothesis": "cosmic.ray_bitflip",
+    "root_cause": "A cosmic ray flipped a bit.",
+    "cited_signals": [
+      "container.oom_exit_code:pod/prod/web-0"
+    ],
+    "confidence": 99
+  }
+}

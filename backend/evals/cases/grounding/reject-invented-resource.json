@@ -1,0 +1,15 @@
+{
+  "id": "reject-invented-resource",
+  "investigation_case": "crashloop-missing-configmap-key",
+  "description": "Names a pod that appears in no collected evidence.",
+  "expect_valid": false,
+  "expect_reason_contains": "no collected evidence",
+  "response": {
+    "selected_hypothesis": "workload.missing_configuration",
+    "root_cause": "Pod payments/checkout-9 is the true source of the failure.",
+    "cited_signals": [
+      "config.key_missing:pod/prod/web-0"
+    ],
+    "confidence": 80
+  }
+}

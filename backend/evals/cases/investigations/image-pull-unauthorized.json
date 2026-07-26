@@ -1,0 +1,112 @@
+{
+  "id": "image-pull-unauthorized",
+  "description": "Registry rejects the pull as unauthorized and no pull secret is configured; should not be read as an application failure.",
+  "investigation": {
+    "context": "prod-east",
+    "health": {
+      "status": "issues_found"
+    },
+    "severity": {
+      "severity": "Critical"
+    },
+    "evidence": [
+      {
+        "id": "k8s.pods:cluster/_cluster/prod-east",
+        "kind": "k8s.pods"
+      },
+      {
+        "id": "k8s.pods.logs:cluster/_cluster/prod-east",
+        "kind": "k8s.pods.logs"
+      },
+      {
+        "id": "k8s.events:cluster/_cluster/prod-east",
+        "kind": "k8s.events"
+      },
+      {
+        "id": "k8s.deployments:cluster/_cluster/prod-east",
+        "kind": "k8s.deployments"
+      },
+      {
+        "id": "k8s.network:cluster/_cluster/prod-east",
+        "kind": "k8s.network"
+      },
+      {
+        "id": "k8s.nodes:cluster/_cluster/prod-east",
+        "kind": "k8s.nodes"
+      },
+      {
+        "id": "k8s.storage:cluster/_cluster/prod-east",
+        "kind": "k8s.storage"
+      }
+    ],
+    "evidence_coverage": {
+      "completeness": 100,
+      "degraded": []
+    },
+    "pods": {
+      "problematic_pods": [
+        {
+          "name": "web-0",
+          "namespace": "prod",
+          "status": "ImagePullBackOff"
+        }
+      ]
+    },
+    "deep_evidence": {
+      "k8s.resource.events": [
+        {
+          "id": "k8s.resource.events:pod/prod/web-0",
+          "target": {
+            "kind": "Pod",
+            "name": "web-0",
+            "namespace": "prod"
+          },
+          "status": "ok",
+          "data": {
+            "events": [
+              {
+                "reason": "Failed",
+                "type": "Warning",
+                "message": "pull access denied: unauthorized"
+              }
+            ]
+          }
+        }
+      ],
+      "k8s.pod.spec": [
+        {
+          "id": "k8s.pod.spec:pod/prod/web-0",
+          "target": {
+            "kind": "Pod",
+            "name": "web-0",
+            "namespace": "prod"
+          },
+          "status": "ok",
+          "data": {
+            "image_pull_secrets": [],
+            "containers": [
+              {
+                "name": "web",
+                "image": "reg/web:1",
+                "current_state": {
+                  "reason": "ImagePullBackOff"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "top_hypothesis": "image.pull_failure",
+    "hypotheses_absent": [
+      "workload.application_startup_failure"
+    ],
+    "signals_present": [
+      "image.pull_unauthorized:pod/prod/web-0",
+      "image.no_pull_secret:pod/prod/web-0"
+    ],
+    "min_confidence": 85
+  }
+}

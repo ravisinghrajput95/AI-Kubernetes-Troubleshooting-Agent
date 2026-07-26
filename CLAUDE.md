@@ -43,6 +43,12 @@ python -m pytest tests/test_collection_scheduler.py -k timeout   # single test
 
 `pytest.ini` sets `asyncio_mode = auto`, so async tests need no decorator. Tests use a fake `KubectlExecutor` subclass and never touch a real cluster.
 
+```bash
+python -m evals    # reasoning + grounding regression report
+```
+
+`evals/` is a golden corpus enforced by `tests/test_evals.py` and printed in CI. It exists because rules, prompts and grounding checks can all change without breaking a unit test while making the platform worse at reasoning. **The grounding corpus must keep cases that are expected to be *accepted*** — a corpus of only-rejections passes while an over-strict check has silently routed every investigation to the deterministic fallback. See `docs/EVALUATION.md`.
+
 Docker: `docker compose up --build` builds both services. Two caveats — `docker-compose.yml` declares `env_file: ./backend/.env.example`, which is not in the repo (`backend/.gitignore` ignores it), and the backend image does not install `kubectl` or mount a kubeconfig, so investigations will fail inside the container. Local processes are the working path.
 
 Lint and format (from `backend/`, config in `ruff.toml`):

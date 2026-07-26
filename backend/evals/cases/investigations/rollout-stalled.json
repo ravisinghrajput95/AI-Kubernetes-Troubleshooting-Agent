@@ -1,0 +1,80 @@
+{
+  "id": "rollout-stalled",
+  "description": "Deployment cannot reach its replica count because new pods fail to pull.",
+  "investigation": {
+    "context": "prod-east",
+    "health": {
+      "status": "issues_found"
+    },
+    "severity": {
+      "severity": "Critical"
+    },
+    "evidence": [
+      {
+        "id": "k8s.pods:cluster/_cluster/prod-east",
+        "kind": "k8s.pods"
+      },
+      {
+        "id": "k8s.pods.logs:cluster/_cluster/prod-east",
+        "kind": "k8s.pods.logs"
+      },
+      {
+        "id": "k8s.events:cluster/_cluster/prod-east",
+        "kind": "k8s.events"
+      },
+      {
+        "id": "k8s.deployments:cluster/_cluster/prod-east",
+        "kind": "k8s.deployments"
+      },
+      {
+        "id": "k8s.network:cluster/_cluster/prod-east",
+        "kind": "k8s.network"
+      },
+      {
+        "id": "k8s.nodes:cluster/_cluster/prod-east",
+        "kind": "k8s.nodes"
+      },
+      {
+        "id": "k8s.storage:cluster/_cluster/prod-east",
+        "kind": "k8s.storage"
+      }
+    ],
+    "evidence_coverage": {
+      "completeness": 100,
+      "degraded": []
+    },
+    "pods": {
+      "problematic_pods": [
+        {
+          "name": "web-0",
+          "namespace": "prod",
+          "status": "ImagePullBackOff"
+        }
+      ]
+    },
+    "deployments": {
+      "unhealthy_deployments": [
+        {
+          "name": "web",
+          "namespace": "prod",
+          "desired_replicas": 3,
+          "available_replicas": 1,
+          "conditions": [
+            {
+              "reason": "ProgressDeadlineExceeded"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "expect": {
+    "hypotheses_present": [
+      "rollout.stalled",
+      "image.pull_failure"
+    ],
+    "signals_present": [
+      "deployment.progress_stalled:deployment/prod/web"
+    ]
+  }
+}

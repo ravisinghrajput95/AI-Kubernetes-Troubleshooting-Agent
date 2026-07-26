@@ -48,6 +48,11 @@ jobs:
       - name: Tests
         run: python -m pytest -q
 
+      # Printed even on success: the numbers are the point, not just the exit
+      # code. A drop in reasoning accuracy is visible in the log.
+      - name: Reasoning evaluation
+        run: python -m evals
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest

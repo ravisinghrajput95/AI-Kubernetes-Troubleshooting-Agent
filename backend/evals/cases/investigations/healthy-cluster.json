@@ -1,0 +1,43 @@
+{
+  "id": "healthy-cluster",
+  "description": "A healthy cluster must produce no signals and no hypotheses. Guards against rules that fire on absence of data.",
+  "investigation": {
+    "context": "prod-east",
+    "health": {
+      "status": "healthy"
+    },
+    "severity": {
+      "severity": "Healthy"
+    },
+    "evidence": [],
+    "evidence_coverage": {
+      "completeness": 100,
+      "degraded": []
+    },
+    "pods": {
+      "problematic_pods": [],
+      "pod_inventory": []
+    },
+    "logs": {
+      "logs": []
+    },
+    "events": {
+      "findings": []
+    },
+    "deployments": {
+      "unhealthy_deployments": []
+    },
+    "network": {
+      "findings": []
+    },
+    "nodes": {
+      "findings": []
+    },
+    "storage": {
+      "findings": []
+    }
+  },
+  "expect": {
+    "top_hypothesis": null
+  }
+}
