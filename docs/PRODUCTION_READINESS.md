@@ -1,0 +1,138 @@
+# Production Readiness
+
+Findings from the 2026-07-26 engineering review, and their current state.
+
+**Do not deploy this against a production cluster until the P0 section is
+empty.** One P0 remains.
+
+Scores at review time: architecture 7/10 · Kubernetes 5/10 · AI 6/10 ·
+security 3/10 · performance 5/10 · maintainability 6/10 · OSS 2/10 ·
+enterprise 3/10.
+
+---
+
+## P0 — blocks any deployment
+
+### F13 · No authentication or authorization · **OPEN**
+
+Every endpoint is unauthenticated. The service holds a kubeconfig, so anyone who
+can reach the port has read access to everything that kubeconfig can reach, plus
+the full archive of previous investigations. CORS is not a security control — it
+constrains browsers, not `curl`.
+
+**Required:** OIDC bearer validation; **per-request Kubernetes impersonation** so
+the *user's* RBAC applies rather than the service account's; history scoped by
+owner; rate limiting.
+**Effort:** ~8 days. **Risk:** impersonation is correct but touches every kubectl
+call site.
+
+### F14 · Prompt injection reached operator-facing commands · **FIXED**
+
+Verified exploitable: a hostile pod log line caused the model to emit
+`kubectl delete ns kube-system` as a recommended command, and grounding accepted
+the response because it cited a real signal. The operator is the execution path,
+so the read-only executor did not mitigate it.
+
+**Fixed by:** commands are never taken from the model (`_normalize` uses the
+deterministic set); every surfaced command is classified by
+`classify_command()`, unrecognised strings dropped and mutating ones labelled;
+the prompt labels cluster text as untrusted data and no longer requests commands.
+Regression tests in `tests/test_prompt_injection.py`.
+
+### F20 · History index corruption and lost entries · **FIXED**
+
+Read-modify-write with a non-atomic write. Concurrent saves lost entries; a crash
+or full disk truncated the file; a parse failure **silently discarded all
+history**.
+
+**Fixed by:** temp-file + `os.replace()`, `fsync`, an in-process lock, and
+quarantining a corrupt index instead of discarding it. Tests include a 12-thread
+concurrency check.
+**Remaining:** cross-process writers can still race — needs a real store.
+
+### F15 · Redaction missed real credential shapes · **FIXED**
+
+Four of eight shapes leaked: bare JWTs, connection-string passwords, AWS keys,
+PEM private key blocks. These reached reports on disk, the API, and the model.
+
+**Fixed by:** shape-based detectors alongside the keyword rules, and a corpus
+test (`tests/test_redaction_corpus.py`) that also asserts benign log lines are
+untouched. Verified end to end: hostile log content containing a JWT and a
+connection-string password is scrubbed before it reaches the investigation
+payload or the diagnosis.
+
+**Residual (P2):** redaction happens *only* at the collection boundary. An
+investigation dict assembled by any other route — a future import path, or
+`regenerate` reading a report written before these detectors existed — is not
+re-scrubbed. `PromptBuilder` re-runs the redactor so the model is covered, but
+the API response and reports are not. Add a redaction pass at the persistence
+boundary as defence in depth.
+
+### F16 · Path traversal in report id handling · **FIXED**
+
+Ids were interpolated into filesystem paths unchecked. **Not reachable over
+HTTP** — Starlette rejected all four probes — so this was defence-in-depth, not a
+live vulnerability.
+
+**Fixed by:** id format validation plus a containment check on the resolved path.
+
+### LICENSE missing · **FIXED**
+
+Apache-2.0 added. Without it the work was legally unusable by any enterprise.
+
+---
+
+## P1 — blocks production
+
+| # | Finding | Effort |
+|---|---|---|
+| F17 | No audit logging (actor/action/target/outcome). Disqualifying for SOC2. | 2d |
+| F5 | Nine unbounded all-namespace reads, no pagination. Measured 10.7 MB stdout at 10k pods, run concurrently so peak is the sum. | 3d |
+| F9 | Grounding validates provenance, not semantics — a response can cite correctly and assert the opposite. | 3d |
+| — | In-process job store: no HA, single worker mandated. | 3d |
+| — | No platform self-observability (metrics, traces). Ironic for an observability tool. | 3d |
+| F11 | No LLM eval harness — prompt changes are unmeasurable. No provider abstraction. | 5d |
+
+## P2 — blocks scale and adoption
+
+| # | Finding | Effort |
+|---|---|---|
+| F1 | `fix`/`prevention`/`next_steps` are still model-authored prose (commands are not). Mark as untrusted in the UI. | 1d |
+| F6 | No RBAC preflight — work is done before permission failures surface. | 1.5d |
+| F18 | No caching; every investigation re-reads the whole cluster. | 1.5d |
+| F19 | Reports embed full investigations; report files are never pruned. | 2d |
+| F7 | API version assumptions (EndpointSlice, Ingress) with no discovery. | 1d |
+| — | README documents a roadmap as if implemented; `docs/` is orphaned. | 1d |
+
+## P3 — quality
+
+`App.tsx` still ~1,500 lines · `FixRecommendationEngine` vestigial ·
+`history_service.py` ~900 lines doing three jobs · kubectl subprocess-per-call ·
+no frontend component tests · no runtime plugin discovery (entry points).
+
+---
+
+## Testing gaps
+
+Present: 318 backend + 47 frontend tests covering unit, integration, API,
+fault-injection, safety-property, contract, and opt-in live-transport.
+
+Missing: **LLM evaluation with golden investigations** (highest value) · real
+cluster fixtures (kind/envtest, multi-version) · snapshot tests for the PDF and
+Markdown renderers · load tests (no test exceeds one pod) · frontend component
+tests · automated mutation testing.
+
+---
+
+## What the review got right about the existing design
+
+Calibration matters as much as criticism. These held up under scrutiny and
+should not be redesigned:
+
+- Evidence spine with deterministic ids and status-as-data
+- Fault-isolated collector DAG with budgets
+- Read-only enforcement by construction, including the mixed-verb `rollout` case
+- Signal → hypothesis separation with declarative rules
+- Playbook-as-planner (inherits isolation, redaction, concurrency for free)
+- Deterministic remediation with stated risk, rollback, and required RBAC
+- Degradation as citable data rather than silence
