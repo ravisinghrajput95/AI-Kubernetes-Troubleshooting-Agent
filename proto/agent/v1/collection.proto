@@ -1,0 +1,73 @@
+// What the platform is allowed to ask a cluster agent for.
+//
+// The security property of this file: `EvidenceSpec` names a *kind* of evidence
+// and the object it concerns. There is no field in which a command, a shell
+// fragment, or a kubectl flag can be carried. A compromised platform can ask an
+// agent for evidence it knows how to collect; it cannot instruct an agent to run
+// something arbitrary.
+//
+// This mirrors `ResourceRequest` in `backend/app/providers/base.py`, which
+// enforces the same property locally.
+
+syntax = "proto3";
+
+package agent.v1;
+
+import "agent/v1/evidence.proto";
+
+// The user on whose behalf a read is performed.
+//
+// The agent applies this via Kubernetes impersonation, so the cluster — not the
+// platform — decides what the request may see. Without it, a compromised
+// platform reads everything the agent's ServiceAccount can.
+message Impersonation {
+  string username = 1;
+  repeated string groups = 2;
+}
+
+// Bounds the agent enforces locally. Sent with every request rather than
+// configured once, so a runaway platform cannot exhaust a cluster.
+message Budget {
+  int64 deadline_ms = 1;
+  int32 max_items = 2;
+  int64 max_bytes = 3;
+}
+
+// A request for one piece of evidence: what is wanted, never how to get it.
+message EvidenceSpec {
+  // e.g. "k8s.pods", "prometheus.pod.metrics". The agent maps this to a
+  // collector it already has. An unknown kind is refused, not interpreted.
+  string kind = 1;
+
+  ResourceRef target = 2;
+
+  // Collector-defined, bounded values — a tail length, a lookback window.
+  // Values are data the named collector interprets; none of them reach a shell.
+  map<string, string> parameters = 3;
+}
+
+message CollectionRequest {
+  string investigation_id = 1;
+  string request_id = 2;
+  repeated EvidenceSpec specs = 3;
+  Impersonation actor = 4;
+  Budget budget = 5;
+}
+
+message CancelRequest {
+  string investigation_id = 1;
+  string reason = 2;
+}
+
+// Sent once per CollectionRequest, after the last EvidenceRecord for it.
+//
+// Carries the counts so the platform can distinguish "the agent finished and
+// found nothing" from "the stream broke mid-collection" — the same distinction
+// `collection_failure()` draws locally.
+message CollectionDone {
+  string investigation_id = 1;
+  string request_id = 2;
+  int32 records_emitted = 3;
+  int32 specs_requested = 4;
+  string detail = 5;
+}

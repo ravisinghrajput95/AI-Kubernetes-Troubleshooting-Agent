@@ -1,3 +1,5 @@
 -r requirements.txt
 pytest==8.3.4
 pytest-asyncio==0.25.2
+# Code generation only; see scripts/generate_proto.py.
+grpcio-tools==1.83.0

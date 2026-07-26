@@ -1,6 +1,10 @@
 line-length = 100
 target-version = "py312"
 
+# protoc output is not ours to style, and reformatting it would make
+# `generate_proto.py --check` fail against a freshly generated tree.
+extend-exclude = ["app/wire/gen"]
+
 [lint]
 select = [
     "E", "W",    # pycodestyle

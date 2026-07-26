@@ -118,6 +118,22 @@ Every collected fact is an `Evidence` record with a **deterministic id** (`kind:
 
 `CollectionContext.kubectl` remains as a delegating property (`provider.raw_executor()`) for collectors not yet migrated — `LegacyInspectorCollector` and the nine inspectors still take a `KubectlExecutor`. **`raw_executor()` is deliberately absent from the `ClusterProvider` protocol**, so an unmigrated collector fails loudly against a remote cluster rather than appearing to work because development happens to run locally. All of `app/collectors/targeted.py`, `RawNodesCollector` and `ResourceMetricsCollector` are on the seam.
 
+### Wire contract (`/proto`, `app/wire/`)
+
+The schema for the future cluster-agent protocol. **Nothing transports these messages yet** — the contract lands ahead of the transport (M4) so it can be reviewed on its own terms.
+
+`app/wire/codec.py` maps `Evidence` ↔ protobuf losslessly in both directions, which is the whole of M2's guarantee: if a value can change on a round trip, a fleet diagnosis stops being reproducible from its own evidence. `tests/test_wire_contract.py` fuzzes it (seeded, so failures reproduce) rather than spot-checking, and every mutation of the codec — dropping a field, treating `""` as absent, losing sub-second precision, non-canonical key order — fails it.
+
+Three things the codec must not regress:
+
+- `None` is not `""`. A cluster-scoped object has no namespace; that is different from a namespace named `""`. proto3 field presence carries it.
+- **No `default=` fallback in `json.dumps`.** Coercing an unserialisable value to its repr would round-trip a datetime into a string and lose the type silently. `history_service` already requires strictly JSON-serialisable payloads, so raising `WireEncodeError` is consistent.
+- **A decode failure raises, it does not degrade.** Inventing a plausible record to paper over a protocol bug or a hostile peer is exactly what the evidence spine exists to prevent.
+
+`EvidenceSpec` (`collection.proto`) is the schema-level counterpart to `ResourceRequest`'s closed verb set: it names a *kind* of evidence and its target, and has no field that can carry a command. `TestRequestsCannotCarryCommands` asserts the field sets directly, so a future field reintroducing the escape fails the build.
+
+Generated bindings under `app/wire/gen/` are **committed** — `pip install -r requirements.txt` stays sufficient, and a schema change shows up in review as a diff. Regenerate with `python scripts/generate_proto.py`; CI runs `--check` so the two cannot drift. `protobuf` and `grpcio-tools` are pinned to matching versions because protobuf 7 validates gencode against the runtime. Service stubs are deliberately *not* generated yet — they import `grpc`, which is not a dependency until M4.
+
 ### Collection (`app/collectors/`)
 
 Collectors declare `provides` / `requires` / `optional_requires`; `CollectorRegistry.resolve()` topologically sorts them into waves. `requires` must have a registered provider (a missing one raises `CollectorGraphError` at resolve time); `optional_requires` only affects ordering when a provider exists, which is how optional backends like Prometheus stay absent without breaking the graph.

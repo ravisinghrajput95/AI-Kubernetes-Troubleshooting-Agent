@@ -1,0 +1,87 @@
+// The evidence contract.
+//
+// This is the schema for the only thing an agent ever sends upward: a record of
+// something it observed, or a record of why it could not observe it. It mirrors
+// `backend/app/evidence/models.py` field for field, and
+// `backend/tests/test_wire_contract.py` asserts the mapping is lossless in both
+// directions.
+//
+// Field numbers are permanent. Adding a field means taking the next number;
+// removing one means reserving it. Never renumber — an agent released against
+// the old numbering is still in the fleet.
+
+syntax = "proto3";
+
+package agent.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Stable reference to the Kubernetes object a piece of evidence describes.
+message ResourceRef {
+  string kind = 1;
+  string name = 2;
+  // Absent for cluster-scoped objects, which is distinct from an empty string.
+  optional string namespace = 3;
+  optional string uid = 4;
+}
+
+// Why a fact is present, or why it is missing.
+//
+// Collection failures travel as evidence with a non-usable status rather than as
+// errors, so the reasoning layer can cite what it could not see instead of
+// silently reasoning over the gap. That property must survive the wire.
+enum EvidenceStatus {
+  EVIDENCE_STATUS_UNSPECIFIED = 0;
+  EVIDENCE_STATUS_OK = 1;
+  EVIDENCE_STATUS_EMPTY = 2;             // looked, nothing there — still usable
+  EVIDENCE_STATUS_UNAVAILABLE = 3;       // could not look
+  EVIDENCE_STATUS_FORBIDDEN = 4;
+  EVIDENCE_STATUS_TIMEOUT = 5;
+  EVIDENCE_STATUS_NOT_APPLICABLE = 6;    // backend not deployed; not a gap
+  EVIDENCE_STATUS_FAILED = 7;
+}
+
+enum EvidenceSource {
+  EVIDENCE_SOURCE_UNSPECIFIED = 0;
+  EVIDENCE_SOURCE_KUBECTL = 1;
+  EVIDENCE_SOURCE_PROMETHEUS = 2;
+  EVIDENCE_SOURCE_LOKI = 3;
+  EVIDENCE_SOURCE_DERIVED = 4;
+}
+
+// One addressable, citable observation.
+message EvidenceRecord {
+  // Deterministic: `kind:target.key`, optionally `#discriminator`. The same
+  // fact collected in two investigations carries the same id, which is what
+  // lets a conclusion cite evidence instead of copying it.
+  string id = 1;
+
+  // Open string, not an enum. New collectors introduce kinds without a schema
+  // release; an unrecognised kind is data the platform may not yet render, not
+  // a protocol error.
+  string kind = 2;
+
+  EvidenceSource source = 3;
+  EvidenceStatus status = 4;
+  ResourceRef target = 5;
+
+  // JSON, and **redacted by the agent before it is set**. Opaque here on
+  // purpose: the payload shape is a collector concern, and freezing it into the
+  // schema would make every collector change an agent release.
+  //
+  // Absent payload is empty bytes. A literal `null` is accepted and means the
+  // same thing, so agents in different languages produce comparable records.
+  bytes payload = 6;
+
+  // The command that produced this record, for the human audit trail. A record
+  // of what happened — never an instruction the platform can send back down.
+  optional string equivalent_command = 7;
+
+  // Why, when the status is not usable.
+  string detail = 8;
+
+  int64 duration_ms = 9;
+  google.protobuf.Timestamp collected_at = 10;
+  string collector_id = 11;
+  bool redacted = 12;
+}

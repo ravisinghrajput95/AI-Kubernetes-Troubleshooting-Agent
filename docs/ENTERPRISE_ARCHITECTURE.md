@@ -532,9 +532,20 @@ translation table in `tests/test_providers.py` (mutation-tested: dropping `-n`,
 unchanged at 10/10 and 11/11. The remaining `raw_executor()` users are
 `LegacyInspectorCollector` and the nine inspectors, which M6 migrates.
 
-**M2 — Evidence as a wire contract.**
+**M2 — Evidence as a wire contract. ✅ Delivered.**
 Define `/proto/`; generate Python; assert protobuf ↔ `Evidence` round-trips
 losslessly. Nothing uses it yet. *Exit:* round-trip property tests pass.
+
+*Outcome:* `/proto/agent/v1/{evidence,collection,agent}.proto` plus a committed
+Python binding and `app/wire/codec.py`. 59 round-trip cases and a seeded fuzz,
+mutation-tested: dropping a field, treating `""` as absent, non-canonical key
+order and lost sub-second precision each fail the suite. Two design corrections
+found while building it — a `default=str` fallback in the payload encoder would
+have round-tripped a datetime into a string silently (removed; it now raises),
+and the claimed distinction between an absent payload and JSON `null` does not
+exist in Python, so the decoder accepts both and canonicalises, which is what
+actually matters for a Go agent. CI regenerates and diffs, so schema and
+bindings cannot drift. 461 → 520 tests.
 
 **M3 — State out of process.**
 Postgres for investigations and history; Redis for the job queue. The existing

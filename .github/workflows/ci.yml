@@ -45,6 +45,12 @@ jobs:
       - name: Format check
         run: ruff format --check .
 
+      # Generated protobuf bindings are committed, so a .proto edit that was not
+      # regenerated would otherwise pass every other check and only surface once
+      # an agent could not decode a message.
+      - name: Protobuf bindings are current
+        run: python ../scripts/generate_proto.py --check
+
       - name: Tests
         run: python -m pytest -q
 

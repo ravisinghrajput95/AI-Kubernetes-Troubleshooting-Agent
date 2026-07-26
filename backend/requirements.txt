@@ -13,3 +13,8 @@ PyYAML==6.0.2
 # Hand-rolling JWT signature verification is a well-known way to ship an auth
 # bypass; use the maintained implementation.
 PyJWT[crypto]==2.13.0
+# Wire contract for the cluster-agent protocol (/proto). The runtime version
+# must match the grpcio-tools that generated app/wire/gen — protobuf 7 validates
+# gencode against the runtime and fails loudly on a mismatch, which is why both
+# are pinned and CI regenerates to prove they agree.
+protobuf==7.35.1

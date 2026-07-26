@@ -1,0 +1,122 @@
+// The agent transport.
+//
+// One long-lived stream, dialled *by the agent*. Connection direction is the
+// binding constraint (ADR-004): customers will not open inbound access to a
+// production cluster, so any protocol where the platform initiates is
+// disqualified regardless of its merits.
+//
+// Nothing in the platform implements this yet — M4 does. The schema lands first
+// so the contract is reviewable independently of the code that will serve it.
+
+syntax = "proto3";
+
+package agent.v1;
+
+import "agent/v1/collection.proto";
+import "agent/v1/evidence.proto";
+import "google/protobuf/timestamp.proto";
+
+service AgentGateway {
+  // Long-lived and agent-dialled. The platform pushes work down; the agent
+  // streams evidence up. One stream carries many concurrent investigations,
+  // which is why every message is correlated by investigation_id.
+  rpc Connect(stream AgentMessage) returns (stream PlatformMessage);
+
+  // Separate and unary: a single-use bootstrap token is exchanged for an mTLS
+  // certificate. Kept off the streaming RPC because it is the one call an
+  // unauthenticated peer may make.
+  rpc Register(RegistrationRequest) returns (RegistrationResponse);
+}
+
+message PlatformMessage {
+  oneof payload {
+    CollectionRequest collect = 1;
+    CancelRequest cancel = 2;
+    CapabilityQuery capability = 3;
+    ConfigUpdate config = 4;
+    Heartbeat heartbeat = 5;
+  }
+}
+
+message AgentMessage {
+  oneof payload {
+    AgentHello hello = 1;
+    // Streamed as produced, not batched: a slow collector must not delay
+    // evidence that is already available, and the console renders progress
+    // from what has actually arrived.
+    EvidenceRecord evidence = 2;
+    CollectionDone done = 3;
+    AgentHealth health = 4;
+    ClusterEvent event = 5;
+  }
+}
+
+message AgentHello {
+  string cluster_id = 1;
+  string agent_version = 2;
+  // Kubernetes server version, as reported by the API server.
+  string kubernetes_version = 3;
+  // Evidence kinds this agent can collect. The platform plans against this
+  // rather than assuming a uniform fleet, so an agent two releases behind
+  // degrades to fewer evidence kinds instead of failing.
+  repeated string supported_kinds = 4;
+  // Optional backends actually reachable from inside the cluster, e.g.
+  // "prometheus", "loki". Absence means the platform must record
+  // NOT_APPLICABLE evidence rather than treat missing metrics as healthy ones.
+  repeated string available_backends = 5;
+  // Highest protocol version understood. The platform supports N-2.
+  int32 protocol_version = 6;
+}
+
+message CapabilityQuery {
+  string request_id = 1;
+}
+
+message ConfigUpdate {
+  Budget default_budget = 1;
+  string log_level = 2;
+  // 0 disables event-driven triggers; the agent still answers requests.
+  int32 event_sample_rate = 3;
+}
+
+message Heartbeat {
+  google.protobuf.Timestamp sent_at = 1;
+}
+
+message AgentHealth {
+  google.protobuf.Timestamp reported_at = 1;
+  int32 active_collections = 2;
+  int32 queued_collections = 3;
+  // Set when the agent is degraded but still connected — an expiring
+  // certificate, a throttling API server. Empty means healthy.
+  string degradation = 4;
+}
+
+// A cluster change the agent noticed while watching, used to trigger an
+// investigation without a human asking for one. Advisory only: the platform
+// decides whether to investigate, and re-collects the evidence itself.
+message ClusterEvent {
+  string cluster_id = 1;
+  ResourceRef target = 2;
+  string reason = 3;
+  string message = 4;
+  google.protobuf.Timestamp observed_at = 5;
+}
+
+message RegistrationRequest {
+  // Single-use, issued out of band when the agent is installed.
+  string bootstrap_token = 1;
+  string cluster_id = 2;
+  // PEM certificate signing request. The agent generates the key and never
+  // transmits it.
+  bytes certificate_signing_request = 3;
+  string agent_version = 4;
+}
+
+message RegistrationResponse {
+  bytes certificate = 1;
+  bytes ca_bundle = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  // Where to dial for Connect, which need not be the registration endpoint.
+  string gateway_endpoint = 4;
+}
