@@ -256,5 +256,5 @@ Response shapes are typed in `src/types/investigation.ts`, but the backend retur
 
 ## Notes
 
-- `prompts/` is documented as the home for prompt templates, but no code loads from it today; prompts are inline in `app/ai/prompt_builder.py`. The README's references to `docs/PROJECT_OVERVIEW.md` and the topology/multi-agent features are roadmap, not present.
+- Prompts are inline in `app/ai/prompt_builder.py`. The former `prompts/` directory described a loading convention that was never implemented and has been removed.
 - Dead code with no importers: `app/ai/client.py`, `app/kubernetes/inspector.py` (its `inspect_nodes()` is a hardcoded stub, unrelated to the real `node_inspector.py`), and `start_investigation()` at the bottom of `investigation_service.py`. The live entry points are `LLMClient`, the per-resource inspectors, and `InvestigationService.run()`.
