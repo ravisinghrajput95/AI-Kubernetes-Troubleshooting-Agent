@@ -1,69 +1,80 @@
-import axios from "axios";
+import { apiBaseUrl, get, post } from "./http";
 
 import type { HealthResponse } from "../types/health";
 import type {
   InvestigationHistoryItem,
+  InvestigationJobAccepted,
+  InvestigationJobState,
   InvestigationReport,
   InvestigationResponse,
   KubernetesContextResponse,
 } from "../types/investigation";
 
-const apiBaseUrl =
-  import.meta.env.react_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-
-export const api = axios.create({
-  baseURL: apiBaseUrl,
-  timeout: 120000,
-});
-
-export async function getHealth(): Promise<HealthResponse> {
-  const response = await api.get<HealthResponse>("/health");
-  return response.data;
+export interface InvestigationScope {
+  namespace?: string;
+  resource_kind?: string;
+  resource_name?: string;
 }
 
-export async function investigateCluster(
+export { ApiError } from "./http";
+
+export function getHealth(): Promise<HealthResponse> {
+  return get<HealthResponse>("/health");
+}
+
+export function investigateCluster(
   context?: string,
-  options?: {
-    namespace?: string;
-    resource_kind?: string;
-    resource_name?: string;
-  },
+  options?: InvestigationScope,
 ): Promise<InvestigationResponse> {
-  const response = await api.post<InvestigationResponse>("/investigate", {
-    context,
-    ...options,
-  });
-  return response.data;
+  return post<InvestigationResponse>("/investigate", { context, ...options });
 }
 
-export async function getKubernetesContexts(): Promise<KubernetesContextResponse> {
-  const response = await api.get<KubernetesContextResponse>("/clusters");
-  return response.data;
+export function getKubernetesContexts(): Promise<KubernetesContextResponse> {
+  return get<KubernetesContextResponse>("/clusters");
 }
 
 export async function getInvestigationHistory(): Promise<InvestigationHistoryItem[]> {
-  const response = await api.get<{ items: InvestigationHistoryItem[] }>(
-    "/investigations",
-  );
-  return response.data.items;
+  const response = await get<{ items: InvestigationHistoryItem[] }>("/investigations");
+  return response.items;
 }
 
-export async function getInvestigationReport(
-  id: string,
-): Promise<InvestigationReport> {
-  const response = await api.get<InvestigationReport>(`/investigations/${id}/report`);
-  return response.data;
+export function getInvestigationReport(id: string): Promise<InvestigationReport> {
+  return get<InvestigationReport>(`/investigations/${id}/report`);
 }
 
 export async function regenerateInvestigationReport(
   id: string,
 ): Promise<InvestigationReport> {
-  const response = await api.post<{ report: InvestigationReport }>(
+  const response = await post<{ report: InvestigationReport }>(
     `/investigations/${id}/regenerate`,
   );
-  return response.data.report;
+  return response.report;
 }
 
 export function reportUrl(path: string): string {
   return `${apiBaseUrl}${path}`;
+}
+
+/**
+ * Submit an investigation and return immediately with its id.
+ * The id is also the report id once the run completes.
+ */
+export function startInvestigationJob(
+  context?: string,
+  scope?: InvestigationScope,
+): Promise<InvestigationJobAccepted> {
+  return post<InvestigationJobAccepted>("/investigations", { context, ...scope });
+}
+
+export function getInvestigationJob(id: string): Promise<InvestigationJobState> {
+  return get<InvestigationJobState>(`/investigations/${id}`);
+}
+
+export async function cancelInvestigationJob(id: string): Promise<void> {
+  await post(`/investigations/${id}/cancel`);
+}
+
+/** Absolute URL for the progress stream; EventSource cannot use the JSON client. */
+export function eventStreamUrl(id: string): string {
+  return `${apiBaseUrl}/investigations/${id}/events`;
 }

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { AxiosError } from "axios";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -17,41 +16,18 @@ import type {
   InvestigationResponse,
   KubernetesContext,
 } from "./types/investigation";
+import { useInvestigationJob } from "./hooks/useInvestigationJob";
+import { ConfidenceBreakdown } from "./components/ConfidenceBreakdown";
+import { EvidenceExplorer } from "./components/EvidenceExplorer";
+import { HypothesisPanel } from "./components/HypothesisPanel";
+import { LiveTimeline } from "./components/LiveTimeline";
+import { PlaybookRounds } from "./components/PlaybookRounds";
+import { RemediationPlanPanel } from "./components/RemediationPlanPanel";
+import { SignalTable } from "./components/SignalTable";
 
 type InvestigationData = InvestigationResponse["investigation"];
 
 const logoSrc = "/ai-kubernetes-agent-logo.svg";
-
-const progressSteps = [
-  "Pod Agent",
-  "Logs Agent",
-  "Event Agent",
-  "Deployment Agent",
-  "Network Agent",
-  "RCA Agent",
-];
-
-const progressThemes = [
-  ["border-sky-700 bg-sky-950/40 text-sky-200", "border-sky-400 bg-sky-400 text-slate-950"],
-  ["border-violet-700 bg-violet-950/40 text-violet-200", "border-violet-400 bg-violet-400 text-slate-950"],
-  ["border-amber-700 bg-amber-950/40 text-amber-200", "border-amber-400 bg-amber-400 text-slate-950"],
-  ["border-cyan-700 bg-cyan-950/40 text-cyan-200", "border-cyan-400 bg-cyan-400 text-slate-950"],
-  ["border-fuchsia-700 bg-fuchsia-950/40 text-fuchsia-200", "border-fuchsia-400 bg-fuchsia-400 text-slate-950"],
-  ["border-indigo-700 bg-indigo-950/40 text-indigo-200", "border-indigo-400 bg-indigo-400 text-slate-950"],
-];
-
-function errorMessage(error: unknown) {
-  if (error instanceof AxiosError) {
-    if (error.code === "ECONNABORTED") {
-      return "The investigation timed out. Verify cluster access and try again.";
-    }
-    if (!error.response) {
-      return "Unable to reach the backend API. Confirm FastAPI is running on port 8000.";
-    }
-    return "Investigation failed. Verify kubeconfig, cluster access, kubectl permissions, and OpenAI API settings.";
-  }
-  return "Something went wrong while investigating the cluster.";
-}
 
 function StatusPill({
   label,
@@ -206,65 +182,6 @@ function Sidebar({
         </div>
       </div>
     </aside>
-  );
-}
-
-function ProgressList({
-  activeStep,
-  isRunning,
-}: {
-  activeStep: number;
-  isRunning: boolean;
-}) {
-  return (
-    <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-5 shadow-sm shadow-black/20">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="font-semibold text-slate-100">Agent Workflow</h2>
-          <p className="mt-1 text-sm text-slate-400">
-            {isRunning
-              ? "Specialized agents are collecting evidence..."
-              : "Waiting for investigation."}
-          </p>
-        </div>
-        <span className="rounded-md border border-slate-700 px-3 py-1 text-xs font-medium text-slate-300">
-          {isRunning ? "Running" : "Idle"}
-        </span>
-      </div>
-
-      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {progressSteps.map((step, index) => {
-          const complete = index <= activeStep;
-          const isActive = isRunning && index === activeStep + 1;
-          const [completeClass, dotClass] = progressThemes[index];
-          return (
-            <div
-              key={step}
-              className={`flex min-h-14 items-center gap-3 rounded-md border px-4 py-3 text-sm font-medium ${
-                complete
-                  ? completeClass
-                  : isActive
-                    ? completeClass
-                  : "border-slate-800 bg-[#101722] text-slate-500"
-              }`}
-            >
-              <span
-                className={`grid size-6 shrink-0 place-items-center rounded-full border text-xs ${
-                  complete
-                    ? dotClass
-                    : isActive
-                      ? dotClass.replace("bg-", "bg-").replace(" text-slate-950", "")
-                      : "border-slate-700 text-slate-600"
-                }`}
-              >
-                {complete ? "✓" : ""}
-              </span>
-              <span>{step}</span>
-            </div>
-          );
-        })}
-      </div>
-    </section>
   );
 }
 
@@ -495,11 +412,13 @@ function SecurityFindingsPanel({
 }
 
 function ConfidenceEvidence({ diagnosis }: { diagnosis?: Diagnosis }) {
+  // Only reasoning the backend actually reported. Showing placeholder evidence
+  // labels here would assert support that was never established.
   const signals = Array.isArray(diagnosis?.confidence_reasoning)
     ? diagnosis.confidence_reasoning
     : diagnosis?.confidence_reasoning
       ? [diagnosis.confidence_reasoning]
-      : ["Events", "Pod Logs", "Deployment Analysis", "Image Validation"];
+      : [];
 
   return (
     <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-5 shadow-sm shadow-black/20">
@@ -512,17 +431,23 @@ function ConfidenceEvidence({ diagnosis }: { diagnosis?: Diagnosis }) {
         </div>
         <StatusPill label={`Confidence: ${diagnosis?.confidence ?? 0}%`} tone="info" />
       </div>
-      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {signals.slice(0, 4).map((signal, index) => (
-          <div
-            key={`${signal}-${index}`}
-            className="rounded-md border border-slate-800 bg-[#101722] px-4 py-3 text-sm text-slate-300"
-          >
-            <span className="mr-2 text-lime-300">✓</span>
-            {signal}
-          </div>
-        ))}
-      </div>
+      {signals.length === 0 ? (
+        <p className="mt-4 rounded-md border border-dashed border-slate-800 bg-[#101722] px-4 py-6 text-center text-sm text-slate-500">
+          No confidence reasoning was reported for this investigation.
+        </p>
+      ) : (
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {signals.slice(0, 4).map((signal, index) => (
+            <div
+              key={`${signal}-${index}`}
+              className="rounded-md border border-slate-800 bg-[#101722] px-4 py-3 text-sm text-slate-300"
+            >
+              <span className="mr-2 text-lime-300">✓</span>
+              {signal}
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -919,15 +844,17 @@ function RemediationPanel({
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
           Impact
         </p>
-        <ul className="mt-3 space-y-2 text-sm text-slate-300">
-          {(diagnosis?.remediation_risk?.impact ?? [
-            "Restart Required",
-            "No Downtime Expected",
-            "Rollback Available",
-          ]).map((item) => (
-            <li key={item}>- {item}</li>
-          ))}
-        </ul>
+        {diagnosis?.remediation_risk?.impact?.length ? (
+          <ul className="mt-3 space-y-2 text-sm text-slate-300">
+            {diagnosis.remediation_risk.impact.map((item) => (
+              <li key={item}>- {item}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-sm text-slate-500">
+            No impact assessment was reported.
+          </p>
+        )}
       </div>
       <ol className="mt-4 space-y-2 text-sm text-slate-300">
         <li>1. {diagnosis?.fix ?? "Run an investigation to generate a fix."}</li>
@@ -1499,7 +1426,6 @@ function HistoryTable() {
 
 function Dashboard({ userName }: { userName: string }) {
   const queryClient = useQueryClient();
-  const [activeStep, setActiveStep] = useState(-1);
   const [selectedContext, setSelectedContext] = useState("");
   const [scopeNamespace, setScopeNamespace] = useState("");
   const [scopeKind, setScopeKind] = useState("");
@@ -1513,54 +1439,43 @@ function Dashboard({ userName }: { userName: string }) {
     retry: false,
   });
 
-  const investigation = useMutation({
-    mutationFn: (context?: string) =>
-      investigateCluster(context ?? selectedContext, {
-        namespace: scopeNamespace.trim() || undefined,
-        resource_kind: scopeKind || undefined,
-        resource_name: scopeName.trim() || undefined,
-      }),
-    onMutate: (context?: string) => {
-      if (context) {
-        setSelectedContext(context);
-      }
-      setActiveStep(0);
-    },
-    onSuccess: (response, context) => {
-      setActiveStep(progressSteps.length - 1);
-      const investigatedContext = context ?? response.investigation.context ?? selectedContext;
-      const severity = response.investigation.severity?.severity;
-      if (investigatedContext) {
-        setClusterStatuses((current) => ({
-          ...current,
-          [investigatedContext]:
-            severity === "Critical" || severity === "High"
-              ? "Critical"
-              : severity === "Healthy"
-                ? "Healthy"
-                : "Warning",
-        }));
-      }
-      queryClient.invalidateQueries({ queryKey: ["investigation-history"] });
-    },
-    onError: () => {
-      setActiveStep(-1);
-    },
-  });
+  // Investigations run as background jobs; progress streams from the backend.
+  const job = useInvestigationJob();
+
+  function startInvestigation(context?: string) {
+    const target = context ?? selectedContext;
+    if (context) {
+      setSelectedContext(context);
+    }
+    void job.start(target, {
+      namespace: scopeNamespace.trim() || undefined,
+      resource_kind: scopeKind || undefined,
+      resource_name: scopeName.trim() || undefined,
+    });
+  }
 
   useEffect(() => {
-    if (!investigation.isPending) {
+    if (job.phase !== "succeeded" || !job.investigation) {
       return;
     }
 
-    const timer = window.setInterval(() => {
-      setActiveStep((current) =>
-        Math.min(current + 1, progressSteps.length - 2),
-      );
-    }, 900);
-
-    return () => window.clearInterval(timer);
-  }, [investigation.isPending]);
+    const investigatedContext = job.investigation.context ?? selectedContext;
+    const severity = job.investigation.severity?.severity;
+    if (investigatedContext) {
+      setClusterStatuses((current) => ({
+        ...current,
+        [investigatedContext]:
+          severity === "Critical" || severity === "High"
+            ? "Critical"
+            : severity === "Healthy"
+              ? "Healthy"
+              : "Warning",
+      }));
+    }
+    queryClient.invalidateQueries({ queryKey: ["investigation-history"] });
+    // selectedContext is intentionally excluded: this must fire once per result.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job.phase, job.investigation, queryClient]);
 
   async function investigateAllClusters(contexts: string[]) {
     if (contexts.length === 0 || isInvestigatingAll) {
@@ -1568,7 +1483,6 @@ function Dashboard({ userName }: { userName: string }) {
     }
 
     setIsInvestigatingAll(true);
-    setActiveStep(0);
     for (const context of contexts) {
       setSelectedContext(context);
       setClusterStatuses((current) => ({ ...current, [context]: "Running" }));
@@ -1588,13 +1502,12 @@ function Dashboard({ userName }: { userName: string }) {
         setClusterStatuses((current) => ({ ...current, [context]: "Warning" }));
       }
     }
-    setActiveStep(progressSteps.length - 1);
     setIsInvestigatingAll(false);
     queryClient.invalidateQueries({ queryKey: ["investigation-history"] });
   }
 
-  const investigationData = investigation.data?.investigation;
-  const diagnosis = investigation.data?.diagnosis;
+  const investigationData = job.investigation;
+  const diagnosis = job.diagnosis;
   const healthMessage = investigationData?.health?.message;
   const healthStatus = investigationData?.health?.status;
   const systemStatus = useMemo(() => {
@@ -1677,11 +1590,11 @@ function Dashboard({ userName }: { userName: string }) {
                   </div>
                   <button
                     type="button"
-                    onClick={() => investigation.mutate(selectedContext)}
-                    disabled={investigation.isPending || isInvestigatingAll || !selectedContext}
+                    onClick={() => startInvestigation()}
+                    disabled={job.isRunning || isInvestigatingAll || !selectedContext}
                     className="rounded-md bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
                   >
-                    {investigation.isPending || isInvestigatingAll
+                    {job.isRunning || isInvestigatingAll
                       ? "Investigating..."
                       : "Investigate Cluster"}
                   </button>
@@ -1703,7 +1616,7 @@ function Dashboard({ userName }: { userName: string }) {
                   Investigation
                 </p>
                 <p className="mt-2 text-sm font-semibold text-violet-200">
-                  {investigation.isPending || isInvestigatingAll ? "Running" : "Ready"}
+                  {job.isRunning || isInvestigatingAll ? "Running" : "Ready"}
                 </p>
               </div>
               <div className="rounded-lg border border-amber-900/70 bg-amber-950/20 p-4">
@@ -1725,16 +1638,16 @@ function Dashboard({ userName }: { userName: string }) {
               clusterStatuses={clusterStatuses}
               onSelectContext={setSelectedContext}
               onInvestigateAll={investigateAllClusters}
-              isInvestigating={investigation.isPending || isInvestigatingAll}
+              isInvestigating={job.isRunning || isInvestigatingAll}
             />
 
             <MetricsPanel metrics={investigationData?.metrics} />
 
             <SecurityFindingsPanel security={investigationData?.security} />
 
-            {investigation.isError ? (
+            {job.error ? (
               <div className="rounded-lg border border-red-900/70 bg-red-950/40 px-4 py-3 text-sm text-red-200">
-                {errorMessage(investigation.error)}
+                {job.error}
                 <div className="mt-2 text-red-100">
                   Please verify kubeconfig path, cluster access, kubectl
                   permissions, and backend connectivity.
@@ -1748,26 +1661,33 @@ function Dashboard({ userName }: { userName: string }) {
               </div>
             ) : null}
 
-            <ProgressList
-              activeStep={activeStep}
-              isRunning={investigation.isPending}
+            <LiveTimeline
+              phase={job.phase}
+              transport={job.transport}
+              timeline={job.timeline}
+              onCancel={() => void job.cancel()}
             />
 
             {diagnosis ? (
               <div className="grid items-start gap-5 xl:grid-cols-[1.3fr_0.7fr]">
                 <div className="grid gap-5">
                   <DiagnosisCard diagnosis={diagnosis} />
+                  <HypothesisPanel diagnosis={diagnosis} />
+                  <ConfidenceBreakdown diagnosis={diagnosis} />
+                  <SignalTable diagnosis={diagnosis} />
+                  <RemediationPlanPanel diagnosis={diagnosis} />
                   <ConfidenceEvidence diagnosis={diagnosis} />
                   <RemediationPanel
                     diagnosis={diagnosis}
                     investigation={investigationData}
                   />
                 </div>
-                <div className="xl:sticky xl:top-5">
+                <div className="grid gap-5 xl:sticky xl:top-5">
                   <IncidentAssistantPanel
                     diagnosis={diagnosis}
                     investigation={investigationData}
                   />
+                  <PlaybookRounds investigation={investigationData} />
                 </div>
               </div>
             ) : (
@@ -1787,9 +1707,14 @@ function Dashboard({ userName }: { userName: string }) {
               <TimelinePanel timeline={investigationData?.timeline} />
             </section>
 
+            <EvidenceExplorer
+              investigation={investigationData}
+              citedEvidence={diagnosis?.cited_evidence}
+            />
+
             <section className="grid gap-5 xl:grid-cols-2">
               <CommandsPanel commands={investigationData?.executed_commands} />
-              <ArtifactsPanel historyItem={investigation.data?.history_item} />
+              <ArtifactsPanel historyItem={job.historyItem} />
             </section>
 
             <HistoryTable />
