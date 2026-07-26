@@ -1,7 +1,10 @@
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-pydantic==2.10.4
-pydantic-settings==2.7.1
+# Pinned to the versions the test suite is verified against. These were bumped
+# from the original pins after `pip-audit` reported known vulnerabilities in
+# PyJWT (which validates auth tokens) and Starlette (via FastAPI).
+fastapi==0.140.0
+uvicorn[standard]==0.51.0
+pydantic==2.13.4
+pydantic-settings==2.14.2
 loguru==0.7.3
 httpx==0.28.1
 # Generated patches are applied to production clusters; hand-rolled YAML
@@ -9,5 +12,4 @@ httpx==0.28.1
 PyYAML==6.0.2
 # Hand-rolling JWT signature verification is a well-known way to ship an auth
 # bypass; use the maintained implementation.
-PyJWT[crypto]==2.10.1
-
+PyJWT[crypto]==2.13.0

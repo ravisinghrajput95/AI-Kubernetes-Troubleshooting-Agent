@@ -54,7 +54,7 @@ ruff format --check .   # CI enforces formatting
 
 `.github/workflows/ci.yml` runs lint, format, backend tests on Python 3.12/3.13, frontend build and tests, a dependency audit, a secret scan, and both Docker builds.
 
-Note that `requirements.txt` pins `pydantic==2.10.4`, which has no wheel for Python 3.14 — use Python 3.12 (as the Dockerfile does) for an environment matching the pinned set.
+`requirements.txt` pins are kept current and audited — `pip-audit --strict` runs in CI and **fails the build**, because the original pins shipped known CVEs in PyJWT (which validates auth tokens) and Starlette.
 
 **Security status:** there is no authentication on any endpoint. See `SECURITY.md` and `docs/PRODUCTION_READINESS.md` — do not deploy against a production cluster.
 
