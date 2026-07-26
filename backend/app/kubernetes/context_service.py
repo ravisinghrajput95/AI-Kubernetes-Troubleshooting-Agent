@@ -4,8 +4,8 @@ from app.kubernetes.kubectl_executor import KubectlExecutor
 
 
 class KubernetesContextService:
-    def __init__(self) -> None:
-        self.kubectl = KubectlExecutor()
+    def __init__(self, principal=None) -> None:
+        self.kubectl = KubectlExecutor(principal=principal)
 
     def list_contexts(self) -> dict[str, Any]:
         current = self.kubectl.run(["config", "current-context"])

@@ -70,11 +70,11 @@ class DeploymentInspector:
             status = condition.get("status", "")
             reason = condition.get("reason", "")
 
-            if condition_type == "ReplicaFailure" and status == "True":
-                findings.append(self._condition_summary(condition))
-            elif condition_type == "Progressing" and status == "False":
-                findings.append(self._condition_summary(condition))
-            elif reason in {"ProgressDeadlineExceeded", "FailedCreate"}:
+            if (
+                (condition_type == "ReplicaFailure" and status == "True")
+                or (condition_type == "Progressing" and status == "False")
+                or reason in {"ProgressDeadlineExceeded", "FailedCreate"}
+            ):
                 findings.append(self._condition_summary(condition))
 
         return findings

@@ -35,4 +35,3 @@ class ConfidenceEngine:
             reasons.append("No strong failure signal was found in the collected evidence")
 
         return min(score, 95), reasons
-

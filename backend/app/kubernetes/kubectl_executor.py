@@ -1,12 +1,15 @@
 import json
 import os
 import subprocess
+import threading
 from dataclasses import dataclass
 from typing import Any
 
 from loguru import logger
 
+from app.auth.models import Principal
 from app.core.config import settings
+from app.kubernetes.command_policy import assert_read_only
 
 
 @dataclass
@@ -30,16 +33,50 @@ class KubectlResult:
 
 
 class KubectlExecutor:
-    def __init__(self, context: str | None = None) -> None:
+    def __init__(
+        self,
+        context: str | None = None,
+        principal: "Principal | None" = None,
+    ) -> None:
         self.context = context
+        self.principal = principal
         self.executed_commands: list[str] = []
+        self._audit_lock = threading.Lock()
+
+    def _impersonation_args(self, args: list[str]) -> list[str]:
+        """Impersonation flags for the calling user.
+
+        Without this, an authenticated user reads everything the service
+        account's kubeconfig can reach — authentication alone would only decide
+        *whether* you get in, not *what you can see*. With it, the cluster
+        applies the user's own RBAC and the platform cannot exceed it.
+
+        Local kubeconfig operations are excluded: there is no API server call to
+        impersonate against.
+        """
+        if not settings.impersonate_users or self.principal is None:
+            return []
+        if self.principal.anonymous or args[:1] == ["config"]:
+            return []
+
+        flags = ["--as", self.principal.subject]
+        for group in self.principal.groups:
+            flags.extend(["--as-group", group])
+        return flags
 
     def run(self, args: list[str], parse_json: bool = False) -> KubectlResult:
+        assert_read_only(args)
+
         command = ["kubectl"]
         if self.context and args[:2] != ["config", "get-contexts"]:
             command.extend(["--context", self.context])
+        command.extend(self._impersonation_args(args))
         command.extend(args)
-        self.executed_commands.append(" ".join(command))
+
+        # Collectors run concurrently in worker threads; keep the audit trail intact.
+        with self._audit_lock:
+            self.executed_commands.append(" ".join(command))
+
         env = os.environ.copy()
 
         if settings.kubeconfig_path:

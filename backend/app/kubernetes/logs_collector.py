@@ -63,4 +63,3 @@ class LogsCollector:
             return lines[:25]
 
         return [line[:500] for line in logs.splitlines()[-20:]]
-

@@ -4,4 +4,10 @@ pydantic==2.10.4
 pydantic-settings==2.7.1
 loguru==0.7.3
 httpx==0.28.1
+# Generated patches are applied to production clusters; hand-rolled YAML
+# quoting is not a risk worth taking.
+PyYAML==6.0.2
+# Hand-rolling JWT signature verification is a well-known way to ship an auth
+# bypass; use the maintained implementation.
+PyJWT[crypto]==2.10.1
 

@@ -18,6 +18,38 @@ class Settings(BaseSettings):
     kubectl_timeout_seconds: int = 30
     llm_timeout_seconds: int = 45
 
+    # Optional observability backends. Empty means "not deployed": the
+    # collectors record unavailable evidence rather than failing, so an
+    # investigation degrades instead of breaking.
+    prometheus_url: str = Field(default="", validation_alias="PROMETHEUS_URL")
+    loki_url: str = Field(default="", validation_alias="LOKI_URL")
+    observability_timeout_seconds: int = 15
+    metrics_lookback_minutes: int = 60
+
+    # --- Authentication -----------------------------------------------------
+    # "oidc" for production, "token" for simple deployments, "disabled" only for
+    # local development. `disabled` is refused unless explicitly acknowledged,
+    # because this service holds a kubeconfig.
+    auth_mode: str = Field(default="disabled", validation_alias="AUTH_MODE")
+    allow_insecure_no_auth: bool = Field(default=False, validation_alias="ALLOW_INSECURE_NO_AUTH")
+
+    oidc_issuer: str = Field(default="", validation_alias="OIDC_ISSUER")
+    oidc_audience: str = Field(default="", validation_alias="OIDC_AUDIENCE")
+    oidc_jwks_url: str = Field(default="", validation_alias="OIDC_JWKS_URL")
+    oidc_username_claim: str = Field(default="email", validation_alias="OIDC_USERNAME_CLAIM")
+    oidc_groups_claim: str = Field(default="groups", validation_alias="OIDC_GROUPS_CLAIM")
+
+    # `token:subject:group1,group2` entries, comma separated.
+    api_tokens: str = Field(default="", validation_alias="API_TOKENS")
+
+    # --- Kubernetes impersonation ------------------------------------------
+    # With impersonation on, every cluster read runs as the calling user, so the
+    # user's own RBAC applies rather than the service account's. This is what
+    # stops an authenticated user reading everything the kubeconfig can reach.
+    impersonate_users: bool = Field(default=True, validation_alias="IMPERSONATE_USERS")
+
+    audit_log_path: str = Field(default="", validation_alias="AUDIT_LOG_PATH")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

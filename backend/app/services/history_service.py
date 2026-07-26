@@ -1,4 +1,8 @@
 import json
+import os
+import re
+import tempfile
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from textwrap import wrap
@@ -6,6 +10,17 @@ from typing import Any
 from uuid import uuid4
 
 from loguru import logger
+
+from app.reports.composer import IncidentReportComposer
+
+# Investigation ids are UUIDs. Anything else is rejected before it can be used
+# to build a filesystem path.
+SAFE_ID = re.compile(r"^[0-9a-fA-F-]{8,64}$")
+
+# Serialises the read-modify-write of the history index within this process.
+# Across processes the atomic replace prevents a torn file, but a concurrent
+# writer can still lose an entry — see docs/PRODUCTION_READINESS.md (F20).
+_HISTORY_LOCK = threading.Lock()
 
 
 class InvestigationHistoryService:
@@ -20,8 +35,11 @@ class InvestigationHistoryService:
         diagnosis: dict[str, Any],
         investigation: dict[str, Any],
         status: str = "success",
+        investigation_id: str | None = None,
+        owner: str = "",
     ) -> dict[str, Any]:
-        investigation_id = str(uuid4())
+        # Callers that already published an id (the job API) pin the report to it.
+        investigation_id = investigation_id or str(uuid4())
         timestamp = datetime.now(UTC).isoformat()
         incident_id = self._incident_id(timestamp, investigation_id)
         namespace = self._namespace(investigation)
@@ -31,8 +49,12 @@ class InvestigationHistoryService:
         json_path = self.reports_dir / f"{investigation_id}.json"
         markdown_path = self.reports_dir / f"{investigation_id}.md"
 
-        self._write_pdf(pdf_path, diagnosis, investigation, timestamp, namespace, status, incident_id)
-        self._write_json(json_path, diagnosis, investigation, timestamp, namespace, status, incident_id)
+        self._write_pdf(
+            pdf_path, diagnosis, investigation, timestamp, namespace, status, incident_id
+        )
+        self._write_json(
+            json_path, diagnosis, investigation, timestamp, namespace, status, incident_id
+        )
         self._write_markdown(
             markdown_path,
             diagnosis,
@@ -45,6 +67,7 @@ class InvestigationHistoryService:
 
         item = {
             "id": investigation_id,
+            "owner": owner,
             "incident_id": incident_id,
             "timestamp": timestamp,
             "root_cause": root_cause,
@@ -63,20 +86,60 @@ class InvestigationHistoryService:
             "markdown_url": f"/investigations/{investigation_id}/markdown",
         }
 
-        history = self.list_history()
-        history.insert(0, item)
-        self.index_path.write_text(json.dumps(history[:25], indent=2), encoding="utf-8")
+        with _HISTORY_LOCK:
+            history = self._read_index()
+            history.insert(0, item)
+            self._write_atomic(self.index_path, json.dumps(history[:25], indent=2))
         logger.info("Saved investigation report {id}", id=investigation_id)
         return item
 
-    def list_history(self) -> list[dict[str, Any]]:
+    def _write_atomic(self, path: Path, content: str) -> None:
+        """Write via a temp file and atomic rename.
+
+        A crash or a full disk part-way through leaves the previous file intact
+        rather than a truncated one. The previous implementation wrote in place,
+        so an interrupted write corrupted the history index.
+        """
+        handle, temp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_name, path)
+        except OSError:
+            Path(temp_name).unlink(missing_ok=True)
+            raise
+
+    def list_history(self, owner: str | None = None) -> list[dict[str, Any]]:
+        """History entries, optionally restricted to one owner.
+
+        `owner=None` returns everything and is for internal callers only. API
+        handlers must pass the caller's subject: one user's investigations are
+        not another's to read.
+        """
+        entries = self._read_index()
+        if owner is None:
+            return entries
+        return [entry for entry in entries if entry.get("owner", "") == owner]
+
+    def _read_index(self) -> list[dict[str, Any]]:
         if not self.index_path.exists():
             return []
 
         try:
             data = json.loads(self.index_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            logger.warning("Investigation history index is invalid; starting fresh")
+        except (json.JSONDecodeError, OSError):
+            # Never silently discard history: move it aside so it can be
+            # recovered, and make the event loud.
+            quarantine = self.index_path.with_suffix(
+                f".corrupt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}.json"
+            )
+            try:
+                self.index_path.rename(quarantine)
+                logger.error("History index was unreadable; quarantined to {path}", path=quarantine)
+            except OSError:
+                logger.error("History index was unreadable and could not be quarantined")
             return []
 
         return data if isinstance(data, list) else []
@@ -85,13 +148,48 @@ class InvestigationHistoryService:
         extension = {"pdf": "pdf", "json": "json", "markdown": "md"}.get(report_type)
         if extension is None:
             return None
+        if not SAFE_ID.match(investigation_id or ""):
+            logger.warning(
+                "Rejecting malformed investigation id: {id}", id=str(investigation_id)[:80]
+            )
+            return None
 
-        path = self.reports_dir / f"{investigation_id}.{extension}"
+        path = (self.reports_dir / f"{investigation_id}.{extension}").resolve()
+
+        # Defence in depth: even with a validated id, never serve a path that
+        # resolves outside the reports directory.
+        if not path.is_relative_to(self.reports_dir.resolve()):
+            logger.error("Path traversal attempt blocked: {id}", id=investigation_id)
+            return None
+
         if not path.exists():
             return None
         return path
 
-    def read_report(self, investigation_id: str) -> dict[str, Any] | None:
+    def owns(self, investigation_id: str, owner: str | None) -> bool:
+        """True when `owner` may read this investigation.
+
+        An unknown id returns True so the caller still 404s rather than 403s —
+        a distinct response would confirm the id exists.
+        """
+        if owner is None:
+            return True
+        entry = next(
+            (item for item in self._read_index() if item.get("id") == investigation_id),
+            None,
+        )
+        if entry is None:
+            return True
+        return entry.get("owner", "") == owner
+
+    def read_report(
+        self,
+        investigation_id: str,
+        owner: str | None = None,
+    ) -> dict[str, Any] | None:
+        if not self.owns(investigation_id, owner):
+            return None
+
         path = self.report_path(investigation_id, "json")
         if path is None:
             return None
@@ -117,7 +215,9 @@ class InvestigationHistoryService:
         timestamp = str(report.get("timestamp") or datetime.now(UTC).isoformat())
         status = str(report.get("status") or "success")
         namespace = str(report.get("namespace") or self._namespace(investigation))
-        incident_id = str(report.get("incident_id") or self._incident_id(timestamp, investigation_id))
+        incident_id = str(
+            report.get("incident_id") or self._incident_id(timestamp, investigation_id)
+        )
 
         self._write_pdf(
             self.reports_dir / f"{investigation_id}.pdf",
@@ -188,9 +288,10 @@ class InvestigationHistoryService:
             "json_url": f"/investigations/{investigation_id}/json",
             "markdown_url": f"/investigations/{investigation_id}/markdown",
         }
-        history = [entry for entry in self.list_history() if entry.get("id") != investigation_id]
-        history.insert(0, item)
-        self.index_path.write_text(json.dumps(history[:25], indent=2), encoding="utf-8")
+        with _HISTORY_LOCK:
+            history = [entry for entry in self._read_index() if entry.get("id") != investigation_id]
+            history.insert(0, item)
+            self._write_atomic(self.index_path, json.dumps(history[:25], indent=2))
 
     def _namespace(self, investigation: dict[str, Any]) -> str:
         pods = investigation.get("pods", {}).get("problematic_pods", [])
@@ -217,19 +318,17 @@ class InvestigationHistoryService:
         status: str,
         incident_id: str,
     ) -> None:
+        # Only the cover-page metadata is derived here; the body comes from the
+        # composer. The per-section helpers this used to call became dead work
+        # when the composer replaced the hardcoded sections.
         severity = self._report_severity(investigation)
-        metrics = investigation.get("metrics", {})
-        risk = diagnosis.get("remediation_risk", {})
-        security = investigation.get("security", {})
-        security_findings = security.get("findings", [])
-        cluster = investigation.get("context") or investigation.get("topology", {}).get("cluster") or "Current Context"
+        cluster = (
+            investigation.get("context")
+            or investigation.get("topology", {}).get("cluster")
+            or "Current Context"
+        )
         environment = self._environment(cluster)
         incident_status = self._incident_status(investigation)
-        confidence_breakdown = self._confidence_breakdown(diagnosis, investigation)
-        evidence_matrix = self._evidence_matrix(investigation)
-        topology_lines = self._topology_lines(investigation)
-        timeline_lines = self._timeline_lines(investigation)
-        business_impact = self._business_impact(investigation)
 
         meta = [
             ("Incident", incident_id),
@@ -239,100 +338,18 @@ class InvestigationHistoryService:
             ("Status", incident_status),
             ("Environment", environment),
         ]
+        # Sections come from the shared composer, so the PDF, Markdown and
+        # JSON reports present one composition rather than three.
+        report = IncidentReportComposer().compose(
+            diagnosis, investigation, incident_id, timestamp, namespace, status
+        )
         sections = [
             {
-                "title": "Executive Summary",
-                "body": [
-                    f"Incident ID: {incident_id}",
-                    f"Cluster: {cluster}",
-                    f"Environment: {environment}",
-                    f"Namespace: {namespace}",
-                    f"Severity: {severity}",
-                    f"Status: {incident_status}",
-                    f"Root Cause: {diagnosis.get('root_cause', 'Unknown root cause')}",
-                    "Business Impact:",
-                    *business_impact,
-                    f"Overall Confidence: {diagnosis.get('confidence', 0)}%",
-                ],
-            },
-            {
-                "title": "AI Confidence Breakdown",
-                "body": [
-                    f"{label}: {value}%"
-                    for label, value in confidence_breakdown
-                ]
-                + [f"Overall Confidence: {diagnosis.get('confidence', 0)}%"],
-            },
-            {
-                "title": "Evidence Matrix",
-                "body": [f"{source}: {state}" for source, state in evidence_matrix],
-            },
-            {
-                "title": "Recommended Fix",
-                "body": [
-                    diagnosis.get("fix", ""),
-                    "Impact: "
-                    + ", ".join(risk.get("impact", ["Not assessed"])),
-                ],
-            },
-            {
-                "title": "Cluster Topology",
-                "body": topology_lines,
-                "monospace": True,
-            },
-            {
-                "title": "Investigation Timeline",
-                "body": timeline_lines,
-                "monospace": True,
-            },
-            {
-                "title": "Cluster Snapshot",
-                "body": [
-                    f"Nodes: {investigation.get('overview', {}).get('nodes', 'Unavailable')}",
-                    f"Pods: {investigation.get('overview', {}).get('pods', 'Unavailable')}",
-                    f"CPU Usage: {metrics.get('cpu_usage', 'N/A')}",
-                    f"Memory Usage: {metrics.get('memory_usage', 'N/A')}",
-                    f"Alerts: {investigation.get('overview', {}).get('alerts', 0)}",
-                    f"Critical Issues: {investigation.get('overview', {}).get('critical_issues', 0)}",
-                ],
-            },
-            {
-                "title": "Security Findings",
-                "body": [
-                    f"{item.get('status', 'unknown').upper()}: {item.get('label', 'Finding')} - {item.get('detail', '')}"
-                    for item in security_findings
-                ]
-                or ["No security findings were recorded."],
-            },
-            {
-                "title": "Recommended kubectl Commands",
-                "body": diagnosis.get("kubectl_commands", []) or ["No commands returned."],
-                "monospace": True,
-            },
-            {
-                "title": "Next Steps",
-                "body": diagnosis.get("next_steps", []) or ["No next steps returned."],
-            },
-            {
-                "title": "Evidence Gaps",
-                "body": diagnosis.get("evidence_gaps", []) or ["No evidence gaps recorded."],
-            },
-            {
-                "title": "Rollback Commands",
-                "body": diagnosis.get("remediation_plan", {}).get("rollback_commands", [])
-                or ["No rollback commands returned."],
-                "monospace": True,
-            },
-            {
-                "title": "Evidence Commands Executed",
-                "body": investigation.get("executed_commands", [])[:20]
-                or ["No evidence commands captured."],
-                "monospace": True,
-            },
-            {
-                "title": "Prevention",
-                "body": [diagnosis.get("prevention", "No prevention guidance returned.")],
-            },
+                "title": section.title,
+                "body": section.as_lines(),
+                "monospace": section.title.startswith("Appendix"),
+            }
+            for section in report.sections
         ]
 
         self._styled_pdf(
@@ -353,7 +370,11 @@ class InvestigationHistoryService:
         status: str,
         incident_id: str,
     ) -> None:
-        cluster = investigation.get("context") or investigation.get("topology", {}).get("cluster") or "Current Context"
+        cluster = (
+            investigation.get("context")
+            or investigation.get("topology", {}).get("cluster")
+            or "Current Context"
+        )
         payload = {
             "incident_id": incident_id,
             "timestamp": timestamp,
@@ -376,8 +397,13 @@ class InvestigationHistoryService:
             },
             "diagnosis": diagnosis,
             "investigation": investigation,
+            # The same composition the PDF and Markdown render, so a consumer of
+            # the JSON sees the report rather than having to rebuild it.
+            "report": IncidentReportComposer()
+            .compose(diagnosis, investigation, incident_id, timestamp, namespace, status)
+            .to_dict(),
         }
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._write_atomic(path, json.dumps(payload, indent=2))
 
     def _write_markdown(
         self,
@@ -389,98 +415,62 @@ class InvestigationHistoryService:
         status: str,
         incident_id: str,
     ) -> None:
-        cluster = investigation.get("context") or investigation.get("topology", {}).get("cluster") or "Current Context"
-        commands = "\n".join(
-            f"- `{command}`" for command in diagnosis.get("kubectl_commands", [])
+        """Render the composed report as Markdown.
+
+        Shares the composition with the PDF, so the two cannot describe the
+        same incident differently.
+        """
+        report = IncidentReportComposer().compose(
+            diagnosis, investigation, incident_id, timestamp, namespace, status
         )
-        executed = "\n".join(
-            f"- `{command}`" for command in investigation.get("executed_commands", [])
-        )
-        confidence_breakdown = "\n".join(
-            f"- {label}: {value}%" for label, value in self._confidence_breakdown(diagnosis, investigation)
-        )
-        evidence_matrix = "\n".join(
-            f"| {source} | {state} |" for source, state in self._evidence_matrix(investigation)
-        )
-        timeline = "\n".join(f"- `{line}`" for line in self._timeline_lines(investigation))
-        topology = "\n".join(f"    {line}" for line in self._topology_lines(investigation))
-        content = f"""# AI Kubernetes Investigation Report
 
-Incident ID: {incident_id}
+        parts = [f"# {report.title}", "", f"_Incident {report.incident_id}_", ""]
 
-Timestamp: {timestamp}
+        for section in report.sections:
+            parts.append(f"## {section.title}")
+            parts.append("")
 
-Status: {status}
+            if section.fields:
+                parts.append("| Field | Value |")
+                parts.append("| --- | --- |")
+                parts.extend(
+                    f"| {field.label} | {self._md_escape(field.value)} |"
+                    for field in section.fields
+                )
+                parts.append("")
 
-Incident Status: {self._incident_status(investigation)}
+            if section.body:
+                parts.extend(self._md_line(line) for line in section.body)
+                parts.append("")
 
-Cluster: {cluster}
+            if section.table:
+                width = max([len(row) for row in section.table] + [len(section.headers)])
+                headers = [
+                    *section.headers,
+                    *([""] * (width - len(section.headers))),
+                ]
+                parts.append("| " + " | ".join(headers) + " |")
+                parts.append("| " + " | ".join(["---"] * width) + " |")
+                for row in section.table:
+                    padded = [*row, *([""] * (width - len(row)))]
+                    parts.append("| " + " | ".join(self._md_escape(cell) for cell in padded) + " |")
+                parts.append("")
 
-Environment: {self._environment(cluster)}
+            if section.note:
+                parts.append(f"> {section.note}")
+                parts.append("")
 
-Namespace: {namespace}
+        self._write_atomic(path, "\n".join(parts).rstrip() + "\n")
 
-Severity: {self._report_severity(investigation)}
+    def _md_line(self, line: str) -> str:
+        """Preserve command lines as code, leave prose as prose."""
+        stripped = line.strip()
+        if stripped.startswith("$ ") or stripped.startswith("kubectl "):
+            return f"    {stripped}"
+        return line
 
-## Root Cause
-
-{diagnosis.get("root_cause", "Unknown root cause")}
-
-## Business Impact
-
-{self._markdown_list(self._business_impact(investigation))}
-
-## Explanation
-
-{diagnosis.get("explanation", "")}
-
-## Suggested Fix
-
-{diagnosis.get("fix", "")}
-
-## Confidence
-
-{diagnosis.get("confidence", 0)}%
-
-## AI Confidence Breakdown
-
-{confidence_breakdown}
-
-Overall Confidence: {diagnosis.get("confidence", 0)}%
-
-## Evidence Matrix
-
-| Evidence Source | Status |
-| --- | --- |
-{evidence_matrix}
-
-## Cluster Topology
-
-```text
-{topology}
-```
-
-## Investigation Timeline
-
-{timeline}
-
-## Recommended Commands
-
-{commands}
-
-## Next Steps
-
-{self._markdown_list(diagnosis.get("next_steps", []))}
-
-## Evidence Gaps
-
-{self._markdown_list(diagnosis.get("evidence_gaps", []))}
-
-## Executed Evidence Commands
-
-{executed}
-"""
-        path.write_text(content, encoding="utf-8")
+    def _md_escape(self, value: str) -> str:
+        return str(value).replace("|", "\\|").replace("\n", " ")
 
     def _incident_id(self, timestamp: str, investigation_id: str) -> str:
         date_part = timestamp[:10].replace("-", "")
@@ -513,7 +503,11 @@ Overall Confidence: {diagnosis.get("confidence", 0)}%
         if investigation.get("health", {}).get("status") == "error":
             return "Critical"
         severity = investigation.get("severity", {}).get("severity", "Not assessed")
-        return "Critical" if severity == "Healthy" and self._has_failed_evidence(investigation) else severity
+        return (
+            "Critical"
+            if severity == "Healthy" and self._has_failed_evidence(investigation)
+            else severity
+        )
 
     def _business_impact(self, investigation: dict[str, Any]) -> list[str]:
         if investigation.get("health", {}).get("status") == "healthy":
@@ -569,7 +563,11 @@ Overall Confidence: {diagnosis.get("confidence", 0)}%
     def _signal_score(self, section: dict[str, Any], weight: int) -> int:
         if section.get("error"):
             return 0
-        if section.get("findings") or section.get("problematic_pods") or section.get("unhealthy_deployments"):
+        if (
+            section.get("findings")
+            or section.get("problematic_pods")
+            or section.get("unhealthy_deployments")
+        ):
             return weight
         if section.get("healthy") is True:
             return max(5, weight // 3)
@@ -585,14 +583,21 @@ Overall Confidence: {diagnosis.get("confidence", 0)}%
             ("Storage", self._evidence_status(investigation.get("storage", {}))),
             ("Extended Workloads", self._evidence_status(investigation.get("workloads", {}))),
             ("API Connectivity", self._api_status(investigation)),
-            ("Port 6443", "Closed" if self._api_connection_refused(investigation) else "Unverified"),
+            (
+                "Port 6443",
+                "Closed" if self._api_connection_refused(investigation) else "Unverified",
+            ),
         ]
         return rows
 
     def _evidence_status(self, section: dict[str, Any]) -> str:
         if section.get("error"):
             return "Failed"
-        if section.get("findings") or section.get("problematic_pods") or section.get("unhealthy_deployments"):
+        if (
+            section.get("findings")
+            or section.get("problematic_pods")
+            or section.get("unhealthy_deployments")
+        ):
             return "Findings"
         if section.get("healthy") is True:
             return "Passed"
@@ -783,7 +788,7 @@ Overall Confidence: {diagnosis.get("confidence", 0)}%
             f"<< /Type /Pages /Kids [{' '.join(f'{item} 0 R' for item in page_ids)}] /Count {page_count} >>",
         ]
 
-        for page_id, content_id in zip(page_ids, content_ids, strict=True):
+        for _page_id, content_id in zip(page_ids, content_ids, strict=True):
             objects.append(
                 f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
                 f"/Resources << /Font << /F1 {font_regular_id} 0 R /F2 {font_bold_id} 0 R /F3 {font_mono_id} 0 R >> >> "
