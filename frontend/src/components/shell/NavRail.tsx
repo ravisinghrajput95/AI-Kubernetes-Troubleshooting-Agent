@@ -24,6 +24,10 @@ export interface NavDestination {
   chord: string;
 }
 
+// A cluster workspace lives at /clusters/:context and is reached from Fleet.
+// There is no "Clusters" destination here because Fleet *is* the cluster list
+// — a second nav item would be a second door to the same room, and the rule
+// this rail follows is that a destination needs something of its own behind it.
 export const DESTINATIONS: NavDestination[] = [
   // Fleet is first and Fleet is `/`. An enterprise operator's mental model is
   // a fleet of clusters they are accountable for; naming the default route

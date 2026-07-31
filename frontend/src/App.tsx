@@ -34,6 +34,7 @@ import {
 import { useScope } from "./hooks/useScope";
 import { useDocumentTitle } from "./hooks/useDocumentTitle";
 import { AppShell } from "./components/shell/AppShell";
+import { ClusterPage } from "./routes/ClusterPage";
 import { FleetPage } from "./routes/FleetPage";
 import { ReportsPage } from "./routes/ReportsPage";
 import { SettingsPage } from "./routes/SettingsPage";
@@ -75,246 +76,6 @@ function StatusPill({
     >
       {label}
     </span>
-  );
-}
-
-function ClusterHealthOverview({
-  overview,
-}: {
-  overview?: {
-    nodes?: string;
-    pods?: string;
-    cpu_usage?: string;
-    memory_usage?: string;
-    alerts?: number;
-    critical_issues?: number;
-  };
-}) {
-  const items = [
-    ["Nodes", overview?.nodes ?? "Not checked", "text-sky-200"],
-    ["Pods", overview?.pods ?? "Not checked", "text-violet-200"],
-    ["CPU Usage", overview?.cpu_usage ?? "N/A", "text-amber-200"],
-    ["Memory Usage", overview?.memory_usage ?? "N/A", "text-cyan-200"],
-    ["Alerts", overview?.alerts ?? 0, "text-fuchsia-200"],
-    ["Critical Issues", overview?.critical_issues ?? 0, "text-red-200"],
-  ];
-
-  return (
-    <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-5 shadow-sm shadow-black/20">
-      <h2 className="font-semibold text-slate-100">Cluster Health Overview</h2>
-      <p className="mt-1 text-sm text-slate-400">
-        Immediate operational snapshot from the selected context.
-      </p>
-      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-        {items.map(([label, value, color]) => (
-          <div key={label} className="rounded-md border border-slate-800 bg-[#101722] p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              {label}
-            </p>
-            <p className={`mt-2 text-lg font-semibold ${color}`}>{value}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function MetricsPanel({ metrics }: { metrics?: InvestigationData["metrics"] }) {
-  const topPods = metrics?.top_pods ?? [];
-  const nodeMetrics = metrics?.node_metrics ?? [];
-
-  return (
-    <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-5 shadow-sm shadow-black/20">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="font-semibold text-slate-100">Real Cluster Metrics</h2>
-          <p className="mt-1 text-sm text-slate-400">
-            {metrics?.message ?? "Metrics appear after a cluster investigation."}
-          </p>
-        </div>
-        <StatusPill
-          label={metrics?.available ? "metrics-server" : "Waiting"}
-          tone={metrics?.available ? "good" : "neutral"}
-        />
-      </div>
-
-      <div className="mt-5 grid gap-3 md:grid-cols-2">
-        <div className="rounded-md border border-slate-800 bg-[#101722] p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            CPU Usage
-          </p>
-          <p className="mt-2 text-2xl font-semibold text-amber-200">
-            {metrics?.cpu_usage ?? "N/A"}
-          </p>
-        </div>
-        <div className="rounded-md border border-slate-800 bg-[#101722] p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Memory Usage
-          </p>
-          <p className="mt-2 text-2xl font-semibold text-cyan-200">
-            {metrics?.memory_usage ?? "N/A"}
-          </p>
-        </div>
-      </div>
-
-      {nodeMetrics.length ? (
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {nodeMetrics.slice(0, 6).map((node) => (
-            <div
-              key={node.name}
-              className="rounded-md border border-slate-800 bg-[#080d14] p-3 text-sm"
-            >
-              <p className="truncate font-semibold text-slate-200">{node.name}</p>
-              <p className="mt-2 text-slate-400">
-                CPU {node.cpu_percent} · Memory {node.memory_percent}
-              </p>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {topPods.length ? (
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[560px] text-left text-sm">
-            <thead className="text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="py-2 pr-4">Namespace</th>
-                <th className="py-2 pr-4">Pod</th>
-                <th className="py-2 pr-4">CPU</th>
-                <th className="py-2">Memory</th>
-              </tr>
-            </thead>
-            <tbody>
-              {topPods.map((pod) => (
-                <tr key={`${pod.namespace}-${pod.name}`} className="border-t border-slate-900">
-                  <td className="py-2 pr-4 text-slate-400">{pod.namespace}</td>
-                  <td className="py-2 pr-4 font-medium text-slate-200">{pod.name}</td>
-                  <td className="py-2 pr-4 text-amber-200">{pod.cpu}</td>
-                  <td className="py-2 text-cyan-200">{pod.memory}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function SecurityFindingsPanel({
-  security,
-}: {
-  security?: InvestigationData["security"];
-}) {
-  const findings = security?.findings ?? [
-    {
-      label: "No Privileged Containers",
-      status: "unknown" as const,
-      detail: "Run an investigation to inspect pod security contexts.",
-    },
-    {
-      label: "Latest Tag Used",
-      status: "unknown" as const,
-      detail: "Run an investigation to inspect container image tags.",
-    },
-    {
-      label: "Missing Resource Limits",
-      status: "unknown" as const,
-      detail: "Run an investigation to inspect resource limits.",
-    },
-    {
-      label: "High CVEs Found",
-      status: "unknown" as const,
-      detail: "Image vulnerability scan is not configured.",
-    },
-  ];
-
-  const tone = {
-    pass: "border-lime-800 bg-lime-950/30 text-lime-200",
-    warning: "border-amber-800 bg-amber-950/30 text-amber-200",
-    unknown: "border-slate-800 bg-[#101722] text-slate-300",
-  };
-  const marker = {
-    pass: "✓",
-    warning: "⚠",
-    unknown: "○",
-  };
-
-  return (
-    <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-5 shadow-sm shadow-black/20">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="font-semibold text-slate-100">Security Findings</h2>
-          <p className="mt-1 text-sm text-slate-400">
-            Pod-level DevSecOps checks from the selected cluster.
-          </p>
-        </div>
-        <StatusPill
-          label={`${security?.warning_count ?? 0} warnings`}
-          tone={security?.warning_count ? "warning" : "good"}
-        />
-      </div>
-
-      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {findings.map((finding) => (
-          <div
-            key={finding.label}
-            className={`rounded-md border p-4 text-sm ${tone[finding.status]}`}
-          >
-            <p className="font-semibold">
-              <span className="mr-2">{marker[finding.status]}</span>
-              {finding.label}
-            </p>
-            <p className="mt-2 leading-5 text-slate-400">{finding.detail}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ClusterTopologyPanel({
-  topology,
-}: {
-  topology?: InvestigationData["topology"];
-}) {
-  const nodes = topology?.nodes ?? [];
-
-  return (
-    <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-5 shadow-sm shadow-black/20">
-      <h2 className="font-semibold text-slate-100">Cluster Topology</h2>
-      <p className="mt-1 text-sm text-slate-400">
-        Node-to-pod placement for the selected context.
-      </p>
-
-      <div className="mt-5 rounded-md border border-slate-800 bg-[#080d14] p-4 font-mono text-xs leading-6 text-slate-300">
-        <div className="text-cyan-200">
-          Cluster: {topology?.cluster ?? "Not investigated"}
-        </div>
-        {nodes.length === 0 ? (
-          <div className="mt-2 text-slate-500">No topology captured yet.</div>
-        ) : null}
-        {nodes.slice(0, 5).map((node, nodeIndex) => (
-          <div key={node.name} className="mt-2">
-            <div className="text-slate-200">
-              {nodeIndex === nodes.length - 1 ? "└──" : "├──"} Node {node.name}
-              <span className="ml-2 text-slate-500">({node.pod_count} pods)</span>
-            </div>
-            {node.pods.map((pod, podIndex) => (
-              <div key={`${pod.namespace}-${pod.name}`} className="pl-6 text-slate-400">
-                {podIndex === node.pods.length - 1 ? "└──" : "├──"} {pod.namespace}/{pod.name}
-                <span className="ml-2 text-slate-500">{pod.phase}</span>
-              </div>
-            ))}
-            {node.pod_count > node.pods.length ? (
-              <div className="pl-6 text-slate-500">
-                └── +{node.pod_count - node.pods.length} more pods
-              </div>
-            ) : null}
-          </div>
-        ))}
-      </div>
-    </section>
   );
 }
 
@@ -1336,23 +1097,6 @@ export function InvestigationPage() {
             </div>
           ) : null}
 
-          {terminal && investigation ? (
-            <details className="mt-8 rounded-lg border border-line bg-surface">
-              <summary className="cursor-pointer px-4 py-3 text-h2 marker:text-ink-3">
-                Cluster snapshot
-              </summary>
-              {/* Cluster-scoped rather than investigation-scoped. These move to
-                  the cluster workspace in a later phase; collapsed here so the
-                  information is not lost in the meantime, and does not compete
-                  with the diagnosis for attention. */}
-              <div className="grid gap-5 border-t border-line-muted p-4">
-                <ClusterHealthOverview overview={investigation.overview} />
-                <MetricsPanel metrics={investigation.metrics} />
-                <SecurityFindingsPanel security={investigation.security} />
-                <ClusterTopologyPanel topology={investigation.topology} />
-              </div>
-            </details>
-          ) : null}
         </div>
       </div>
 
@@ -1460,6 +1204,7 @@ function AuthenticatedApp() {
     <Routes>
       <Route element={<AppShell />}>
         <Route path="/" element={<FleetPage />} />
+        <Route path="/clusters/:context" element={<ClusterPage />} />
         <Route path="/investigations" element={<InvestigatePage />} />
         <Route path="/investigations/:id" element={<InvestigationPage />} />
         <Route path="/reports" element={<ReportsPage />} />

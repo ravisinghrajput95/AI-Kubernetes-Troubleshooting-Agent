@@ -16,14 +16,18 @@ export function CitationChip({
   active,
   onSelect,
 }: {
-  index: number;
+  /** Position within a claim's citations. Omit where a figure has exactly one:
+   *  a number that is always "1" distinguishes nothing and only adds noise. */
+  index?: number;
   evidence?: EvidenceEntry;
   active: boolean;
   onSelect: () => void;
 }) {
   const label = evidence
-    ? `Evidence ${index}: ${evidence.kind}${evidence.command ? ` — ${evidence.command}` : ""}`
-    : `Evidence ${index}`;
+    ? `Evidence${index ? ` ${index}` : ""}: ${evidence.kind}${
+        evidence.command ? ` — ${evidence.command}` : ""
+      }`
+    : `Evidence${index ? ` ${index}` : ""}`;
 
   return (
     <button
@@ -38,7 +42,7 @@ export function CitationChip({
       }`}
     >
       <span className="sr-only">{label}</span>
-      <span aria-hidden="true">{index}</span>
+      <span aria-hidden="true">{index ?? "\u00b7\u00b7"}</span>
     </button>
   );
 }

@@ -1,7 +1,7 @@
 import { X } from "lucide-react";
 
 import { SeverityDot } from "./SeverityDot";
-import { citedBy, isGap, severityTone } from "../../lib/report";
+import { citedBy, evidenceTone, isGap } from "../../lib/report";
 import type { Diagnosis, EvidenceEntry } from "../../types/investigation";
 
 /**
@@ -55,10 +55,7 @@ export function EvidenceInspector({
         <dl className="grid grid-cols-[80px_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
           <dt className="font-mono text-sm text-ink-3">status</dt>
           <dd>
-            <SeverityDot
-              tone={gap ? severityTone(evidence.status) : "healthy"}
-              label={evidence.status}
-            />
+            <SeverityDot tone={evidenceTone(evidence.status)} label={evidence.status} />
           </dd>
 
           <dt className="font-mono text-sm text-ink-3">kind</dt>

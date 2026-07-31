@@ -57,7 +57,7 @@ export function FleetGrid({
           <li key={row.name}>
             {row.investigationId ? (
               <Link
-                to={`/investigations/${row.investigationId}`}
+                to={`/clusters/${encodeURIComponent(row.name)}`}
                 className="block rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info"
               >
                 {cell}

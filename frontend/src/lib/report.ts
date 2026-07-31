@@ -67,6 +67,21 @@ export function isGap(status: string): boolean {
   return !["ok", "empty", "not_applicable"].includes(status);
 }
 
+/**
+ * How an evidence status should read.
+ *
+ * Three outcomes, three tones — and `not_applicable` is deliberately neutral
+ * rather than healthy. "We did not need to look" is not the same news as "we
+ * looked and it was fine", and rendering both green makes an undeployed
+ * Prometheus indistinguishable from a passing check.
+ */
+export function evidenceTone(status: string): SeverityTone {
+  if (status === "not_applicable") {
+    return "neutral";
+  }
+  return isGap(status) ? severityTone(status) : "healthy";
+}
+
 export function evidenceIndex(investigation?: Investigation): Map<string, EvidenceEntry> {
   const index = new Map<string, EvidenceEntry>();
   for (const record of investigation?.evidence ?? []) {

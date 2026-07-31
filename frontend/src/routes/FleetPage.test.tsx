@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -109,10 +109,12 @@ describe("fleet", () => {
     expect(await screen.findByText(/not a live reading/i)).toBeInTheDocument();
   });
 
-  it("links an investigated cluster to its investigation", async () => {
+  it("opens the cluster's workspace, not straight into one run", async () => {
+    // The workspace carries every run for that cluster plus what the latest
+    // one established; jumping directly to a single investigation skips it.
     renderFleet();
     const link = await screen.findByRole("link", { name: /prod-eu-west/i });
-    expect(link).toHaveAttribute("href", "/investigations/1");
+    expect(link).toHaveAttribute("href", "/clusters/prod-eu-west");
   });
 
   it("counts each state in the rollup", async () => {
@@ -190,6 +192,6 @@ describe("the tab", () => {
     // identical titles make the pile unnavigable.
     renderFleet();
     await screen.findByText("prod-eu-west");
-    expect(document.title).toBe("Fleet · Kubernetes Operations");
+    await waitFor(() => expect(document.title).toBe("Fleet · Kubernetes Operations"));
   });
 });

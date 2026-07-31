@@ -8,7 +8,7 @@
  * Phase 3 moves the component out and removes the cycle.
  */
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -178,7 +178,12 @@ describe("the headline must not contradict the body", () => {
 
     renderInvestigation();
     await screen.findByRole("heading", { name: "staging-1" });
-    expect(document.title).toBe("staging-1 · failed · Kubernetes Operations");
+    // `waitFor`, not a synchronous read: the title is set in an effect that
+    // can flush a tick after the heading appears, which made this fail about
+    // one run in six.
+    await waitFor(() =>
+      expect(document.title).toBe("staging-1 · failed · Kubernetes Operations"),
+    );
   });
 
   it("reports severity when the run actually produced findings", async () => {

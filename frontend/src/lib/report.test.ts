@@ -5,6 +5,7 @@ import {
   citationsForSignal,
   citedBy,
   evidenceIndex,
+  evidenceTone,
   isCommandLine,
   isGap,
   severityTone,
@@ -135,5 +136,24 @@ describe("command lines", () => {
   it("leaves prose as prose", () => {
     expect(isCommandLine("The container was OOMKilled.")).toBe(false);
     expect(isCommandLine("Run kubectl to check")).toBe(false);
+  });
+});
+
+describe("evidence tone", () => {
+  it("reads a collected record as good", () => {
+    expect(evidenceTone("ok")).toBe("healthy");
+    expect(evidenceTone("empty")).toBe("healthy");
+  });
+
+  it("reads a gap by its severity", () => {
+    expect(evidenceTone("failed")).toBe("critical");
+    expect(evidenceTone("unavailable")).toBe("warning");
+    expect(evidenceTone("forbidden")).toBe("warning");
+  });
+
+  it("reads what never applied as neutral, not as good news", () => {
+    // Green for "we did not need to look" makes an undeployed Prometheus
+    // indistinguishable from a passing check.
+    expect(evidenceTone("not_applicable")).toBe("neutral");
   });
 });

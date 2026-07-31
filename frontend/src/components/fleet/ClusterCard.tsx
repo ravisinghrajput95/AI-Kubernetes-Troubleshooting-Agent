@@ -79,7 +79,7 @@ export function ClusterCard({
       <span aria-hidden="true" className={`w-0.5 shrink-0 rounded-full ${STRIPE[row.state]}`} />
       {row.investigationId ? (
         <Link
-          to={`/investigations/${row.investigationId}`}
+          to={`/clusters/${encodeURIComponent(row.name)}`}
           className="flex min-w-0 flex-1 rounded transition-colors duration-fast hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info"
         >
           {body}
