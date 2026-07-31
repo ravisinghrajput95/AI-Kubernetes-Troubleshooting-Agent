@@ -56,7 +56,9 @@ history**.
 **Fixed by:** temp-file + `os.replace()`, `fsync`, an in-process lock, and
 quarantining a corrupt index instead of discarding it. Tests include a 12-thread
 concurrency check.
-**Remaining:** cross-process writers can still race — needs a real store.
+**Remaining:** with the filesystem store, cross-process writers can still
+race. Setting `DATABASE_URL` makes history a Postgres row and removes the race
+entirely; the index-file path stays for single-process deployments.
 
 ### F15 · Redaction missed real credential shapes · **FIXED**
 
@@ -113,7 +115,7 @@ Apache-2.0 added. Without it the work was legally unusable by any enterprise.
 |---|---|---|
 | F17 | No audit logging (actor/action/target/outcome). Disqualifying for SOC2. | 2d |
 | F5 | ~~Unbounded all-namespace reads~~ **partially fixed**: API-server paging via `--chunk-size`, retained items capped, truncation recorded as an evidence gap. Peak *parse* memory is still proportional to cluster size — kubectl assembles the whole list before writing it, so removing that ceiling needs a streaming client. | 3d done, 5d remaining |
-| — | In-process job store: no HA, single worker mandated. | 3d |
+| — | ~~In-process job store: no HA, single worker mandated~~ **fixed** (M3): setting `DATABASE_URL` and `REDIS_URL` moves jobs, events and reports to Postgres and Redis, so any worker can serve any investigation and a crashed worker's job is reaped to a terminal state instead of hanging. The in-process store remains the default for single-process deployments. Not delivered: mid-run resumption — a lost worker's investigation is failed, not resumed. | done |
 | — | No platform self-observability (metrics, traces). Ironic for an observability tool. | 3d |
 | F11 | ~~No LLM eval harness~~ **partially fixed**: a golden corpus of 21 cases gates reasoning accuracy and grounding behaviour in CI (`docs/EVALUATION.md`). No provider abstraction yet, and no live-model evaluation. | 3d done, 2d remaining |
 
@@ -138,8 +140,10 @@ no frontend component tests · no runtime plugin discovery (entry points).
 
 ## Testing gaps
 
-Present: 318 backend + 47 frontend tests covering unit, integration, API,
-fault-injection, safety-property, contract, and opt-in live-transport.
+Present: 560 backend + 47 frontend tests covering unit, integration, API,
+fault-injection, safety-property, contract, and opt-in live-transport — plus
+39 backend tests that run only against real Postgres and Redis
+(`K8S_AGENT_INTEGRATION=1`, and a dedicated CI job).
 
 Missing: real
 cluster fixtures (kind/envtest, multi-version) · snapshot tests for the PDF and

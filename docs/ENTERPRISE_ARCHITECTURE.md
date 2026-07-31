@@ -547,10 +547,56 @@ exist in Python, so the decoder accepts both and canonicalises, which is what
 actually matters for a Go agent. CI regenerates and diffs, so schema and
 bindings cannot drift. 461 → 520 tests.
 
-**M3 — State out of process.**
+**M3 — State out of process. ✅ Delivered.**
 Postgres for investigations and history; Redis for the job queue. The existing
 `InvestigationJobStore` interface is preserved — this was designed as a swappable
 seam. *Exit:* multi-replica deployment; jobs survive restart; HA achieved.
+
+*Outcome:* the seam held — `JobStore` gained `PostgresRedisJobStore` beside the
+in-memory one and no API handler changed shape. The governing rule turned out to
+be worth stating explicitly: **Redis is the latency layer, Postgres is the
+truth.** Every message has a committed row behind it, so a dropped message costs
+time and never correctness.
+
+Three things the design had to solve rather than inherit:
+
+- **Cancellation became a message.** `Task.cancel()` only works in the process
+  that owns the task, so a cancel commits `cancel_requested`, publishes on a
+  Redis control channel, and the owning worker turns it back into a local
+  cancel. A per-job watchdog polling the committed flag is the backstop that
+  makes it a guarantee rather than best effort — verified by a test with the
+  control loop absent, and by a second test with the watchdog pushed an hour
+  out, because otherwise the two mechanisms are indistinguishable.
+- **SSE replay-then-live.** `subscribe()` opens the Redis subscription *before*
+  reading the backlog and de-duplicates by a Postgres-assigned sequence.
+  Subscribe-first gives no drop; the sequence gives no duplicate. The sequence
+  is also emitted as the SSE frame id, so `Last-Event-ID` resumes a broken
+  stream instead of replaying it.
+- **Reports became bytes, not paths.** `/investigations/{id}/pdf` cannot serve a
+  `FileResponse` for a report another worker rendered. The store returns bytes
+  and M8 swaps it for object storage without touching an endpoint.
+
+Scope boundary, stated because it is easy to overclaim: M3 delivers **durable,
+correctly-terminated job records**, not mid-run resumption. A killed worker's
+investigation is reaped to a terminal state via lease expiry rather than resumed;
+resuming half-collected work is a re-run, and genuine resumability needs
+ADR-007's persisted state machine.
+
+Migrations are numbered forward-only SQL under `pg_advisory_lock`, not Alembic —
+there is no ORM here, so Alembic's autogenerate would be a dependency with no
+payoff. 521 → 560 hermetic tests, plus 39 that run only against real Postgres
+and Redis (CI runs both). Evals unchanged at 10/10 and 11/11.
+
+Two findings from running it rather than testing it. The idle queue consumer
+crashed every five seconds because redis-py defaults `socket_timeout` to exactly
+the five seconds the consumer blocks for, so the client aborted the read at the
+instant the server answered; the fix is headroom between the two, and the
+regression test deliberately uses the real block length because a fast one
+passes against the broken version. And **the single-process deployment stays a
+supported default, not a dev-only fallback** — with neither `DATABASE_URL` nor
+`REDIS_URL` set, nothing imports either driver and `uvicorn app.main:app
+--reload` still needs no infrastructure. Exactly one of the two set is refused
+at startup rather than silently half-configuring.
 
 **M4 — Agent MVP + gateway.**
 Go agent implementing pods, events, deployments, logs. mTLS registration.

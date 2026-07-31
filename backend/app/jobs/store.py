@@ -4,32 +4,52 @@ Scope and limits — deliberate, and important to understand before deploying:
 
 - State lives in the process. Jobs do not survive a restart, and a deployment
   running multiple uvicorn workers will not find a job created by another
-  worker. Single-process deployment is the supported topology today.
-- Replacing this with Redis or a database means implementing `create/get/list/
-  publish/subscribe`; nothing above this layer knows how state is stored.
+  worker. Single-process deployment is the supported topology for this store,
+  and it is the default: it needs no infrastructure, so `uvicorn app.main:app
+  --reload` works against nothing but a kubeconfig.
+- For multi-worker deployments set `DATABASE_URL` and `REDIS_URL`, which
+  selects `PostgresRedisJobStore` instead. Both satisfy `JobStore`; nothing
+  above this layer knows which one it has.
 """
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 from loguru import logger
 
+from app.jobs.base import CancelListener, EventSequencer
 from app.jobs.models import InvestigationJob, JobEvent, JobEventType, JobStatus
 
 DEFAULT_MAX_JOBS = 100
 SUBSCRIBER_QUEUE_SIZE = 256
 
 
-class InvestigationJobStore:
+class InMemoryJobStore:
+    distributed = False
+
     def __init__(self, max_jobs: int = DEFAULT_MAX_JOBS) -> None:
         self.max_jobs = max_jobs
         self._jobs: dict[str, InvestigationJob] = {}
         self._subscribers: dict[str, list[asyncio.Queue[JobEvent | None]]] = {}
+        self._sequences: dict[str, int] = {}
+        self._cancel_listeners: list[CancelListener] = []
 
-    def create(self, request: dict, owner: str = "") -> InvestigationJob:
-        job = InvestigationJob(id=str(uuid4()), request=request, owner=owner)
+    def create(
+        self,
+        request: dict[str, Any],
+        owner: str = "",
+        principal: dict[str, Any] | None = None,
+    ) -> InvestigationJob:
+        job = InvestigationJob(
+            id=str(uuid4()),
+            request=request,
+            owner=owner,
+            principal=principal,
+        )
         self._jobs[job.id] = job
         self._evict()
         self.publish(job.id, JobEvent(JobEventType.QUEUED, "Investigation queued"))
@@ -89,6 +109,35 @@ class InvestigationJobStore:
         self.publish(job_id, JobEvent(JobEventType.CANCELLED, "Investigation cancelled"))
         self._close(job_id)
 
+    def request_cancel(self, job_id: str) -> bool:
+        """Flag the job and notify whoever is running it.
+
+        In this store "whoever" is always this process, so the listeners fire
+        synchronously. The distributed store publishes a message instead; the
+        endpoint calling this cannot tell the difference, which is the point.
+        """
+        job = self._jobs.get(job_id)
+        if job is None:
+            return False
+        job.cancel_requested = True
+        self._notify_cancel(job_id)
+        return True
+
+    def on_cancel(self, listener: CancelListener) -> None:
+        self._cancel_listeners.append(listener)
+
+    def enqueue(self, job_id: str) -> None:
+        """No queue here: the submitting process runs the job itself."""
+
+    def _notify_cancel(self, job_id: str) -> None:
+        for listener in self._cancel_listeners:
+            try:
+                listener(job_id)
+            except Exception as exc:  # a broken listener must not block the cancel
+                logger.opt(exception=exc).warning(
+                    "Cancellation listener failed for {id}", id=job_id
+                )
+
     def publish(self, job_id: str, event: JobEvent) -> None:
         """Record an event and fan it out to live subscribers.
 
@@ -98,6 +147,10 @@ class InvestigationJobStore:
         job = self._jobs.get(job_id)
         if job is None:
             return
+
+        sequence = self._sequences.get(job_id, 0) + 1
+        self._sequences[job_id] = sequence
+        event = replace(event, seq=sequence)
 
         job.events.append(event)
 
@@ -111,28 +164,36 @@ class InvestigationJobStore:
         self,
         job_id: str,
         heartbeat: float | None = None,
+        after_seq: int = 0,
     ) -> AsyncIterator[JobEvent | None]:
         """Yield the events so far, then live events until the job finishes.
 
         Replaying the backlog first means a client that connects after the run
-        started still sees the whole timeline. When `heartbeat` is set, `None` is
-        yielded on each idle interval so the caller can keep the connection
-        alive through intermediary proxies.
+        started still sees the whole timeline. `after_seq` resumes from a
+        position the caller already has, so a reconnecting browser is not sent
+        the timeline twice. When `heartbeat` is set, `None` is yielded on each
+        idle interval so the caller can keep the connection alive through
+        intermediary proxies.
         """
         job = self._jobs.get(job_id)
         if job is None:
             return
 
-        for event in list(job.events):
-            yield event
+        sequencer = EventSequencer(after_seq)
 
-        if job.status.terminal:
-            return
-
+        # Registering before the replay is what the distributed store must do
+        # to avoid a gap; doing it here too keeps the two behaviours identical.
         queue: asyncio.Queue[JobEvent | None] = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_SIZE)
         self._subscribers.setdefault(job_id, []).append(queue)
 
         try:
+            for event in list(job.events):
+                if sequencer.accept(event):
+                    yield event
+
+            if job.status.terminal:
+                return
+
             while True:
                 if heartbeat is None:
                     event = await queue.get()
@@ -144,7 +205,8 @@ class InvestigationJobStore:
                         continue
                 if event is None:
                     return
-                yield event
+                if sequencer.accept(event):
+                    yield event
         finally:
             subscribers = self._subscribers.get(job_id, [])
             if queue in subscribers:
@@ -168,11 +230,29 @@ class InvestigationJobStore:
         for job in terminal[: len(self._jobs) - self.max_jobs]:
             self._jobs.pop(job.id, None)
             self._subscribers.pop(job.id, None)
+            self._sequences.pop(job.id, None)
 
 
-_default_store = InvestigationJobStore()
+# The original name, kept because it is what the tests and the docs call it.
+InvestigationJobStore = InMemoryJobStore
+
+_default_store: InMemoryJobStore | None = None
 
 
-def get_job_store() -> InvestigationJobStore:
-    """FastAPI dependency; overridden in tests."""
+def get_job_store():
+    """FastAPI dependency; overridden in tests.
+
+    Returns the in-process store unless application startup installed a
+    distributed one. Constructing it lazily rather than at import keeps
+    `python -m pytest` free of any dependency on Postgres or Redis.
+    """
+    global _default_store
+    if _default_store is None:
+        _default_store = InMemoryJobStore()
     return _default_store
+
+
+def set_job_store(store) -> None:
+    """Install the process-wide store. Called from application startup."""
+    global _default_store
+    _default_store = store

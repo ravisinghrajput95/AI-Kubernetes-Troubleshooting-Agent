@@ -1,7 +1,7 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from app.audit.logger import get_audit_log
@@ -9,7 +9,7 @@ from app.auth.dependencies import require_principal
 from app.auth.models import Principal
 from app.jobs.models import JobStatus
 from app.jobs.runner import InvestigationJobRunner, get_job_runner
-from app.jobs.store import InvestigationJobStore, get_job_store
+from app.jobs.store import get_job_store
 from app.kubernetes.context_service import KubernetesContextService
 from app.models.investigation import (
     InvestigationJobAccepted,
@@ -33,6 +33,12 @@ SSE_HEADERS = {
     "Connection": "keep-alive",
     # Disable proxy buffering so events arrive as they are produced.
     "X-Accel-Buffering": "no",
+}
+
+REPORT_FORMATS = {
+    "pdf": ("application/pdf", "pdf"),
+    "json": ("application/json", "json"),
+    "markdown": ("text/markdown", "md"),
 }
 
 
@@ -105,10 +111,10 @@ async def start_investigation_job(
 @router.get("/investigation-jobs")
 def list_investigation_jobs(
     limit: int = 25,
-    store: InvestigationJobStore = Depends(get_job_store),
+    store=Depends(get_job_store),
     principal: Principal = Depends(require_principal),
 ) -> dict[str, list[dict]]:
-    """In-flight and recently finished jobs held by this process."""
+    """In-flight and recently finished investigation jobs."""
     return {
         "items": [
             job.to_dict(include_result=False)
@@ -127,7 +133,7 @@ def list_investigations(
 @router.get("/investigations/{investigation_id}")
 def get_investigation(
     investigation_id: str,
-    store: InvestigationJobStore = Depends(get_job_store),
+    store=Depends(get_job_store),
     principal: Principal = Depends(require_principal),
 ) -> dict:
     """Current state of an investigation.
@@ -163,14 +169,21 @@ def get_investigation(
 @router.post("/investigations/{investigation_id}/cancel")
 async def cancel_investigation(
     investigation_id: str,
-    store: InvestigationJobStore = Depends(get_job_store),
-    runner: InvestigationJobRunner = Depends(get_job_runner),
+    store=Depends(get_job_store),
     principal: Principal = Depends(require_principal),
 ) -> dict:
+    """Ask for an investigation to stop.
+
+    Must stay async: with the in-process store this reaches `Task.cancel()`
+    synchronously, which requires the event loop thread.
+
+    Cancellation is a request, not an instruction executed here. Once jobs can
+    run on another worker, whether one acted is not observable at this moment —
+    so the durable flag this sets is the guarantee, and the message it publishes
+    is only what makes it fast.
+    """
     job = store.get(investigation_id)
-    if job is not None and job.owner and job.owner != principal.subject:
-        raise HTTPException(status_code=404, detail="Investigation job not found")
-    if job is None:
+    if job is None or (job.owner and job.owner != principal.subject):
         raise HTTPException(status_code=404, detail="Investigation job not found")
     if job.status.terminal:
         raise HTTPException(
@@ -178,26 +191,39 @@ async def cancel_investigation(
             detail=f"Investigation already {job.status}",
         )
 
-    if not runner.cancel(investigation_id):
-        raise HTTPException(status_code=409, detail="Investigation is not cancellable")
-
+    store.request_cancel(investigation_id)
     return {"id": investigation_id, "status": str(JobStatus.CANCELLED)}
+
+
+def _resume_position(request: Request) -> int:
+    """Where a reconnecting client left off, from the SSE `Last-Event-ID`."""
+    try:
+        return max(0, int(request.headers.get("Last-Event-ID", "0")))
+    except ValueError:
+        return 0
 
 
 @router.get("/investigations/{investigation_id}/events")
 async def stream_investigation_events(
     investigation_id: str,
     request: Request,
-    store: InvestigationJobStore = Depends(get_job_store),
+    store=Depends(get_job_store),
 ) -> Response:
-    """Server-sent event stream of investigation progress."""
+    """Server-sent event stream of investigation progress.
+
+    Each frame carries the event's sequence as its SSE id, so a browser that
+    reconnects resumes from where it stopped instead of replaying the timeline.
+    """
     if store.get(investigation_id) is None:
         raise HTTPException(status_code=404, detail="Investigation job not found")
+
+    after_seq = _resume_position(request)
 
     async def event_stream():
         async for event in store.subscribe(
             investigation_id,
             heartbeat=SSE_HEARTBEAT_SECONDS,
+            after_seq=after_seq,
         ):
             if await request.is_disconnected():
                 break
@@ -207,7 +233,7 @@ async def stream_investigation_events(
                 continue
 
             payload = json.dumps(event.to_dict())
-            yield f"event: {event.type}\ndata: {payload}\n\n"
+            yield f"id: {event.seq}\nevent: {event.type}\ndata: {payload}\n\n"
 
     return StreamingResponse(
         event_stream(),
@@ -216,42 +242,45 @@ async def stream_investigation_events(
     )
 
 
+def _report_response(investigation_id: str, report_format: str, principal: Principal) -> Response:
+    """Serve a rendered report as bytes.
+
+    Deliberately not a `FileResponse`: once state is out of process the report
+    may have been rendered by a different worker, so there is no local path to
+    hand to the kernel. Status, media type and filename are unchanged.
+    """
+    content = InvestigationHistoryService().read_report_bytes(
+        investigation_id, report_format, owner=principal.subject
+    )
+    if content is None:
+        raise HTTPException(status_code=404, detail="Investigation report not found")
+
+    media_type, extension = REPORT_FORMATS[report_format]
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="investigation-{investigation_id}.{extension}"'
+            )
+        },
+    )
+
+
 @router.get("/investigations/{investigation_id}/pdf")
 def download_investigation_pdf(
     investigation_id: str,
     principal: Principal = Depends(require_principal),
-) -> FileResponse:
-    history = InvestigationHistoryService()
-    if not history.owns(investigation_id, principal.subject):
-        raise HTTPException(status_code=404, detail="Investigation report not found")
-    report_path = history.report_path(investigation_id, "pdf")
-    if report_path is None:
-        raise HTTPException(status_code=404, detail="Investigation report not found")
-
-    return FileResponse(
-        report_path,
-        media_type="application/pdf",
-        filename=f"investigation-{investigation_id}.pdf",
-    )
+) -> Response:
+    return _report_response(investigation_id, "pdf", principal)
 
 
 @router.get("/investigations/{investigation_id}/json")
 def download_investigation_json(
     investigation_id: str,
     principal: Principal = Depends(require_principal),
-) -> FileResponse:
-    history = InvestigationHistoryService()
-    if not history.owns(investigation_id, principal.subject):
-        raise HTTPException(status_code=404, detail="Investigation report not found")
-    report_path = history.report_path(investigation_id, "json")
-    if report_path is None:
-        raise HTTPException(status_code=404, detail="Investigation report not found")
-
-    return FileResponse(
-        report_path,
-        media_type="application/json",
-        filename=f"investigation-{investigation_id}.json",
-    )
+) -> Response:
+    return _report_response(investigation_id, "json", principal)
 
 
 @router.get("/investigations/{investigation_id}/report")
@@ -283,16 +312,5 @@ def regenerate_investigation_report(
 def download_investigation_markdown(
     investigation_id: str,
     principal: Principal = Depends(require_principal),
-) -> FileResponse:
-    history = InvestigationHistoryService()
-    if not history.owns(investigation_id, principal.subject):
-        raise HTTPException(status_code=404, detail="Investigation report not found")
-    report_path = history.report_path(investigation_id, "markdown")
-    if report_path is None:
-        raise HTTPException(status_code=404, detail="Investigation report not found")
-
-    return FileResponse(
-        report_path,
-        media_type="text/markdown",
-        filename=f"investigation-{investigation_id}.md",
-    )
+) -> Response:
+    return _report_response(investigation_id, "markdown", principal)

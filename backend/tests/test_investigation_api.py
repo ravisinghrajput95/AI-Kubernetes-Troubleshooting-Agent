@@ -249,3 +249,103 @@ def test_reports_are_written_under_the_isolated_working_directory(client, cluste
     wait_for_terminal(client, job_id)
 
     assert (Path(cluster) / "data" / "investigations" / "reports" / f"{job_id}.pdf").exists()
+
+
+# --- Surfaces M3 changed ----------------------------------------------------
+
+
+def test_reports_are_served_with_their_media_type_and_filename(client):
+    """The download contract, which stopped being a FileResponse.
+
+    Once a report can be rendered by a different worker there is no local path
+    to serve, so the bytes are returned directly. Everything the browser sees
+    has to stay the same.
+    """
+    job_id = client.post("/investigations", json={"context": "test-cluster"}).json()["id"]
+    wait_for_terminal(client, job_id)
+
+    expected = {
+        "pdf": ("application/pdf", f"investigation-{job_id}.pdf"),
+        "json": ("application/json", f"investigation-{job_id}.json"),
+        "markdown": ("text/markdown", f"investigation-{job_id}.md"),
+    }
+
+    for report_format, (media_type, filename) in expected.items():
+        response = client.get(f"/investigations/{job_id}/{report_format}")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith(media_type)
+        assert filename in response.headers["content-disposition"]
+        assert response.content
+
+    assert client.get(f"/investigations/{job_id}/pdf").content.startswith(b"%PDF")
+
+
+def test_a_missing_report_is_404_not_an_error(client):
+    assert client.get("/investigations/does-not-exist/pdf").status_code == 404
+
+
+def test_event_frames_carry_a_sequence_id(client):
+    """The SSE id is what lets a reconnecting browser resume."""
+    job_id = client.post("/investigations", json={"context": "test-cluster"}).json()["id"]
+    wait_for_terminal(client, job_id)
+
+    with client.stream("GET", f"/investigations/{job_id}/events") as response:
+        body = "".join(response.iter_text())
+
+    ids = [int(line.removeprefix("id: ")) for line in body.splitlines() if line.startswith("id: ")]
+    assert ids, "every frame must carry its sequence"
+    assert ids == sorted(ids)
+    assert len(ids) == len(set(ids))
+
+
+def test_a_resumed_stream_does_not_replay_what_was_already_seen(client):
+    job_id = client.post("/investigations", json={"context": "test-cluster"}).json()["id"]
+    wait_for_terminal(client, job_id)
+
+    with client.stream("GET", f"/investigations/{job_id}/events") as response:
+        first = "".join(response.iter_text())
+    ids = [int(line.removeprefix("id: ")) for line in first.splitlines() if line.startswith("id: ")]
+
+    with client.stream(
+        "GET",
+        f"/investigations/{job_id}/events",
+        headers={"Last-Event-ID": str(ids[len(ids) // 2])},
+    ) as response:
+        resumed = "".join(response.iter_text())
+
+    resumed_ids = [
+        int(line.removeprefix("id: ")) for line in resumed.splitlines() if line.startswith("id: ")
+    ]
+    assert resumed_ids == ids[len(ids) // 2 + 1 :]
+
+
+def test_a_malformed_resume_header_is_ignored_not_fatal(client):
+    job_id = client.post("/investigations", json={"context": "test-cluster"}).json()["id"]
+    wait_for_terminal(client, job_id)
+
+    with client.stream(
+        "GET",
+        f"/investigations/{job_id}/events",
+        headers={"Last-Event-ID": "not-a-number"},
+    ) as response:
+        assert response.status_code == 200
+        assert "event: queued" in "".join(response.iter_text())
+
+
+def test_cancelling_records_the_request_on_the_job(client, monkeypatch):
+    """Cancellation is a request, not something the endpoint performs itself."""
+    import app.services.investigation_service as service_module
+
+    async def slow_run(self):
+        import asyncio
+
+        await asyncio.sleep(30)
+        return {}
+
+    monkeypatch.setattr(service_module.InvestigationService, "run", slow_run)
+
+    job_id = client.post("/investigations", json={"context": "test-cluster"}).json()["id"]
+    time.sleep(0.2)
+
+    assert client.post(f"/investigations/{job_id}/cancel").status_code == 200
+    assert client.job_store.get(job_id).cancel_requested is True

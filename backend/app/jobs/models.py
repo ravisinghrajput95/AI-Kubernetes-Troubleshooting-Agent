@@ -27,12 +27,20 @@ class JobEventType(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class JobEvent:
-    """A single progress notification for a running investigation."""
+    """A single progress notification for a running investigation.
+
+    `seq` is a per-investigation monotonic position assigned by the store when
+    the event is published. It is what lets a subscriber replay a backlog and
+    then go live without dropping or duplicating an event, and what a browser
+    sends back as `Last-Event-ID` to resume a broken stream. Zero means "not
+    yet assigned" — only a freshly constructed event, before publication.
+    """
 
     type: JobEventType
     message: str
     at: datetime = field(default_factory=lambda: datetime.now(UTC))
     data: dict[str, Any] = field(default_factory=dict)
+    seq: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -41,7 +49,24 @@ class JobEvent:
             "at": self.at.isoformat(),
             "time": self.at.astimezone().strftime("%H:%M:%S"),
             "data": self.data,
+            "seq": self.seq,
         }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "JobEvent":
+        """Rebuild an event from its serialised form.
+
+        Used by the distributed store, where an event crosses a process
+        boundary as JSON on its way from the worker that produced it to the
+        connection streaming it.
+        """
+        return cls(
+            type=JobEventType(payload["type"]),
+            message=payload.get("message", ""),
+            at=datetime.fromisoformat(payload["at"]),
+            data=payload.get("data") or {},
+            seq=int(payload.get("seq", 0)),
+        )
 
 
 @dataclass
@@ -57,6 +82,14 @@ class InvestigationJob:
     request: dict[str, Any]
     # Subject of the caller who submitted it; empty when auth is disabled.
     owner: str = ""
+    # Serialised `Principal`, needed when a worker other than the submitting
+    # one runs the job and has to impersonate the original caller. Deliberately
+    # absent from `to_dict()`: it carries group membership, which is not part
+    # of the API response.
+    principal: dict[str, Any] | None = None
+    # Set by a cancellation request. Durable in the distributed store, so a
+    # cancel is honoured even if the message announcing it is never delivered.
+    cancel_requested: bool = False
     status: JobStatus = JobStatus.PENDING
     events: list[JobEvent] = field(default_factory=list)
     result: dict[str, Any] | None = None

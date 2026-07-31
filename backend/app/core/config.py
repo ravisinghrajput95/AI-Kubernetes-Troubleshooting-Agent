@@ -60,6 +60,46 @@ class Settings(BaseSettings):
 
     audit_log_path: str = Field(default="", validation_alias="AUDIT_LOG_PATH")
 
+    # --- Distributed state --------------------------------------------------
+    # Both unset is the supported single-process default: jobs and reports stay
+    # in this process and on local disk, and no infrastructure is required.
+    # Both set moves state to Postgres and Redis, which is what makes a
+    # multi-worker deployment safe. Exactly one set is refused at startup —
+    # a half-configured deployment that silently loses jobs is the failure this
+    # exists to remove.
+    database_url: str = Field(default="", validation_alias="DATABASE_URL")
+    redis_url: str = Field(default="", validation_alias="REDIS_URL")
+    # Namespaces every Redis key, so two deployments can share one Redis.
+    redis_key_prefix: str = Field(default="k8sagent", validation_alias="REDIS_KEY_PREFIX")
+
+    # How long a worker's claim on a job stays valid without a heartbeat. A
+    # worker that dies leaves its job reapable after this long, not forever.
+    job_lease_seconds: int = Field(default=60, validation_alias="JOB_LEASE_SECONDS")
+    # Backstop poll for a cancellation whose pub/sub message never arrived.
+    # Redis carries the cancel in milliseconds; this bounds the worst case.
+    job_cancel_poll_seconds: float = Field(default=2.0, validation_alias="JOB_CANCEL_POLL_SECONDS")
+    # Identifies this worker in leases. Defaults to host:pid at startup.
+    worker_id: str = Field(default="", validation_alias="WORKER_ID")
+
+    @property
+    def distributed_state(self) -> bool:
+        return bool(self.database_url and self.redis_url)
+
+    def validate_state_backend(self) -> None:
+        """Refuse a half-configured distributed deployment.
+
+        Starting with only one of the two would appear to work and would lose
+        every job the moment a second worker existed.
+        """
+        if bool(self.database_url) is bool(self.redis_url):
+            return
+        missing = "REDIS_URL" if self.database_url else "DATABASE_URL"
+        present = "DATABASE_URL" if self.database_url else "REDIS_URL"
+        raise RuntimeError(
+            f"{present} is set but {missing} is not. Distributed state needs "
+            f"both; set {missing}, or unset {present} to run single-process."
+        )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

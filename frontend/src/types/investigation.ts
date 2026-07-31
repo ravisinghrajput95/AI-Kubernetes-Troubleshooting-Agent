@@ -278,6 +278,12 @@ export interface JobEvent {
   at: string;
   time: string;
   data?: Record<string, unknown>;
+  /**
+   * Monotonic position within one investigation, assigned by the backend.
+   * Also sent as the SSE frame id, so a reconnecting EventSource resumes from
+   * it via `Last-Event-ID` rather than replaying the timeline.
+   */
+  seq?: number;
 }
 
 export interface InvestigationJobAccepted {

@@ -44,12 +44,20 @@ python -m pytest tests/test_collection_scheduler.py -k timeout   # single test
 `pytest.ini` sets `asyncio_mode = auto`, so async tests need no decorator. Tests use a fake `KubectlExecutor` subclass and never touch a real cluster.
 
 ```bash
+# Opt-in tests against real Postgres and Redis (same precedent as VITE_API_INTEGRATION):
+docker compose up -d postgres redis
+K8S_AGENT_INTEGRATION=1 python -m pytest
+```
+
+Without that variable the distributed-store tests skip, so `python -m pytest` **never needs a database**. There is deliberately no fake Postgres and no SQLite stand-in: the store depends on `jsonb`, `bigserial` and a conditional UPDATE for claiming, so a substitute would prove the tests pass rather than that the store works. `tests/test_job_store_contract.py` runs the *same* assertions against both stores, which is what stops them diverging.
+
+```bash
 python -m evals    # reasoning + grounding regression report
 ```
 
 `evals/` is a golden corpus enforced by `tests/test_evals.py` and printed in CI. It exists because rules, prompts and grounding checks can all change without breaking a unit test while making the platform worse at reasoning. **The grounding corpus must keep cases that are expected to be *accepted*** — a corpus of only-rejections passes while an over-strict check has silently routed every investigation to the deterministic fallback. See `docs/EVALUATION.md`.
 
-Docker: `docker compose up --build` builds both services. Two caveats — `docker-compose.yml` declares `env_file: ./backend/.env.example`, which is not in the repo (`backend/.gitignore` ignores it), and the backend image does not install `kubectl` or mount a kubeconfig, so investigations will fail inside the container. Local processes are the working path.
+Docker: `docker compose up --build` starts the backend, console, Postgres and Redis. The image installs a pinned `kubectl` and compose mounts `~/.kube/config` read-only (override with `KUBECONFIG_FILE`). `docker compose up --scale backend=3` is the multi-worker demonstration. Local processes remain the getting-started path and need none of it.
 
 Lint and format (from `backend/`, config in `ruff.toml`):
 
@@ -71,7 +79,8 @@ ruff format --check .   # CI enforces formatting
 - `kubectl` must be on PATH of the backend process; every cluster read shells out to it.
 - `OPENAI_API_KEY` (optional). Without it the LLM call fails cleanly and the deterministic fallback diagnosis is used — the app stays fully functional, just with `ai_generated: false`.
 - Config is `pydantic-settings` in `app/core/config.py`, read from env or `backend/.env`: `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4o-mini`), `KUBECONFIG_PATH`, `KUBECTL_TIMEOUT_SECONDS`, `LLM_TIMEOUT_SECONDS`.
-- `InvestigationHistoryService` writes to `Path("data")/"investigations"` — a **relative** path, so the backend must be started from `backend/` or history lands in the wrong directory.
+- `InvestigationHistoryService` renders reports and hands the bytes to a `ReportStore`. The default `FilesystemReportStore` writes to `Path("data")/"investigations"` — a **relative** path, so the backend must be started from `backend/` or history lands in the wrong directory. With `DATABASE_URL` set, reports are Postgres blobs and the working directory stops mattering.
+- `DATABASE_URL` + `REDIS_URL` select durable state (see *State backends* below). Both unset is the single-process default; exactly one set is **refused at startup**.
 
 ## Architecture
 
@@ -94,15 +103,39 @@ Steps 2 and 3 block, so both are dispatched via `asyncio.to_thread` to keep the 
 
 `collection_failure()` draws the line between the two failure modes: **partial** degradation (one collector down) succeeds with reduced completeness; **total** failure (zero usable evidence) fails the job, because there is nothing to reason over and reporting it as success would misrepresent it. The sync endpoint deliberately keeps its old contract — 200 with `health.status == "error"` — so the existing frontend still renders the message.
 
+### State backends (`app/state.py`, `app/persistence/`)
+
+One decision, made once at startup, and the only place either deployment is named:
+
+| `DATABASE_URL` / `REDIS_URL` | Store | Reports |
+|---|---|---|
+| both unset (**default**) | `InMemoryJobStore` | local disk |
+| both set | `PostgresRedisJobStore` | Postgres blobs |
+| exactly one set | **startup fails** | — |
+
+The single-process default is *supported*, not a dev-only fallback: `app/persistence/` is imported lazily, so nothing loads `psycopg` or `redis` unless configured. Do not make a database mandatory — `uvicorn app.main:app --reload` against nothing but a kubeconfig is the getting-started path.
+
+**The governing rule: Redis is the latency layer, Postgres is the truth.** Every message has a committed row behind it — a queued id is a `pending` row, a cancel is a committed `cancel_requested`, an event is an inserted row carrying the sequence the message quotes. If Redis drops everything the system is slower, never wrong. Do not add a Redis-only fact.
+
+Migrations are numbered forward-only SQL in `app/persistence/migrations/`, applied under `pg_advisory_lock` so N replicas booting together cannot race. Not Alembic: there is no ORM, so autogenerate — its whole value — does not apply. No downgrades by design; a bad migration is fixed by the next one.
+
 ### Jobs (`app/jobs/`)
 
-`InvestigationJobStore` is **in-process**: jobs do not survive a restart, and a multi-worker uvicorn deployment will not find a job created by another worker. Single-process is the supported topology; swapping in Redis means implementing `create/get/list/publish/subscribe` and nothing above that layer changes.
+`JobStore` (`app/jobs/base.py`) is the seam; both implementations satisfy it and no API handler knows which it has. `publish()` never blocks — a subscriber that is not draining loses events rather than stalling the investigation.
 
-`publish()` never blocks — a subscriber that is not draining loses events rather than stalling the investigation. `subscribe()` replays the backlog before going live, so a client that connects mid-run still sees the whole timeline, and yields `None` on each `heartbeat` interval for SSE keepalives.
+Three things are easy to regress:
+
+- **`subscribe()` opens the live subscription *before* reading the backlog**, then de-duplicates by sequence. Subscribe-first is what makes it impossible to drop an event published during the read; the sequence filter (`EventSequencer`) is what makes it impossible to then deliver that event twice. Swapping the order looks harmless and silently loses events. The sequence is also the SSE frame id, so `Last-Event-ID` resumes a broken stream.
+- **Cancellation is a message, not a method call.** `Task.cancel()` only works in the owning process. `/cancel` commits `cancel_requested` and publishes on the Redis control channel; the owning worker's runner turns that back into a local cancel. A per-job watchdog polling the committed flag is the backstop — it is what makes cancellation a *guarantee* rather than best effort, and it must not be removed because "the message already handles it". Both paths are pinned by tests that disable the other one.
+- **A claim is a conditional UPDATE** (`WHERE status = 'pending'`), which is the mutual exclusion. Two workers may pop the same id; only one UPDATE matches.
+
+`start_investigation_job` and `cancel_investigation` **must stay `async`** — unchanged conclusion, new reason: they touch the loop thread (`asyncio.create_task`, listener dispatch) and must not block it.
+
+Scope boundary: M3 gives durable, correctly-terminated records, **not mid-run resumption**. A dead worker's job is reaped to `failed` via lease expiry. Resuming half-collected work would be a re-run, and needs ADR-007's state machine.
 
 Progress flows through the `ProgressReporter` protocol on `CollectionContext` (default `NullProgressReporter`, so sync runs stay silent). Collectors carry a `label` used as the progress message — the generic scheduler must not gain a mapping of Kubernetes collector ids.
 
-Two endpoints **must stay `async`**: `start_investigation_job` and `cancel_investigation`. `asyncio.create_task` and `Task.cancel()` require the event loop thread, and FastAPI runs `def` endpoints in a worker threadpool.
+`JobConsumer` (`app/jobs/consumer.py`) runs only in the distributed deployment: a queue loop that claims and runs, a control loop that delivers cancels, and a reaper that fails jobs whose lease expired and re-offers ones the queue lost. An **idle** consumer is the normal state — `RedisBus` gives its socket deadline headroom over the blocking read, because redis-py defaults both to five seconds and the collision crashed the loop every cycle.
 
 Testing note: `TestClient` must be used as a context manager (`with TestClient(app) as c`). Without it the event loop is torn down per request and background jobs are cancelled mid-run. `TestClient` also buffers streamed responses, so it verifies SSE framing but not progressive delivery — that needs a real server.
 
@@ -253,7 +286,7 @@ Both are emitted by playbooks (CrashLoop → pod metrics + historical logs; Pend
 
 Sections with nothing behind them are **omitted, not padded** — same rule as the console.
 
-`history_service.py` writes the three formats. The PDF is hand-rolled object emission (`_write_pdf_objects`, base-14 fonts, no PDF dependency), so section bodies are flattened via `ReportSection.as_lines()` and text must be pre-wrapped and non-ASCII escaped. `history.json` is capped at 25 entries; report files under `data/investigations/reports/` are keyed by UUID and not pruned. `POST /investigations/{id}/regenerate` re-renders all three from stored JSON without re-querying the cluster — so improving the composer improves historical reports too.
+`history_service.py` renders the three formats and hands the **bytes** to a `ReportStore` (`app/services/report_store.py`) — filesystem or Postgres. It returns bytes rather than a path because `/investigations/{id}/pdf` may be served by a worker that never rendered the file; that is also the seam M8 swaps for object storage, changing one method and no endpoint. The PDF is hand-rolled object emission (`_pdf_bytes`, base-14 fonts, no PDF dependency), so section bodies are flattened via `ReportSection.as_lines()` and text must be pre-wrapped and non-ASCII escaped. On the filesystem backend `history.json` is capped at 25 entries; on Postgres the 25 is a query limit and nothing is discarded. `POST /investigations/{id}/regenerate` re-renders all three from stored JSON without re-querying the cluster — so improving the composer improves historical reports too.
 
 ### Frontend
 

@@ -27,6 +27,23 @@ class Principal:
             "auth_method": self.auth_method,
         }
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any] | None) -> "Principal | None":
+        """Rebuild a caller from its stored form.
+
+        Needed when a worker other than the one that received the request runs
+        the investigation: the cluster reads must still be impersonated as the
+        original caller, so `groups` has to survive the round trip.
+        """
+        if not payload:
+            return None
+        return cls(
+            subject=payload.get("subject", ""),
+            groups=tuple(payload.get("groups") or ()),
+            email=payload.get("email", ""),
+            auth_method=payload.get("auth_method", "unknown"),
+        )
+
 
 ANONYMOUS_SUBJECT = "anonymous"
 

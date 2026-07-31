@@ -18,3 +18,9 @@ PyJWT[crypto]==2.13.0
 # gencode against the runtime and fails loudly on a mismatch, which is why both
 # are pinned and CI regenerates to prove they agree.
 protobuf==7.35.1
+# Durable job and report state. Imported only when DATABASE_URL and REDIS_URL
+# are set, so the single-process deployment never loads either driver — but
+# both are installed unconditionally so `pip install -r requirements.txt`
+# stays the one instruction, and so the opt-in integration suite can run.
+psycopg[binary,pool]==3.3.4
+redis==8.1.0

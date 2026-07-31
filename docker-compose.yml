@@ -1,15 +1,71 @@
+# Two topologies in one file.
+#
+#   docker compose up --build
+#     Backend, console, Postgres and Redis. State is durable, and the backend
+#     can be scaled: `docker compose up --scale backend=3`.
+#
+#   Local development needs none of this. `uvicorn app.main:app --reload` with
+#   neither DATABASE_URL nor REDIS_URL set keeps jobs in process and reports on
+#   local disk, and stays the getting-started path.
+
 services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: ai-kubernetes-agent-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: k8sagent
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # The backend migrates at startup, so it must not start against a
+      # database that is still initialising.
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai-kubernetes-agent-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
   backend:
     build:
       context: ./backend
-    container_name: ai-kubernetes-agent-backend
     ports:
-      - "8000:8000"
-    env_file:
-      - ./backend/.env.example
+      # A range, not a single port, so `--scale backend=3` can bind them all.
+      # The first replica gets 8000, which is what the console points at.
+      - "8000-8009:8000"
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/k8sagent
+      REDIS_URL: redis://redis:6379/0
+      # This file is a local demonstration, not a deployment. The service holds
+      # a kubeconfig, so disabling auth is refused unless acknowledged
+      # explicitly — read SECURITY.md before exposing this port.
+      AUTH_MODE: ${AUTH_MODE:-disabled}
+      ALLOW_INSECURE_NO_AUTH: ${ALLOW_INSECURE_NO_AUTH:-true}
+      KUBECONFIG: /home/app/.kube/config
+    volumes:
+      # Read-only. Without cluster credentials the backend still starts and
+      # reports every collector as unavailable, rather than failing to boot.
+      - ${KUBECONFIG_FILE:-~/.kube/config}:/home/app/.kube/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   frontend:
     build:
@@ -21,3 +77,6 @@ services:
       react_PUBLIC_API_BASE_URL: http://localhost:8000
     depends_on:
       - backend
+
+volumes:
+  postgres-data:

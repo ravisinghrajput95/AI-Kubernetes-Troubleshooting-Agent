@@ -1,8 +1,4 @@
 import json
-import os
-import re
-import tempfile
-import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from textwrap import wrap
@@ -12,23 +8,34 @@ from uuid import uuid4
 from loguru import logger
 
 from app.reports.composer import IncidentReportComposer
-
-# Investigation ids are UUIDs. Anything else is rejected before it can be used
-# to build a filesystem path.
-SAFE_ID = re.compile(r"^[0-9a-fA-F-]{8,64}$")
-
-# Serialises the read-modify-write of the history index within this process.
-# Across processes the atomic replace prevents a torn file, but a concurrent
-# writer can still lose an entry — see docs/PRODUCTION_READINESS.md (F20).
-_HISTORY_LOCK = threading.Lock()
+from app.services.report_store import get_report_store
 
 
 class InvestigationHistoryService:
-    def __init__(self) -> None:
-        self.data_dir = Path("data") / "investigations"
-        self.reports_dir = self.data_dir / "reports"
-        self.index_path = self.data_dir / "history.json"
-        self.reports_dir.mkdir(parents=True, exist_ok=True)
+    """Composes, renders and records investigation reports.
+
+    Rendering is unchanged and backend-agnostic: this class produces bytes and
+    hands them to a `ReportStore`, which decides whether they land on local
+    disk or in Postgres. That is what lets `/investigations/{id}/pdf` answer on
+    a worker that never rendered the file.
+    """
+
+    def __init__(self, store=None) -> None:
+        self._store = store if store is not None else get_report_store()
+
+    # Filesystem details, exposed for the single-process deployment and its
+    # path-safety tests. Absent — and unused — on the Postgres backend.
+    @property
+    def data_dir(self) -> Path:
+        return self._store.data_dir
+
+    @property
+    def reports_dir(self) -> Path:
+        return self._store.reports_dir
+
+    @property
+    def index_path(self) -> Path:
+        return self._store.index_path
 
     def save(
         self,
@@ -45,24 +52,13 @@ class InvestigationHistoryService:
         namespace = self._namespace(investigation)
         confidence = int(diagnosis.get("confidence", 0))
         root_cause = diagnosis.get("root_cause", "Unknown root cause")
-        pdf_path = self.reports_dir / f"{investigation_id}.pdf"
-        json_path = self.reports_dir / f"{investigation_id}.json"
-        markdown_path = self.reports_dir / f"{investigation_id}.md"
 
-        self._write_pdf(
-            pdf_path, diagnosis, investigation, timestamp, namespace, status, incident_id
-        )
-        self._write_json(
-            json_path, diagnosis, investigation, timestamp, namespace, status, incident_id
-        )
-        self._write_markdown(
-            markdown_path,
-            diagnosis,
-            investigation,
-            timestamp,
-            namespace,
-            status,
-            incident_id,
+        # Reserve the record first: on the Postgres backend the report blobs
+        # hang off the investigation row, and the synchronous endpoint saves a
+        # report without ever having created a job.
+        self._store.ensure(investigation_id, owner)
+        self._render_all(
+            investigation_id, diagnosis, investigation, timestamp, namespace, status, incident_id
         )
 
         item = {
@@ -86,30 +82,27 @@ class InvestigationHistoryService:
             "markdown_url": f"/investigations/{investigation_id}/markdown",
         }
 
-        with _HISTORY_LOCK:
-            history = self._read_index()
-            history.insert(0, item)
-            self._write_atomic(self.index_path, json.dumps(history[:25], indent=2))
+        self._store.upsert_index(item)
         logger.info("Saved investigation report {id}", id=investigation_id)
         return item
 
-    def _write_atomic(self, path: Path, content: str) -> None:
-        """Write via a temp file and atomic rename.
-
-        A crash or a full disk part-way through leaves the previous file intact
-        rather than a truncated one. The previous implementation wrote in place,
-        so an interrupted write corrupted the history index.
-        """
-        handle, temp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-        try:
-            with os.fdopen(handle, "w", encoding="utf-8") as stream:
-                stream.write(content)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temp_name, path)
-        except OSError:
-            Path(temp_name).unlink(missing_ok=True)
-            raise
+    def _render_all(
+        self,
+        investigation_id: str,
+        diagnosis: dict[str, Any],
+        investigation: dict[str, Any],
+        timestamp: str,
+        namespace: str,
+        status: str,
+        incident_id: str,
+    ) -> None:
+        """Render all three formats from one composition and store them."""
+        args = (diagnosis, investigation, timestamp, namespace, status, incident_id)
+        self._store.write(investigation_id, "pdf", self._render_pdf(*args))
+        self._store.write(investigation_id, "json", self._render_json(*args).encode("utf-8"))
+        self._store.write(
+            investigation_id, "markdown", self._render_markdown(*args).encode("utf-8")
+        )
 
     def list_history(self, owner: str | None = None) -> list[dict[str, Any]]:
         """History entries, optionally restricted to one owner.
@@ -118,53 +111,27 @@ class InvestigationHistoryService:
         handlers must pass the caller's subject: one user's investigations are
         not another's to read.
         """
-        entries = self._read_index()
-        if owner is None:
-            return entries
-        return [entry for entry in entries if entry.get("owner", "") == owner]
-
-    def _read_index(self) -> list[dict[str, Any]]:
-        if not self.index_path.exists():
-            return []
-
-        try:
-            data = json.loads(self.index_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            # Never silently discard history: move it aside so it can be
-            # recovered, and make the event loud.
-            quarantine = self.index_path.with_suffix(
-                f".corrupt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}.json"
-            )
-            try:
-                self.index_path.rename(quarantine)
-                logger.error("History index was unreadable; quarantined to {path}", path=quarantine)
-            except OSError:
-                logger.error("History index was unreadable and could not be quarantined")
-            return []
-
-        return data if isinstance(data, list) else []
+        return self._store.read_index(owner=owner)
 
     def report_path(self, investigation_id: str, report_type: str = "pdf") -> Path | None:
-        extension = {"pdf": "pdf", "json": "json", "markdown": "md"}.get(report_type)
-        if extension is None:
-            return None
-        if not SAFE_ID.match(investigation_id or ""):
-            logger.warning(
-                "Rejecting malformed investigation id: {id}", id=str(investigation_id)[:80]
-            )
-            return None
+        """On-disk location of a report. Filesystem backend only; None otherwise.
 
-        path = (self.reports_dir / f"{investigation_id}.{extension}").resolve()
+        Kept for the single-process deployment and its path-safety tests. The
+        API reads bytes via `read_report_bytes`, because a report rendered by
+        another worker has no path here.
+        """
+        return self._store.path(investigation_id, report_type)
 
-        # Defence in depth: even with a validated id, never serve a path that
-        # resolves outside the reports directory.
-        if not path.is_relative_to(self.reports_dir.resolve()):
-            logger.error("Path traversal attempt blocked: {id}", id=investigation_id)
+    def read_report_bytes(
+        self,
+        investigation_id: str,
+        report_type: str,
+        owner: str | None = None,
+    ) -> bytes | None:
+        """Raw report content, whichever worker rendered it."""
+        if not self.owns(investigation_id, owner):
             return None
-
-        if not path.exists():
-            return None
-        return path
+        return self._store.read(investigation_id, report_type)
 
     def owns(self, investigation_id: str, owner: str | None) -> bool:
         """True when `owner` may read this investigation.
@@ -174,10 +141,7 @@ class InvestigationHistoryService:
         """
         if owner is None:
             return True
-        entry = next(
-            (item for item in self._read_index() if item.get("id") == investigation_id),
-            None,
-        )
+        entry = self._store.find(investigation_id)
         if entry is None:
             return True
         return entry.get("owner", "") == owner
@@ -190,13 +154,13 @@ class InvestigationHistoryService:
         if not self.owns(investigation_id, owner):
             return None
 
-        path = self.report_path(investigation_id, "json")
-        if path is None:
+        raw = self._store.read(investigation_id, "json")
+        if raw is None:
             return None
 
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
+            data = json.loads(raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
             logger.warning("Investigation report JSON is invalid: {id}", id=investigation_id)
             return None
 
@@ -219,32 +183,8 @@ class InvestigationHistoryService:
             report.get("incident_id") or self._incident_id(timestamp, investigation_id)
         )
 
-        self._write_pdf(
-            self.reports_dir / f"{investigation_id}.pdf",
-            diagnosis,
-            investigation,
-            timestamp,
-            namespace,
-            status,
-            incident_id,
-        )
-        self._write_json(
-            self.reports_dir / f"{investigation_id}.json",
-            diagnosis,
-            investigation,
-            timestamp,
-            namespace,
-            status,
-            incident_id,
-        )
-        self._write_markdown(
-            self.reports_dir / f"{investigation_id}.md",
-            diagnosis,
-            investigation,
-            timestamp,
-            namespace,
-            status,
-            incident_id,
+        self._render_all(
+            investigation_id, diagnosis, investigation, timestamp, namespace, status, incident_id
         )
         self._upsert_history_item(
             investigation_id,
@@ -273,8 +213,12 @@ class InvestigationHistoryService:
             or investigation.get("topology", {}).get("cluster")
             or "Current Context"
         )
+        existing = self._store.find(investigation_id) or {}
         item = {
             "id": investigation_id,
+            # Carried across, not recomputed: regenerating a report must not
+            # silently orphan it from the user who owns it.
+            "owner": existing.get("owner", ""),
             "incident_id": incident_id,
             "timestamp": timestamp,
             "root_cause": diagnosis.get("root_cause", "Unknown root cause"),
@@ -288,10 +232,7 @@ class InvestigationHistoryService:
             "json_url": f"/investigations/{investigation_id}/json",
             "markdown_url": f"/investigations/{investigation_id}/markdown",
         }
-        with _HISTORY_LOCK:
-            history = [entry for entry in self._read_index() if entry.get("id") != investigation_id]
-            history.insert(0, item)
-            self._write_atomic(self.index_path, json.dumps(history[:25], indent=2))
+        self._store.upsert_index(item)
 
     def _namespace(self, investigation: dict[str, Any]) -> str:
         pods = investigation.get("pods", {}).get("problematic_pods", [])
@@ -308,16 +249,15 @@ class InvestigationHistoryService:
 
         return "unknown"
 
-    def _write_pdf(
+    def _render_pdf(
         self,
-        path: Path,
         diagnosis: dict[str, Any],
         investigation: dict[str, Any],
         timestamp: str,
         namespace: str,
         status: str,
         incident_id: str,
-    ) -> None:
+    ) -> bytes:
         # Only the cover-page metadata is derived here; the body comes from the
         # composer. The per-section helpers this used to call became dead work
         # when the composer replaced the hardcoded sections.
@@ -352,24 +292,22 @@ class InvestigationHistoryService:
             for section in report.sections
         ]
 
-        self._styled_pdf(
-            path=path,
+        return self._styled_pdf(
             title="AI Kubernetes Investigation Report",
             subtitle=f"Generated {timestamp}",
             meta=meta,
             sections=sections,
         )
 
-    def _write_json(
+    def _render_json(
         self,
-        path: Path,
         diagnosis: dict[str, Any],
         investigation: dict[str, Any],
         timestamp: str,
         namespace: str,
         status: str,
         incident_id: str,
-    ) -> None:
+    ) -> str:
         cluster = (
             investigation.get("context")
             or investigation.get("topology", {}).get("cluster")
@@ -403,18 +341,17 @@ class InvestigationHistoryService:
             .compose(diagnosis, investigation, incident_id, timestamp, namespace, status)
             .to_dict(),
         }
-        self._write_atomic(path, json.dumps(payload, indent=2))
+        return json.dumps(payload, indent=2)
 
-    def _write_markdown(
+    def _render_markdown(
         self,
-        path: Path,
         diagnosis: dict[str, Any],
         investigation: dict[str, Any],
         timestamp: str,
         namespace: str,
         status: str,
         incident_id: str,
-    ) -> None:
+    ) -> str:
         """Render the composed report as Markdown.
 
         Shares the composition with the PDF, so the two cannot describe the
@@ -460,7 +397,7 @@ class InvestigationHistoryService:
                 parts.append(f"> {section.note}")
                 parts.append("")
 
-        self._write_atomic(path, "\n".join(parts).rstrip() + "\n")
+        return "\n".join(parts).rstrip() + "\n"
 
     def _md_line(self, line: str) -> str:
         """Preserve command lines as code, leave prose as prose."""
@@ -693,12 +630,11 @@ class InvestigationHistoryService:
 
     def _styled_pdf(
         self,
-        path: Path,
         title: str,
         subtitle: str,
         meta: list[tuple[str, str]],
         sections: list[dict[str, Any]],
-    ) -> None:
+    ) -> bytes:
         pages: list[list[str]] = []
         page: list[str] = []
         y = 0
@@ -773,9 +709,9 @@ class InvestigationHistoryService:
             )
 
         pages.append(page)
-        self._write_pdf_objects(path, pages)
+        return self._pdf_bytes(pages)
 
-    def _write_pdf_objects(self, path: Path, pages: list[list[str]]) -> None:
+    def _pdf_bytes(self, pages: list[list[str]]) -> bytes:
         page_count = len(pages)
         page_ids = list(range(3, 3 + page_count))
         font_regular_id = 3 + page_count
@@ -826,7 +762,7 @@ class InvestigationHistoryService:
             f"startxref\n{xref_offset}\n%%EOF\n"
         )
 
-        path.write_bytes(pdf.encode("latin-1", errors="replace"))
+        return pdf.encode("latin-1", errors="replace")
 
     def _pdf_text(
         self,
