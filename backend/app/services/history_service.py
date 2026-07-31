@@ -64,6 +64,11 @@ class InvestigationHistoryService:
         item = {
             "id": investigation_id,
             "owner": owner,
+            # The cluster this ran against. Without it the console can only
+            # attribute an investigation to a cluster by joining against the
+            # job store, which does not survive a restart in the single-process
+            # deployment — so a fleet view would silently omit older runs.
+            "context": str(investigation.get("context") or ""),
             "incident_id": incident_id,
             "timestamp": timestamp,
             "root_cause": root_cause,
@@ -219,6 +224,7 @@ class InvestigationHistoryService:
             # Carried across, not recomputed: regenerating a report must not
             # silently orphan it from the user who owns it.
             "owner": existing.get("owner", ""),
+            "context": str(investigation.get("context") or existing.get("context") or ""),
             "incident_id": incident_id,
             "timestamp": timestamp,
             "root_cause": diagnosis.get("root_cause", "Unknown root cause"),

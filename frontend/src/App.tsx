@@ -33,6 +33,7 @@ import {
 } from "./services/auth";
 import { useScope } from "./hooks/useScope";
 import { AppShell } from "./components/shell/AppShell";
+import { FleetPage } from "./routes/FleetPage";
 import { ReportsPage } from "./routes/ReportsPage";
 import { SettingsPage } from "./routes/SettingsPage";
 import { useInvestigationJob } from "./hooks/useInvestigationJob";
@@ -1240,7 +1241,7 @@ export function InvestigationPage() {
             to="/"
             className="text-sm text-ink-3 transition-colors duration-fast hover:text-ink-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info"
           >
-            ← Investigations
+            ← Fleet
           </Link>
 
           <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
@@ -1432,7 +1433,8 @@ function AuthenticatedApp() {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        <Route path="/" element={<InvestigatePage />} />
+        <Route path="/" element={<FleetPage />} />
+        <Route path="/investigations" element={<InvestigatePage />} />
         <Route path="/investigations/:id" element={<InvestigationPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/settings" element={<SettingsPage />} />

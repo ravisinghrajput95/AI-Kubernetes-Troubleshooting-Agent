@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { NavLink } from "react-router";
-import { FileText, PanelLeft, Search, Settings, Siren } from "lucide-react";
+import { FileText, LayoutGrid, PanelLeft, Search, Settings, Siren } from "lucide-react";
 
 /**
  * Primary navigation.
@@ -25,7 +25,11 @@ export interface NavDestination {
 }
 
 export const DESTINATIONS: NavDestination[] = [
-  { to: "/", label: "Investigations", icon: Siren, chord: "i" },
+  // Fleet is first and Fleet is `/`. An enterprise operator's mental model is
+  // a fleet of clusters they are accountable for; naming the default route
+  // after that model is the cheapest way to say this is a fleet product.
+  { to: "/", label: "Fleet", icon: LayoutGrid, chord: "f" },
+  { to: "/investigations", label: "Investigations", icon: Siren, chord: "i" },
   { to: "/reports", label: "Reports", icon: FileText, chord: "r" },
   { to: "/settings", label: "Settings", icon: Settings, chord: "s" },
 ];

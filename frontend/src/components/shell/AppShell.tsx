@@ -118,7 +118,11 @@ export function AppShell() {
         </main>
       </div>
 
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onStartInvestigation={() => navigate("/investigations")}
+      />
     </div>
   );
 }

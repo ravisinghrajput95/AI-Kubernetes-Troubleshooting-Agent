@@ -312,6 +312,8 @@ export interface InvestigationJobState {
 
 export interface InvestigationHistoryItem {
   id: string;
+  /** Cluster this ran against. Absent on entries written before it was recorded. */
+  context?: string;
   incident_id?: string;
   timestamp: string;
   root_cause: string;

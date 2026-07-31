@@ -127,3 +127,27 @@ class TestDurability:
         for _ in range(5):
             service.save(DIAGNOSIS, INVESTIGATION)
             json.loads(service.index_path.read_text())
+
+
+class TestClusterAttribution:
+    """A history entry names the cluster it ran against.
+
+    Without it an investigation can only be attributed to a cluster by joining
+    against the job store, which in the single-process deployment does not
+    survive a restart while history does — so a fleet view built on that join
+    would quietly omit every run from before the last restart.
+    """
+
+    def test_the_context_is_recorded(self, service):
+        item = service.save(DIAGNOSIS, {**INVESTIGATION, "context": "prod-eu-west"})
+        assert item["context"] == "prod-eu-west"
+        assert service.list_history()[0]["context"] == "prod-eu-west"
+
+    def test_an_absent_context_is_empty_not_missing(self, service):
+        item = service.save(DIAGNOSIS, {"severity": {"severity": "High"}})
+        assert item["context"] == ""
+
+    def test_regenerating_keeps_the_cluster(self, service):
+        item = service.save(DIAGNOSIS, {**INVESTIGATION, "context": "prod-eu-west"})
+        service.regenerate(item["id"])
+        assert service.list_history()[0]["context"] == "prod-eu-west"

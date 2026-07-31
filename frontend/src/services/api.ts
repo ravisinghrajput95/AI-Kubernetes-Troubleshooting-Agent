@@ -38,6 +38,13 @@ export async function getInvestigationHistory(): Promise<InvestigationHistoryIte
   return response.items;
 }
 
+/** In-flight and recently finished jobs. Used to attribute older history
+ *  entries to a cluster; new entries carry their own context. */
+export async function getInvestigationJobs(): Promise<InvestigationJobState[]> {
+  const response = await get<{ items: InvestigationJobState[] }>("/investigation-jobs");
+  return response.items;
+}
+
 export function getInvestigationReport(id: string): Promise<InvestigationReport> {
   return get<InvestigationReport>(`/investigations/${id}/report`);
 }
