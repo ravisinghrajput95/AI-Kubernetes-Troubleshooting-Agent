@@ -8,6 +8,7 @@ import json
 
 from app.kubernetes.kubectl_executor import KubectlExecutor, KubectlResult
 from app.providers.local_kubectl import LocalKubectlProvider
+from app.services.investigation_runner import collection_failure
 from app.services.investigation_service import InvestigationService
 
 LEAKED_PASSWORD = "hunter2"
@@ -386,3 +387,55 @@ async def test_audit_trail_records_every_command():
 
     assert investigation["executed_commands"]
     assert any("get pods" in command for command in investigation["executed_commands"])
+
+
+class UnreachableCluster(FakeKubectl):
+    """Every read fails, as when the kubeconfig names a context that is gone.
+
+    Delegates to the real fake first so the read-only policy check and the
+    audit trail still run, then replaces the outcome.
+    """
+
+    def run(self, args: list[str], parse_json: bool = False) -> KubectlResult:
+        result = super().run(args, parse_json)
+        return KubectlResult(result.command, False, "", "Unable to connect to the server", 1)
+
+
+class TestTotallyUnreachableCluster:
+    """A cluster that answered nothing must not look like a successful run.
+
+    `collection_failure()` draws the line between partial degradation and total
+    failure by asking whether *any* usable evidence exists. That verdict is only
+    as good as the collectors' honesty: one collector reporting `ok` when it
+    read nothing is enough to make a wholly failed investigation report itself
+    as succeeded. `WorkloadInspector` did exactly that — it recorded its read
+    failures as findings and returned no top-level error.
+    """
+
+    async def test_no_collector_claims_usable_evidence(self):
+        investigation = await build_service(UnreachableCluster()).run()
+
+        usable = [item for item in investigation["evidence"] if item["status"] in {"ok", "empty"}]
+        assert usable == [], f"collectors claimed evidence they could not have: {usable}"
+
+    async def test_the_run_is_reported_as_a_total_failure(self):
+        investigation = await build_service(UnreachableCluster()).run()
+
+        assert investigation["evidence_coverage"]["usable"] == 0
+        assert investigation["health"]["status"] == "error"
+        assert collection_failure(investigation), (
+            "an investigation that collected nothing must not be reported as success"
+        )
+
+    async def test_read_failures_are_not_reported_as_workload_findings(self):
+        """Four unreadable resources are one failure, not four problems found."""
+        investigation = await build_service(UnreachableCluster()).run()
+
+        assert investigation.get("workloads", {}).get("findings", []) == []
+
+    async def test_a_reachable_cluster_is_still_a_success(self):
+        """The guard against making the check so strict that nothing passes."""
+        investigation = await build_service(FakeKubectl()).run()
+
+        assert investigation["evidence_coverage"]["usable"] > 0
+        assert collection_failure(investigation) is None

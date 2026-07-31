@@ -2,6 +2,8 @@ from typing import Any
 
 from app.kubernetes.kubectl_executor import KubectlExecutor
 
+RESOURCES = ("statefulsets", "daemonsets", "jobs", "cronjobs")
+
 
 class WorkloadInspector:
     def __init__(self, kubectl: KubectlExecutor | None = None) -> None:
@@ -10,10 +12,12 @@ class WorkloadInspector:
     def inspect(self, namespace: str | None = None) -> dict[str, Any]:
         findings = []
         inventory = []
+        errors: list[str] = []
 
-        for resource in ("statefulsets", "daemonsets", "jobs", "cronjobs"):
+        for resource in RESOURCES:
             result = self.kubectl.run(self._args(resource, namespace), parse_json=True)
             if not result.success or not isinstance(result.data, dict):
+                errors.append(result.stderr)
                 findings.append(
                     {
                         "resource": resource,
@@ -29,6 +33,19 @@ class WorkloadInspector:
                 issue = self._issue(resource, item)
                 if issue:
                     findings.append({**summary, "issue": issue})
+
+        if len(errors) == len(RESOURCES):
+            # Nothing about workloads was observed, so this is a collection
+            # failure and not a set of findings. Reporting it as findings put
+            # `ok` evidence in the store for a cluster that could not be read
+            # at all, which was enough to make a wholly failed investigation
+            # count as partial degradation and report itself as succeeded.
+            return {
+                "error": errors[0],
+                "healthy": False,
+                "findings": [],
+                "inventory": [],
+            }
 
         return {
             "healthy": len(findings) == 0,
