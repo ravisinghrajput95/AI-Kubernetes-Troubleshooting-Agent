@@ -326,8 +326,15 @@ export interface InvestigationHistoryItem {
   markdown_url?: string;
 }
 
+import type { IncidentComposition } from "../lib/report";
+
 export interface InvestigationReport {
   incident_id?: string;
+  /**
+   * The composed incident report — the same composition the PDF and Markdown
+   * writers render, so the console cannot drift from the artifact.
+   */
+  report?: IncidentComposition;
   timestamp: string;
   status: string;
   namespace: string;

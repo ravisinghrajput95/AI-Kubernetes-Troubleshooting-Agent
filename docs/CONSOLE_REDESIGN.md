@@ -265,6 +265,16 @@ disagree.
 
 **The console becomes the fourth renderer of the same composition.**
 
+*Qualified during implementation.* The composition is **pre-flattened to
+strings** — that is what the PDF and Markdown writers need, and it means the
+composition alone cannot carry evidence ids. So the console takes its *spine*
+from the composition (which sections exist, in what order, omitted when empty)
+and enriches Root Cause, Evidence and Confidence from the structured
+`diagnosis` and `investigation` payloads it already holds. Sections still
+cannot drift from the report; only the rendering of three of them is richer on
+screen than on paper. A section added to the composer still appears on screen
+with no frontend change, which is the property that mattered.
+
 This is the most valuable architectural decision in this document. It means:
 
 - What the operator reads on screen is what the postmortem PDF contains.

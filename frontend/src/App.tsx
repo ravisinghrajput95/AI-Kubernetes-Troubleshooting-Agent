@@ -1,6 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router";
+import {
+  Link,
+  Navigate,
+  Route,
+  Routes,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router";
 
 import {
   getHealth,
@@ -29,6 +37,10 @@ import { ReportsPage } from "./routes/ReportsPage";
 import { SettingsPage } from "./routes/SettingsPage";
 import { useInvestigationJob } from "./hooks/useInvestigationJob";
 import { SignIn } from "./components/SignIn";
+import { EvidenceInspector } from "./components/report/EvidenceInspector";
+import { ReportDocument } from "./components/report/ReportDocument";
+import { SeverityDot } from "./components/report/SeverityDot";
+import { evidenceIndex, severityTone } from "./lib/report";
 import { ConfidenceBreakdown } from "./components/ConfidenceBreakdown";
 import { EvidenceExplorer } from "./components/EvidenceExplorer";
 import { HypothesisPanel } from "./components/HypothesisPanel";
@@ -187,37 +199,6 @@ function MetricsPanel({ metrics }: { metrics?: InvestigationData["metrics"] }) {
   );
 }
 
-function SeverityPanel({
-  severity,
-}: {
-  severity?: {
-    severity?: string;
-    impact?: string;
-    affected_workloads?: number;
-    affected_namespace?: string;
-  };
-}) {
-  const items = [
-    ["Severity", severity?.severity ?? "Not assessed", "text-red-200", "border-red-900/70 bg-red-950/20"],
-    ["Impact", severity?.impact ?? "Unknown", "text-orange-200", "border-orange-900/70 bg-orange-950/20"],
-    ["Affected Workloads", severity?.affected_workloads ?? 0, "text-purple-200", "border-purple-900/70 bg-purple-950/20"],
-    ["Affected Namespace", severity?.affected_namespace ?? "none", "text-cyan-200", "border-cyan-900/70 bg-cyan-950/20"],
-  ];
-
-  return (
-    <section className="grid gap-4 md:grid-cols-4">
-      {items.map(([label, value, color, panel]) => (
-        <div key={label} className={`rounded-lg border p-4 ${panel}`}>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            {label}
-          </p>
-          <p className={`mt-2 truncate text-sm font-semibold ${color}`}>{value}</p>
-        </div>
-      ))}
-    </section>
-  );
-}
-
 function SecurityFindingsPanel({
   security,
 }: {
@@ -284,94 +265,6 @@ function SecurityFindingsPanel({
             </p>
             <p className="mt-2 leading-5 text-slate-400">{finding.detail}</p>
           </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ConfidenceEvidence({ diagnosis }: { diagnosis?: Diagnosis }) {
-  // Only reasoning the backend actually reported. Showing placeholder evidence
-  // labels here would assert support that was never established.
-  const signals = Array.isArray(diagnosis?.confidence_reasoning)
-    ? diagnosis.confidence_reasoning
-    : diagnosis?.confidence_reasoning
-      ? [diagnosis.confidence_reasoning]
-      : [];
-
-  return (
-    <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-5 shadow-sm shadow-black/20">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="font-semibold text-slate-100">AI Confidence Score</h2>
-          <p className="mt-1 text-sm text-slate-400">
-            Evidence used to support the root cause.
-          </p>
-        </div>
-        <StatusPill label={`Confidence: ${diagnosis?.confidence ?? 0}%`} tone="info" />
-      </div>
-      {signals.length === 0 ? (
-        <p className="mt-4 rounded-md border border-dashed border-slate-800 bg-[#101722] px-4 py-6 text-center text-sm text-slate-500">
-          No confidence reasoning was reported for this investigation.
-        </p>
-      ) : (
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {signals.slice(0, 4).map((signal, index) => (
-            <div
-              key={`${signal}-${index}`}
-              className="rounded-md border border-slate-800 bg-[#101722] px-4 py-3 text-sm text-slate-300"
-            >
-              <span className="mr-2 text-lime-300">✓</span>
-              {signal}
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function TimelinePanel({
-  timeline = [],
-}: {
-  timeline?: Array<{ time: string; message: string }>;
-}) {
-  return (
-    <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-5 shadow-sm shadow-black/20">
-      <h2 className="font-semibold text-slate-100">Investigation Timeline</h2>
-      <div className="mt-4 space-y-3">
-        {timeline.length === 0 ? (
-          <p className="text-sm text-slate-400">Timeline appears after a run.</p>
-        ) : null}
-        {timeline.map((item) => (
-          <div key={`${item.time}-${item.message}`} className="flex gap-3 text-sm">
-            <span className="w-20 shrink-0 text-slate-500">{item.time}</span>
-            <span className="text-slate-300">{item.message}</span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function CommandsPanel({ commands = [] }: { commands?: string[] }) {
-  return (
-    <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-5 shadow-sm shadow-black/20">
-      <h2 className="font-semibold text-slate-100">Evidence Collected</h2>
-      <p className="mt-1 text-sm text-slate-400">
-        kubectl commands executed by the investigation layer.
-      </p>
-      <div className="mt-4 space-y-2">
-        {commands.length === 0 ? (
-          <p className="text-sm text-slate-400">No commands captured yet.</p>
-        ) : null}
-        {commands.map((command) => (
-          <code
-            key={command}
-            className="block overflow-x-auto rounded-md border border-slate-800 bg-[#080d14] px-4 py-3 text-xs text-cyan-200"
-          >
-            {command}
-          </code>
         ))}
       </div>
     </section>
@@ -836,204 +729,6 @@ function investigationEvidence(investigation?: InvestigationData) {
   };
 }
 
-function IncidentAssistantPanel({
-  diagnosis,
-  investigation,
-}: {
-  diagnosis?: Diagnosis;
-  investigation?: InvestigationData;
-}) {
-  const [selectedView, setSelectedView] = useState("evidence");
-  const evidence = investigationEvidence(investigation);
-  const assistantViews = {
-    evidence: {
-      title: "Evidence",
-      lines: [
-        diagnosis?.root_cause ?? "Run an investigation to generate evidence.",
-        evidence.firstPod
-          ? `Pod: ${evidence.firstPod.namespace}/${evidence.firstPod.name} is ${evidence.firstPod.status}`
-          : "Pod: no problematic pod captured",
-        evidence.firstEvent
-          ? `Event: ${evidence.firstEvent.reason ?? "Warning"} - ${evidence.firstEvent.message ?? ""}`
-          : "Event: no warning event captured",
-        evidence.firstLog?.relevant_lines?.[0]
-          ? `Log: ${evidence.firstLog.relevant_lines[0]}`
-          : "Log: no relevant log line captured",
-      ],
-    },
-    actions: {
-      title: "Fix Plan",
-      lines: [
-        diagnosis?.fix ?? "Run an investigation to generate remediation guidance.",
-        "Review generated YAML before applying.",
-        "Replace placeholder values with validated production values.",
-        "Verify pod status, rollout status, and recent events after the change.",
-      ],
-    },
-    commands: {
-      title: "Commands",
-      lines: diagnosis?.kubectl_commands?.length
-        ? diagnosis.kubectl_commands
-        : ["No recommended kubectl commands returned yet."],
-      code: true,
-    },
-    risk: {
-      title: "Risk & Rollback",
-      lines: [
-        `Risk: ${diagnosis?.remediation_risk?.level ?? "Pending"}`,
-        ...(diagnosis?.remediation_risk?.impact ?? ["Impact not assessed yet."]),
-        "Rollback: keep the previous manifest or use rollout undo for managed deployments.",
-      ],
-    },
-    security: {
-      title: "Security",
-      lines: evidence.securityWarnings.length
-        ? evidence.securityWarnings.map(
-            (finding) => `${finding.label}: ${finding.detail}`,
-          )
-        : [
-            "No privileged-container, latest-tag, or missing-limit warnings were detected.",
-            "CVE scanning is not configured in this local evidence collection.",
-          ],
-    },
-    metrics: {
-      title: "Metrics & Topology",
-      lines: [
-        `CPU: ${investigation?.metrics?.cpu_usage ?? "N/A"}`,
-        `Memory: ${investigation?.metrics?.memory_usage ?? "N/A"}`,
-        `Cluster: ${investigation?.topology?.cluster ?? "Not captured"}`,
-        ...(investigation?.topology?.nodes?.slice(0, 4).map(
-          (node) => `${node.name}: ${node.pod_count} pod(s)`,
-        ) ?? ["No node placement captured."]),
-      ],
-    },
-  } as const;
-  const selected = assistantViews[selectedView as keyof typeof assistantViews];
-  const selectedIsCode = "code" in selected && selected.code;
-
-  return (
-    <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-5 shadow-sm shadow-black/20">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="font-semibold text-slate-100">Incident Assistant</h2>
-          <p className="mt-1 text-sm text-slate-400">
-            Structured runbook views generated from collected evidence.
-          </p>
-        </div>
-        <StatusPill label="Runbook" tone="info" />
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        {Object.entries(assistantViews).map(([key, view]) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setSelectedView(key)}
-            className={`rounded-md border px-3 py-2 text-left text-sm font-semibold transition ${
-              selectedView === key
-                ? "border-cyan-700 bg-cyan-950/40 text-cyan-200"
-                : "border-slate-800 bg-[#101722] text-slate-400 hover:border-slate-600"
-            }`}
-          >
-            {view.title}
-          </button>
-        ))}
-      </div>
-
-      <div className="mt-4 rounded-md border border-slate-800 bg-[#080d14] p-4">
-        <h3 className="text-sm font-semibold text-slate-100">{selected.title}</h3>
-        <div className="mt-3 space-y-2">
-          {selected.lines.map((line, index) =>
-            selectedIsCode ? (
-              <code
-                key={`${line}-${index}`}
-                className="block overflow-x-auto rounded-md border border-slate-800 bg-[#050a10] px-3 py-2 text-xs text-cyan-200"
-              >
-                {line}
-              </code>
-            ) : (
-              <p key={`${line}-${index}`} className="text-sm leading-6 text-slate-300">
-                {line}
-              </p>
-            ),
-          )}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function DiagnosisCard({ diagnosis }: { diagnosis: Diagnosis }) {
-  // Optional access despite the type saying otherwise: the backend returns
-  // `dict[str, Any]` for diagnosis, so these types are the only contract and
-  // Pydantic will not catch drift. A persisted report missing this field used
-  // to take the whole page down with no error boundary behind it.
-  const firstCommand = diagnosis.kubectl_commands?.[0] ?? "No command returned";
-  const healthy = (diagnosis.root_cause ?? "")
-    .toLowerCase()
-    .includes("no critical kubernetes issues");
-
-  return (
-    <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-5 shadow-sm shadow-black/20">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Diagnosis
-          </p>
-          <h2 className="mt-2 text-xl font-semibold text-slate-100">
-            {diagnosis.root_cause}
-          </h2>
-        </div>
-        <span className="rounded-md border border-fuchsia-800 bg-fuchsia-950/40 px-3 py-1 text-sm font-semibold text-fuchsia-200">
-          {diagnosis.confidence}% confidence
-        </span>
-      </div>
-
-      {healthy ? (
-        <div className="mt-5 rounded-md border border-lime-800 bg-lime-950/30 p-4 text-sm text-lime-200">
-          No critical Kubernetes issues detected. Cluster appears healthy.
-        </div>
-      ) : null}
-
-      <div className="mt-5 grid gap-5 lg:grid-cols-2">
-        <div>
-          <p className="text-sm font-semibold text-slate-200">Explanation</p>
-          <p className="mt-2 text-sm leading-6 text-slate-400">
-            {diagnosis.explanation}
-          </p>
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-slate-200">Suggested Fix</p>
-          <p className="mt-2 text-sm leading-6 text-slate-400">{diagnosis.fix}</p>
-        </div>
-      </div>
-
-      <div className="mt-5">
-        <p className="text-sm font-semibold text-slate-200">kubectl Command</p>
-        <code className="mt-2 block overflow-x-auto rounded-md border border-slate-800 bg-[#080d14] px-4 py-3 text-xs leading-5 text-slate-200">
-          {firstCommand}
-        </code>
-      </div>
-
-      {diagnosis.next_steps?.length ? (
-        <div className="mt-5">
-          <p className="text-sm font-semibold text-slate-200">Next Steps</p>
-          <div className="mt-2 grid gap-2">
-            {diagnosis.next_steps.slice(0, 3).map((step) => (
-              <p
-                key={step}
-                className="rounded-md border border-slate-800 bg-[#080d14] px-4 py-3 text-sm leading-5 text-slate-300"
-              >
-                {step}
-              </p>
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
 function ReportPreview({
   report,
   onClose,
@@ -1491,6 +1186,7 @@ function RecentInvestigations() {
  */
 export function InvestigationPage() {
   const { id = "" } = useParams();
+  const [params, setParams] = useSearchParams();
   const job = useInvestigationJob();
   const { attach } = job;
 
@@ -1500,136 +1196,182 @@ export function InvestigationPage() {
     }
   }, [attach, id]);
 
-  const investigationData = job.investigation;
+  const terminal =
+    job.phase === "succeeded" || job.phase === "failed" || job.phase === "cancelled";
+
+  // The composition arrives with the persisted report, which is written before
+  // the job reaches a terminal state — including a failed one.
+  const report = useQuery({
+    queryKey: ["investigation-report", id],
+    queryFn: () => getInvestigationReport(id),
+    enabled: Boolean(id) && terminal,
+    retry: false,
+  });
+
+  const selectedEvidence = params.get("ev") ?? "";
+  const selectEvidence = useCallback(
+    (evidenceId: string) => {
+      setParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          if (evidenceId && evidenceId !== next.get("ev")) {
+            next.set("ev", evidenceId);
+          } else {
+            next.delete("ev");
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
+
+  const investigation = job.investigation;
   const diagnosis = job.diagnosis;
-  const healthMessage = investigationData?.health?.message;
-  const healthStatus = investigationData?.health?.status;
-  const selectedContext = investigationData?.context ?? "";
+  const evidence = evidenceIndex(investigation).get(selectedEvidence);
+  const severity = investigation?.severity?.severity;
 
   return (
-    <div className="grid gap-5 p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
+    <div className="flex min-h-full">
+      <div className="min-w-0 flex-1">
+        <div className="mx-auto max-w-document px-6 py-8">
           <Link
             to="/"
             className="text-sm text-ink-3 transition-colors duration-fast hover:text-ink-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info"
           >
             ← Investigations
           </Link>
-          <h1 className="mt-1 truncate text-h1">
-            {selectedContext || "Investigation"}
-          </h1>
-          <p className="mt-1 font-mono text-sm text-ink-3">{id}</p>
+
+          <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h1 className="truncate text-display">
+                {investigation?.context || "Investigation"}
+              </h1>
+              <p className="mt-1 font-mono text-sm text-ink-3">{id}</p>
+            </div>
+            <div className="flex items-center gap-3">
+              {severity ? (
+                <SeverityDot tone={severityTone(severity)} label={severity} />
+              ) : null}
+              {job.isRunning ? (
+                <button
+                  type="button"
+                  onClick={() => void job.cancel()}
+                  className="rounded-md border border-line bg-raised px-3 py-1.5 text-sm transition-colors duration-fast hover:border-critical hover:text-critical focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info"
+                >
+                  Cancel
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          {job.error ? (
+            <p role="alert" className="mt-5 rounded-md border border-critical/40 bg-critical/5 px-4 py-3 text-sm text-critical">
+              {job.error}
+            </p>
+          ) : null}
+
+          <div className="mt-8">
+            <LiveTimeline
+              phase={job.phase}
+              transport={job.transport}
+              timeline={job.timeline}
+              onCancel={() => void job.cancel()}
+            />
+          </div>
+
+          {terminal ? (
+            <div className="mt-8">
+              {report.isLoading ? (
+                <ReportSkeleton />
+              ) : (
+                <ReportDocument
+                  composition={report.data?.report}
+                  diagnosis={diagnosis}
+                  investigation={investigation}
+                  selectedEvidence={selectedEvidence}
+                  onSelectEvidence={selectEvidence}
+                />
+              )}
+            </div>
+          ) : null}
+
+          {terminal && diagnosis ? (
+            <div className="mt-8">
+              <RemediationPanel diagnosis={diagnosis} investigation={investigation} />
+            </div>
+          ) : null}
+
+          {terminal && job.historyItem ? (
+            <div className="mt-8">
+              <ArtifactsPanel historyItem={job.historyItem} />
+            </div>
+          ) : null}
+
+          {terminal && investigation ? (
+            <details className="mt-8 rounded-lg border border-line bg-surface">
+              <summary className="cursor-pointer px-4 py-3 text-h2 marker:text-ink-3">
+                Cluster snapshot
+              </summary>
+              {/* Cluster-scoped rather than investigation-scoped. These move to
+                  the cluster workspace in a later phase; collapsed here so the
+                  information is not lost in the meantime, and does not compete
+                  with the diagnosis for attention. */}
+              <div className="grid gap-5 border-t border-line-muted p-4">
+                <ClusterHealthOverview overview={investigation.overview} />
+                <MetricsPanel metrics={investigation.metrics} />
+                <SecurityFindingsPanel security={investigation.security} />
+                <ClusterTopologyPanel topology={investigation.topology} />
+              </div>
+            </details>
+          ) : null}
         </div>
       </div>
 
-        <section className="grid gap-4 md:grid-cols-3">
-          <div className="rounded-lg border border-sky-900/70 bg-sky-950/20 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Target Context
-            </p>
-            <p className="mt-2 truncate text-sm font-semibold text-sky-200">
-              {selectedContext || "Not selected"}
-            </p>
+      {selectedEvidence ? (
+        <aside className="hidden w-[400px] shrink-0 border-l border-line-muted bg-surface xl:block">
+          <div className="sticky top-14 max-h-[calc(100vh-3.5rem)] overflow-y-auto">
+            <EvidenceInspector
+              evidence={evidence}
+              diagnosis={diagnosis}
+              onClose={() => selectEvidence("")}
+            />
           </div>
-          <div className="rounded-lg border border-violet-900/70 bg-violet-950/20 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Investigation
-            </p>
-            <p className="mt-2 text-sm font-semibold text-violet-200">
-              {job.isRunning ? "Running" : "Ready"}
-            </p>
+        </aside>
+      ) : null}
+
+      {/* Below the three-column breakpoint the inspector is an overlay, so it
+          never squeezes the document narrower than it can be read at. */}
+      {selectedEvidence ? (
+        <div className="fixed inset-0 z-40 bg-black/60 xl:hidden" onClick={() => selectEvidence("")}>
+          <div
+            className="absolute inset-y-0 right-0 w-full max-w-md overflow-y-auto bg-surface"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <EvidenceInspector
+              evidence={evidence}
+              diagnosis={diagnosis}
+              onClose={() => selectEvidence("")}
+            />
           </div>
-          <div className="rounded-lg border border-amber-900/70 bg-amber-950/20 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Last Result
-            </p>
-            <p className="mt-2 text-sm font-semibold text-amber-200">
-              {healthStatus ? healthStatus.replace("_", " ") : "No run yet"}
-            </p>
-          </div>
-        </section>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
-        <ClusterHealthOverview overview={investigationData?.overview} />
-
-        <SeverityPanel severity={investigationData?.severity} />
-
-        <MetricsPanel metrics={investigationData?.metrics} />
-
-        <SecurityFindingsPanel security={investigationData?.security} />
-
-        {job.error ? (
-          <div className="rounded-lg border border-red-900/70 bg-red-950/40 px-4 py-3 text-sm text-red-200">
-            {job.error}
-            <div className="mt-2 text-red-100">
-              Please verify kubeconfig path, cluster access, kubectl
-              permissions, and backend connectivity.
-            </div>
-          </div>
-        ) : null}
-
-        {healthMessage ? (
-          <div className="rounded-lg border border-slate-800 bg-[#0d131c] px-4 py-3 text-sm text-slate-300">
-            {healthMessage}
-          </div>
-        ) : null}
-
-        <LiveTimeline
-          phase={job.phase}
-          transport={job.transport}
-          timeline={job.timeline}
-          onCancel={() => void job.cancel()}
-        />
-
-        {diagnosis ? (
-          <div className="grid items-start gap-5 xl:grid-cols-[1.3fr_0.7fr]">
-            <div className="grid gap-5">
-              <DiagnosisCard diagnosis={diagnosis} />
-              <HypothesisPanel diagnosis={diagnosis} />
-              <ConfidenceBreakdown diagnosis={diagnosis} />
-              <SignalTable diagnosis={diagnosis} />
-              <RemediationPlanPanel diagnosis={diagnosis} />
-              <ConfidenceEvidence diagnosis={diagnosis} />
-              <RemediationPanel
-                diagnosis={diagnosis}
-                investigation={investigationData}
-              />
-            </div>
-            <div className="grid gap-5 xl:sticky xl:top-5">
-              <IncidentAssistantPanel
-                diagnosis={diagnosis}
-                investigation={investigationData}
-              />
-              <PlaybookRounds investigation={investigationData} />
-            </div>
-          </div>
-        ) : (
-          <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-8 text-center shadow-sm shadow-black/20">
-            <p className="text-sm font-semibold text-slate-100">
-              No investigation has been run yet.
-            </p>
-            <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-400">
-              Select a kubeconfig context from the sidebar and click
-              Investigate Cluster to start collecting evidence.
-            </p>
-          </section>
-        )}
-
-        <section className="grid gap-5 xl:grid-cols-2">
-          <ClusterTopologyPanel topology={investigationData?.topology} />
-          <TimelinePanel timeline={investigationData?.timeline} />
-        </section>
-
-        <EvidenceExplorer
-          investigation={investigationData}
-          citedEvidence={diagnosis?.cited_evidence}
-        />
-
-        <section className="grid gap-5 xl:grid-cols-2">
-          <CommandsPanel commands={investigationData?.executed_commands} />
-          <ArtifactsPanel historyItem={job.historyItem} />
-        </section>
-
+/** Matches the document's box model, so nothing reflows on arrival. */
+function ReportSkeleton() {
+  return (
+    <div className="grid gap-8" aria-hidden="true">
+      {[0, 1, 2].map((block) => (
+        <div key={block} className="grid gap-3">
+          <div className="h-4 w-40 rounded bg-raised" />
+          <div className="h-3 w-full max-w-measure rounded bg-line-muted" />
+          <div className="h-3 w-3/4 max-w-measure rounded bg-line-muted" />
+        </div>
+      ))}
     </div>
   );
 }
