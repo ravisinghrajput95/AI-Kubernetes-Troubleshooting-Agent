@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { NavLink } from "react-router";
-import { FileText, LayoutGrid, PanelLeft, Search, Settings, Siren } from "lucide-react";
+import { FileText, LayoutGrid, PanelLeft, Search, Settings, Siren, Sparkles } from "lucide-react";
 
 /**
  * Primary navigation.
@@ -34,6 +34,10 @@ export const DESTINATIONS: NavDestination[] = [
   // after that model is the cheapest way to say this is a fleet product.
   { to: "/", label: "Fleet", icon: LayoutGrid, chord: "f" },
   { to: "/investigations", label: "Investigations", icon: Siren, chord: "i" },
+  // "Ask" names what the operator does, not what the technology is. It is a
+  // cross-investigation workspace, not a place to chat with the product —
+  // reasoning about one investigation stays on that investigation.
+  { to: "/ask", label: "Ask", icon: Sparkles, chord: "a" },
   { to: "/reports", label: "Reports", icon: FileText, chord: "r" },
   { to: "/settings", label: "Settings", icon: Settings, chord: "s" },
 ];

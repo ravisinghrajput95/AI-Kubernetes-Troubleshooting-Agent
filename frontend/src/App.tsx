@@ -34,6 +34,7 @@ import {
 import { useScope } from "./hooks/useScope";
 import { useDocumentTitle } from "./hooks/useDocumentTitle";
 import { AppShell } from "./components/shell/AppShell";
+import { AskPage } from "./routes/AskPage";
 import { ClusterPage } from "./routes/ClusterPage";
 import { FleetPage } from "./routes/FleetPage";
 import { ReportsPage } from "./routes/ReportsPage";
@@ -1207,6 +1208,7 @@ function AuthenticatedApp() {
         <Route path="/clusters/:context" element={<ClusterPage />} />
         <Route path="/investigations" element={<InvestigatePage />} />
         <Route path="/investigations/:id" element={<InvestigationPage />} />
+        <Route path="/ask" element={<AskPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         {/* Destinations arrive as later phases give them data. Until then an
