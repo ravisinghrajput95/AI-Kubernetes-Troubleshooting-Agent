@@ -264,3 +264,49 @@ class TestOwnership:
             "/investigations/00000000-0000-0000-0000-000000000000/report", headers=BOB_AUTH
         )
         assert denied.status_code == missing.status_code == 404
+
+
+class TestHealthReportsTheAuthMode:
+    """The console renders the sign-in the backend actually requires.
+
+    Without this it cannot tell a token deployment from an OIDC one, and cannot
+    warn that a deployment is accepting unauthenticated requests — which is
+    exactly the configuration that should be hardest to run by accident.
+    """
+
+    def test_disabled_mode_is_reported_as_insecure(self, monkeypatch):
+        monkeypatch.setattr(settings, "auth_mode", "disabled")
+        with TestClient(app) as client:
+            body = client.get("/health").json()
+
+        assert body["auth_mode"] == "disabled"
+        assert body["insecure"] is True
+
+    def test_token_mode_is_not_insecure(self, monkeypatch):
+        monkeypatch.setattr(settings, "auth_mode", "token")
+        with TestClient(app) as client:
+            body = client.get("/health").json()
+
+        assert body["auth_mode"] == "token"
+        assert body["insecure"] is False
+
+    def test_health_stays_unauthenticated(self, monkeypatch):
+        """Otherwise the console could never learn how to authenticate."""
+        monkeypatch.setattr(settings, "auth_mode", "token")
+        monkeypatch.setattr(settings, "api_tokens", "secret:alice@example.com")
+        reset_authenticator()
+        try:
+            with TestClient(app) as client:
+                assert client.get("/health").status_code == 200
+        finally:
+            reset_authenticator()
+
+    def test_no_token_material_is_exposed(self, monkeypatch):
+        """A liveness probe must not become a credential oracle."""
+        monkeypatch.setattr(settings, "auth_mode", "token")
+        monkeypatch.setattr(settings, "api_tokens", "supersecret:alice@example.com")
+        with TestClient(app) as client:
+            raw = client.get("/health").text
+
+        assert "supersecret" not in raw
+        assert "alice@example.com" not in raw

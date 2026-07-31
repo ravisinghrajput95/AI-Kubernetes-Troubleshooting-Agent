@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Navigate, Route, Routes } from "react-router";
 
 import {
   getHealth,
@@ -16,7 +17,9 @@ import type {
   InvestigationResponse,
   KubernetesContext,
 } from "./types/investigation";
+import { getToken, onTokenChange } from "./services/auth";
 import { useInvestigationJob } from "./hooks/useInvestigationJob";
+import { SignIn } from "./components/SignIn";
 import { ConfidenceBreakdown } from "./components/ConfidenceBreakdown";
 import { EvidenceExplorer } from "./components/EvidenceExplorer";
 import { HypothesisPanel } from "./components/HypothesisPanel";
@@ -28,6 +31,9 @@ import { SignalTable } from "./components/SignalTable";
 type InvestigationData = InvestigationResponse["investigation"];
 
 const logoSrc = "/ai-kubernetes-agent-logo.svg";
+
+/** Acknowledgement of an unauthenticated backend, per tab. */
+const INSECURE_ACK = "k8s-agent-insecure-ack";
 
 function StatusPill({
   label,
@@ -49,50 +55,6 @@ function StatusPill({
     >
       {label}
     </span>
-  );
-}
-
-function LoginScreen({ onLogin }: { onLogin: (name: string) => void }) {
-  const [name, setName] = useState("admin");
-
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-[#080d14] px-5 text-slate-100">
-      <section className="w-full max-w-md rounded-lg border border-slate-800 bg-[#0d131c] p-8 shadow-2xl shadow-black/30">
-        <div className="mb-6 flex items-center gap-3">
-          <img
-            src={logoSrc}
-            alt="AI Kubernetes Agent logo"
-            className="size-12 rounded-md"
-          />
-          <div>
-            <p className="font-semibold">AI Kubernetes Agent</p>
-            <p className="text-sm text-lime-300">Online</p>
-          </div>
-        </div>
-
-        <h1 className="text-2xl font-semibold">Open troubleshooting console</h1>
-        <p className="mt-2 text-sm leading-6 text-slate-400">
-          Minimal local login for the troubleshooting dashboard.
-        </p>
-
-        <label className="mt-6 block text-sm font-medium text-slate-300">
-          Display name
-        </label>
-        <input
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          className="mt-2 w-full rounded-md border border-slate-700 bg-[#111823] px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
-        />
-
-        <button
-          type="button"
-          onClick={() => onLogin(name.trim() || "admin")}
-          className="mt-6 w-full rounded-md bg-cyan-400 px-4 py-2.5 text-sm font-semibold text-slate-950 hover:bg-cyan-300"
-        >
-          Open Dashboard
-        </button>
-      </section>
-    </main>
   );
 }
 
@@ -1725,23 +1687,73 @@ function Dashboard({ userName }: { userName: string }) {
   );
 }
 
-function App() {
-  const [userName, setUserName] = useState(
-    window.localStorage.getItem("ai-k8s-user") ?? "",
+function AuthenticatedApp() {
+  const { data: health, isError } = useQuery({
+    queryKey: ["health"],
+    queryFn: getHealth,
+    retry: false,
+  });
+
+  const [token, setTokenState] = useState(getToken);
+  const [authError, setAuthError] = useState("");
+  const [acknowledged, setAcknowledged] = useState(
+    () => window.sessionStorage.getItem(INSECURE_ACK) === "1",
   );
 
-  if (!userName) {
+  // `http.ts` clears the credential when the backend answers 401, which fires
+  // here. That is what turns an expired token into a sign-in prompt rather
+  // than a screen full of failed requests.
+  useEffect(
+    () =>
+      onTokenChange((next) => {
+        setTokenState(next);
+        if (!next) {
+          setAuthError("Your session is no longer valid. Sign in again to continue.");
+        }
+      }),
+    [],
+  );
+
+  const insecure = health?.insecure ?? false;
+  const reachable = !isError && health !== undefined;
+
+  // A backend that needs no credential still gets acknowledged once per tab,
+  // so a dangerous configuration is visible rather than silent.
+  if (reachable && insecure && !acknowledged) {
     return (
-      <LoginScreen
-        onLogin={(name) => {
-          window.localStorage.setItem("ai-k8s-user", name);
-          setUserName(name);
+      <SignIn
+        health={health}
+        onAuthenticated={() => {
+          window.sessionStorage.setItem(INSECURE_ACK, "1");
+          setAcknowledged(true);
         }}
       />
     );
   }
 
-  return <Dashboard userName={userName} />;
+  if (!insecure && !token) {
+    return (
+      <SignIn
+        health={reachable ? health : undefined}
+        error={authError}
+        onAuthenticated={() => setAuthError("")}
+      />
+    );
+  }
+
+  return <Dashboard userName={insecure ? "anonymous" : "signed in"} />;
+}
+
+function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<AuthenticatedApp />} />
+      {/* Phase 0 introduces routing without introducing routes. Later phases
+          add /investigations/:id and the rest; until then every path resolves
+          to the existing dashboard rather than 404ing. */}
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
 }
 
 export default App;

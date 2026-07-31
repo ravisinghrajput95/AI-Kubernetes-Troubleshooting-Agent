@@ -555,10 +555,10 @@ library contradicts the codebase's own standards.
 | shadcn/ui | **Selectively** — dialog, dropdown, tooltip, tabs, popover | shadcn is copy-in source, but pulls Radix primitives. Take the four that carry real a11y burden; hand-roll the rest |
 | Framer Motion | **No, by default** | ~34 KB for what CSS transitions do here. Revisit only for shared-layout animation, which this design does not need |
 | Lucide icons | **Yes, tree-shaken per-icon imports** | ~1 KB for the ~20 icons used |
-| Router | **Yes — this is not optional** | Deep-linking an investigation is a product requirement (§2.1). ~6 KB for `react-router` |
+| Router | **Yes — this is not optional** | Deep-linking an investigation is a product requirement (§2.1). **13.1 KB gzipped, measured** — an earlier estimate of ~6 KB here was wrong. Kept because a shareable investigation link is a requirement, not a convenience; isolated in its own chunk so it never invalidates the app chunk |
 | Glassmorphism | **Two places only** | Command palette and the inspector's sticky header. Anywhere else it costs legibility on dense text |
 
-Net addition ≈ 25–30 KB gzipped, against ~88 KB today. `vite.config.ts` already
+Measured after Phase 0: the app chunk moved 16.65 → 17.85 KB and routing sits in a separate 13.1 KB chunk. `vite.config.ts` already
 splits `react` and `query` chunks; add a `ui` chunk so a design change does not
 invalidate the app chunk.
 

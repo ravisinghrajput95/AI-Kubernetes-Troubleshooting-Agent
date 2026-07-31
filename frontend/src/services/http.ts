@@ -5,9 +5,17 @@
  * for eight JSON requests. This keeps the behaviour that was actually relied
  * on — a base URL, a request timeout, JSON encoding/decoding, and throwing on
  * non-2xx — and drops the rest.
+ *
+ * Every request carries the stored bearer credential. The backend applies
+ * authentication as a router-level dependency, so a console that sends no
+ * `Authorization` header can only talk to a backend running with auth
+ * disabled — the one mode SECURITY.md says must never face a production
+ * cluster.
  */
 
-export type ApiErrorKind = "network" | "timeout" | "http";
+import { authHeaders, clearToken } from "./auth";
+
+export type ApiErrorKind = "network" | "timeout" | "http" | "auth";
 
 export class ApiError extends Error {
   readonly kind: ApiErrorKind;
@@ -27,6 +35,11 @@ export const apiBaseUrl: string =
   import.meta.env.react_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 function messageForStatus(status: number, detail: string): string {
+  if (status === 401) {
+    // The backend's own detail here is for an operator reading logs; the
+    // person looking at the screen needs to know what to do next.
+    return "Your session is no longer valid. Sign in again to continue.";
+  }
   if (detail) {
     return detail;
   }
@@ -83,7 +96,10 @@ export async function request<T>(
     response = await fetch(`${apiBaseUrl}${path}`, {
       method,
       signal: controller.signal,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      headers: {
+        ...authHeaders(),
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (error) {
@@ -99,6 +115,15 @@ export async function request<T>(
     );
   } finally {
     clearTimeout(timer);
+  }
+
+  if (response.status === 401) {
+    // Drop the credential before raising. Clearing it is what makes the app
+    // fall back to the sign-in screen instead of retrying with a token the
+    // backend has already refused.
+    const detail = await readDetail(response);
+    clearToken();
+    throw new ApiError(messageForStatus(401, detail), "auth", 401);
   }
 
   if (!response.ok) {

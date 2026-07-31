@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, apiBaseUrl, get, post, request } from "./http";
+import { clearToken, getToken, setToken } from "./auth";
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -57,7 +58,9 @@ describe("request", () => {
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     expect(init.body).toBeUndefined();
-    expect(init.headers).toBeUndefined();
+    // Headers are always an object now, because the credential is merged in.
+    // What matters is that a body-less request declares no content type.
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBeUndefined();
   });
 
   it("returns undefined for 204 and for an empty body", async () => {
@@ -149,5 +152,76 @@ describe("error handling", () => {
   it("exposes ApiError for instanceof checks", async () => {
     fetchMock.mockResolvedValue(new Response("", { status: 500 }));
     await expect(get("/boom")).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("authentication", () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    clearToken();
+  });
+
+  it("sends no Authorization header when signed out", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ status: "healthy" }));
+    await get("/health");
+
+    const headers = fetchMock.mock.calls[0][1].headers ?? {};
+    expect(headers.Authorization).toBeUndefined();
+  });
+
+  it("sends the bearer credential on every request", async () => {
+    // The backend applies auth as a router-level dependency, so a console
+    // that omits this header can only talk to an unauthenticated backend.
+    setToken("abc123");
+    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
+    await get("/investigations");
+
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe("Bearer abc123");
+  });
+
+  it("keeps the credential alongside the content type on a POST", async () => {
+    setToken("abc123");
+    fetchMock.mockResolvedValue(jsonResponse({ id: "1" }));
+    await post("/investigations", { context: "prod" });
+
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers.Authorization).toBe("Bearer abc123");
+    expect(headers["Content-Type"]).toBe("application/json");
+  });
+
+  it("reports a rejected credential as an auth error", async () => {
+    setToken("expired");
+    fetchMock.mockResolvedValue(jsonResponse({ detail: "Not authenticated" }, 401));
+
+    const error = await get("/investigations").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).kind).toBe("auth");
+    expect((error as ApiError).status).toBe(401);
+  });
+
+  it("drops the credential on 401 so the app returns to sign in", async () => {
+    setToken("expired");
+    fetchMock.mockResolvedValue(jsonResponse({ detail: "Not authenticated" }, 401));
+
+    await get("/investigations").catch(() => undefined);
+    expect(getToken()).toBe("");
+  });
+
+  it("explains a 401 in terms of what to do next", async () => {
+    setToken("expired");
+    fetchMock.mockResolvedValue(jsonResponse({ detail: "Not authenticated" }, 401));
+
+    const error = await get("/investigations").catch((caught: unknown) => caught);
+    expect((error as ApiError).message).toMatch(/sign in again/i);
+  });
+
+  it("leaves the credential alone on other failures", async () => {
+    // A 500 is the backend's problem, not the token's; signing the user out
+    // would be a confusing response to it.
+    setToken("abc123");
+    fetchMock.mockResolvedValue(jsonResponse({ detail: "boom" }, 500));
+
+    await get("/investigations").catch(() => undefined);
+    expect(getToken()).toBe("abc123");
   });
 });

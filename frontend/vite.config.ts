@@ -29,6 +29,11 @@ export default defineConfig({
           if (pkg === "@tanstack") {
             return "query";
           }
+          // Routing changes far less often than the panels do; keeping it out
+          // of the app chunk is the whole point of splitting at all.
+          if (pkg === "react-router") {
+            return "router";
+          }
           return undefined;
         },
       },
