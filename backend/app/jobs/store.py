@@ -253,6 +253,10 @@ def get_job_store():
 
 
 def set_job_store(store) -> None:
-    """Install the process-wide store. Called from application startup."""
+    """Install the process-wide store. Called from application startup.
+
+    `None` un-installs it, so the next caller gets a fresh in-process store
+    rather than one whose backing connections have been closed.
+    """
     global _default_store
     _default_store = store

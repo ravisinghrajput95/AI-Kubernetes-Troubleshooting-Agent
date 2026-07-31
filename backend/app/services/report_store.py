@@ -261,5 +261,6 @@ def get_report_store():
 
 
 def set_report_store(store) -> None:
+    """Install the process-wide report store; `None` reverts to the filesystem."""
     global _default_store
     _default_store = store

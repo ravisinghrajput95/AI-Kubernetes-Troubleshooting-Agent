@@ -35,11 +35,16 @@ class StateBackend:
     bus: Any = None
 
     async def shutdown(self) -> None:
-        """Tear down in dependency order.
+        """Tear down in dependency order, and un-install what startup installed.
 
         In-flight investigations stop first: they use the store, and closing a
         connection pool underneath a running job turns a clean shutdown into a
         burst of errors.
+
+        Clearing the process-wide singletons last matters because startup set
+        them. A closed pool that is still reachable through a module global is
+        a trap for anything that outlives the application — the next `get_*`
+        call would hand out a store whose connections are gone.
         """
         await self.runner.shutdown()
         if self.consumer is not None:
@@ -48,6 +53,10 @@ class StateBackend:
             await self.bus.close()
         if self.database is not None:
             self.database.close()
+
+        set_job_runner(None)
+        set_job_store(None)
+        set_report_store(None)
 
 
 def worker_identity() -> str:
