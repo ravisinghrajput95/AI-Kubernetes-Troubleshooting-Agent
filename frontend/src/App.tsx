@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Navigate, Route, Routes } from "react-router";
+import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router";
 
 import {
   getHealth,
   getInvestigationReport,
   getInvestigationHistory,
   getKubernetesContexts,
-  investigateCluster,
+  startInvestigationJob,
   regenerateInvestigationReport,
   reportUrl,
 } from "./services/api";
@@ -964,8 +964,12 @@ function IncidentAssistantPanel({
 }
 
 function DiagnosisCard({ diagnosis }: { diagnosis: Diagnosis }) {
-  const firstCommand = diagnosis.kubectl_commands[0] ?? "No command returned";
-  const healthy = diagnosis.root_cause
+  // Optional access despite the type saying otherwise: the backend returns
+  // `dict[str, Any]` for diagnosis, so these types are the only contract and
+  // Pydantic will not catch drift. A persisted report missing this field used
+  // to take the whole page down with no error boundary behind it.
+  const firstCommand = diagnosis.kubectl_commands?.[0] ?? "No command returned";
+  const healthy = (diagnosis.root_cause ?? "")
     .toLowerCase()
     .includes("no critical kubernetes issues");
 
@@ -1304,255 +1308,327 @@ export function HistoryTable() {
 }
 
 export function InvestigatePage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   // Scope lives in the URL so it is shareable and survives a reload.
   const { cluster: selectedContext, setCluster: setSelectedContext } = useScope();
   const [scopeNamespace, setScopeNamespace] = useState("");
   const [scopeKind, setScopeKind] = useState("");
   const [scopeName, setScopeName] = useState("");
-  const [clusterStatuses, setClusterStatuses] = useState<Record<string, string>>({});
-  const [isInvestigatingAll, setIsInvestigatingAll] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState("");
 
-  // Investigations run as background jobs; progress streams from the backend.
-  const job = useInvestigationJob();
+  const { data: contexts } = useQuery({
+    queryKey: ["kubernetes-contexts"],
+    queryFn: getKubernetesContexts,
+  });
 
-  function startInvestigation(context?: string) {
+  /**
+   * Submitting is navigation.
+   *
+   * The run gets an address the moment the backend accepts it, so it can be
+   * shared while it is still collecting — which is the whole point of the
+   * split. Progress and results both render at that address.
+   */
+  async function startInvestigation(context?: string) {
     const target = context ?? selectedContext;
-    if (context) {
-      setSelectedContext(context);
+    if (!target || starting) {
+      return;
     }
-    void job.start(target, {
-      namespace: scopeNamespace.trim() || undefined,
-      resource_kind: scopeKind || undefined,
-      resource_name: scopeName.trim() || undefined,
-    });
+    setStarting(true);
+    setStartError("");
+    try {
+      const accepted = await startInvestigationJob(target, {
+        namespace: scopeNamespace.trim() || undefined,
+        resource_kind: scopeKind || undefined,
+        resource_name: scopeName.trim() || undefined,
+      });
+      queryClient.invalidateQueries({ queryKey: ["investigation-history"] });
+      navigate(`/investigations/${accepted.id}`);
+    } catch {
+      setStartError("Unable to start the investigation. Confirm the backend API is reachable.");
+    } finally {
+      setStarting(false);
+    }
   }
+
+  /**
+   * Queue one investigation per cluster.
+   *
+   * The predecessor looped over the *synchronous* endpoint on the client,
+   * one cluster at a time, which blocked for the length of the whole fleet and
+   * bypassed the job queue entirely. These are submitted to the queue and each
+   * gets its own address.
+   */
+  async function investigateAllClusters(names: string[]) {
+    if (names.length === 0 || starting) {
+      return;
+    }
+    setStarting(true);
+    setStartError("");
+    try {
+      await Promise.all(names.map((name) => startInvestigationJob(name)));
+      queryClient.invalidateQueries({ queryKey: ["investigation-history"] });
+      navigate("/reports");
+    } catch {
+      setStartError("Some investigations could not be queued.");
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-5 p-5">
+        <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-5 shadow-sm shadow-black/20">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-fuchsia-300">
+                Incident Response
+              </p>
+              <h1 className="mt-2 text-2xl font-semibold text-slate-100">
+                Investigate Kubernetes Cluster
+              </h1>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
+                Collect pod, log, event, deployment, and networking evidence,
+                then generate a root cause and a PDF investigation report.
+              </p>
+            </div>
+            <div className="grid w-full gap-3 lg:w-auto lg:min-w-[520px]">
+              <div className="grid gap-3 md:grid-cols-3">
+                <input
+                  value={scopeNamespace}
+                  onChange={(event) => setScopeNamespace(event.target.value)}
+                  placeholder="Namespace"
+                  className="rounded-md border border-slate-700 bg-[#111823] px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-400"
+                />
+                <select
+                  value={scopeKind}
+                  onChange={(event) => setScopeKind(event.target.value)}
+                  className="rounded-md border border-slate-700 bg-[#111823] px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+                >
+                  <option value="">Cluster</option>
+                  <option value="pod">Pod</option>
+                  <option value="deployment">Deployment</option>
+                </select>
+                <input
+                  value={scopeName}
+                  onChange={(event) => setScopeName(event.target.value)}
+                  placeholder="Resource name"
+                  disabled={!scopeKind}
+                  className="rounded-md border border-slate-700 bg-[#111823] px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-600"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => startInvestigation()}
+                disabled={starting || !selectedContext}
+                className="rounded-md bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+              >
+                {starting ? "Starting…" : "Investigate Cluster"}
+              </button>
+            </div>
+          </div>
+        </section>
+
+      {startError ? (
+        <p role="alert" className="rounded-md border border-critical/40 bg-critical/5 px-4 py-3 text-sm text-critical">
+          {startError}
+        </p>
+      ) : null}
+
+      <MultiClusterPanel
+        selectedContext={selectedContext}
+        clusterStatuses={{}}
+        onSelectContext={setSelectedContext}
+        onInvestigateAll={investigateAllClusters}
+        isInvestigating={starting}
+      />
+
+      <RecentInvestigations />
+    </div>
+  );
+}
+
+/** Recent runs, as links. The full table lives on /reports. */
+function RecentInvestigations() {
+  const { data = [] } = useQuery({
+    queryKey: ["investigation-history"],
+    queryFn: getInvestigationHistory,
+  });
+
+  if (data.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-lg border border-line bg-surface p-5">
+      <h2 className="text-h2">Recent investigations</h2>
+      <ul className="mt-4 grid gap-1">
+        {data.slice(0, 5).map((item) => (
+          <li key={item.id}>
+            <Link
+              to={`/investigations/${item.id}`}
+              className="flex items-baseline justify-between gap-4 rounded-md px-2 py-2 text-sm transition-colors duration-fast hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info"
+            >
+              <span className="min-w-0 flex-1 truncate text-ink">{item.root_cause}</span>
+              <span className="shrink-0 font-mono text-sm text-ink-3">
+                {item.namespace} · {item.confidence}%
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * One investigation, at its own address.
+ *
+ * Renders a run that is still collecting, one that has finished, and one that
+ * has been evicted from the job store and is served from its persisted report
+ * — the backend answers all three from the same id, so this page does too.
+ */
+export function InvestigationPage() {
+  const { id = "" } = useParams();
+  const job = useInvestigationJob();
+  const { attach } = job;
 
   useEffect(() => {
-    if (job.phase !== "succeeded" || !job.investigation) {
-      return;
+    if (id) {
+      void attach(id);
     }
-
-    const investigatedContext = job.investigation.context ?? selectedContext;
-    const severity = job.investigation.severity?.severity;
-    if (investigatedContext) {
-      setClusterStatuses((current) => ({
-        ...current,
-        [investigatedContext]:
-          severity === "Critical" || severity === "High"
-            ? "Critical"
-            : severity === "Healthy"
-              ? "Healthy"
-              : "Warning",
-      }));
-    }
-    queryClient.invalidateQueries({ queryKey: ["investigation-history"] });
-    // selectedContext is intentionally excluded: this must fire once per result.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [job.phase, job.investigation, queryClient]);
-
-  async function investigateAllClusters(contexts: string[]) {
-    if (contexts.length === 0 || isInvestigatingAll) {
-      return;
-    }
-
-    setIsInvestigatingAll(true);
-    for (const context of contexts) {
-      setSelectedContext(context);
-      setClusterStatuses((current) => ({ ...current, [context]: "Running" }));
-      try {
-        const response = await investigateCluster(context);
-        const severity = response.investigation.severity?.severity;
-        setClusterStatuses((current) => ({
-          ...current,
-          [context]:
-            severity === "Critical" || severity === "High"
-              ? "Critical"
-              : severity === "Healthy"
-                ? "Healthy"
-                : "Warning",
-        }));
-      } catch {
-        setClusterStatuses((current) => ({ ...current, [context]: "Warning" }));
-      }
-    }
-    setIsInvestigatingAll(false);
-    queryClient.invalidateQueries({ queryKey: ["investigation-history"] });
-  }
+  }, [attach, id]);
 
   const investigationData = job.investigation;
   const diagnosis = job.diagnosis;
   const healthMessage = investigationData?.health?.message;
   const healthStatus = investigationData?.health?.status;
+  const selectedContext = investigationData?.context ?? "";
+
   return (
     <div className="grid gap-5 p-5">
-            <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-5 shadow-sm shadow-black/20">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-fuchsia-300">
-                    Incident Response
-                  </p>
-                  <h1 className="mt-2 text-2xl font-semibold text-slate-100">
-                    Investigate Kubernetes Cluster
-                  </h1>
-                  <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
-                    Collect pod, log, event, deployment, and networking evidence,
-                    then generate a root cause and a PDF investigation report.
-                  </p>
-                </div>
-                <div className="grid w-full gap-3 lg:w-auto lg:min-w-[520px]">
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <input
-                      value={scopeNamespace}
-                      onChange={(event) => setScopeNamespace(event.target.value)}
-                      placeholder="Namespace"
-                      className="rounded-md border border-slate-700 bg-[#111823] px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-400"
-                    />
-                    <select
-                      value={scopeKind}
-                      onChange={(event) => setScopeKind(event.target.value)}
-                      className="rounded-md border border-slate-700 bg-[#111823] px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
-                    >
-                      <option value="">Cluster</option>
-                      <option value="pod">Pod</option>
-                      <option value="deployment">Deployment</option>
-                    </select>
-                    <input
-                      value={scopeName}
-                      onChange={(event) => setScopeName(event.target.value)}
-                      placeholder="Resource name"
-                      disabled={!scopeKind}
-                      className="rounded-md border border-slate-700 bg-[#111823] px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-600"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => startInvestigation()}
-                    disabled={job.isRunning || isInvestigatingAll || !selectedContext}
-                    className="rounded-md bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
-                  >
-                    {job.isRunning || isInvestigatingAll
-                      ? "Investigating..."
-                      : "Investigate Cluster"}
-                  </button>
-                </div>
-              </div>
-            </section>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <Link
+            to="/"
+            className="text-sm text-ink-3 transition-colors duration-fast hover:text-ink-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info"
+          >
+            ← Investigations
+          </Link>
+          <h1 className="mt-1 truncate text-h1">
+            {selectedContext || "Investigation"}
+          </h1>
+          <p className="mt-1 font-mono text-sm text-ink-3">{id}</p>
+        </div>
+      </div>
 
-            <section className="grid gap-4 md:grid-cols-3">
-              <div className="rounded-lg border border-sky-900/70 bg-sky-950/20 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Target Context
-                </p>
-                <p className="mt-2 truncate text-sm font-semibold text-sky-200">
-                  {selectedContext || "Not selected"}
-                </p>
-              </div>
-              <div className="rounded-lg border border-violet-900/70 bg-violet-950/20 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Investigation
-                </p>
-                <p className="mt-2 text-sm font-semibold text-violet-200">
-                  {job.isRunning || isInvestigatingAll ? "Running" : "Ready"}
-                </p>
-              </div>
-              <div className="rounded-lg border border-amber-900/70 bg-amber-950/20 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Last Result
-                </p>
-                <p className="mt-2 text-sm font-semibold text-amber-200">
-                  {healthStatus ? healthStatus.replace("_", " ") : "No run yet"}
-                </p>
-              </div>
-            </section>
+        <section className="grid gap-4 md:grid-cols-3">
+          <div className="rounded-lg border border-sky-900/70 bg-sky-950/20 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Target Context
+            </p>
+            <p className="mt-2 truncate text-sm font-semibold text-sky-200">
+              {selectedContext || "Not selected"}
+            </p>
+          </div>
+          <div className="rounded-lg border border-violet-900/70 bg-violet-950/20 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Investigation
+            </p>
+            <p className="mt-2 text-sm font-semibold text-violet-200">
+              {job.isRunning ? "Running" : "Ready"}
+            </p>
+          </div>
+          <div className="rounded-lg border border-amber-900/70 bg-amber-950/20 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Last Result
+            </p>
+            <p className="mt-2 text-sm font-semibold text-amber-200">
+              {healthStatus ? healthStatus.replace("_", " ") : "No run yet"}
+            </p>
+          </div>
+        </section>
 
-            <ClusterHealthOverview overview={investigationData?.overview} />
+        <ClusterHealthOverview overview={investigationData?.overview} />
 
-            <SeverityPanel severity={investigationData?.severity} />
+        <SeverityPanel severity={investigationData?.severity} />
 
-            <MultiClusterPanel
-              selectedContext={selectedContext}
-              clusterStatuses={clusterStatuses}
-              onSelectContext={setSelectedContext}
-              onInvestigateAll={investigateAllClusters}
-              isInvestigating={job.isRunning || isInvestigatingAll}
-            />
+        <MetricsPanel metrics={investigationData?.metrics} />
 
-            <MetricsPanel metrics={investigationData?.metrics} />
+        <SecurityFindingsPanel security={investigationData?.security} />
 
-            <SecurityFindingsPanel security={investigationData?.security} />
+        {job.error ? (
+          <div className="rounded-lg border border-red-900/70 bg-red-950/40 px-4 py-3 text-sm text-red-200">
+            {job.error}
+            <div className="mt-2 text-red-100">
+              Please verify kubeconfig path, cluster access, kubectl
+              permissions, and backend connectivity.
+            </div>
+          </div>
+        ) : null}
 
-            {job.error ? (
-              <div className="rounded-lg border border-red-900/70 bg-red-950/40 px-4 py-3 text-sm text-red-200">
-                {job.error}
-                <div className="mt-2 text-red-100">
-                  Please verify kubeconfig path, cluster access, kubectl
-                  permissions, and backend connectivity.
-                </div>
-              </div>
-            ) : null}
+        {healthMessage ? (
+          <div className="rounded-lg border border-slate-800 bg-[#0d131c] px-4 py-3 text-sm text-slate-300">
+            {healthMessage}
+          </div>
+        ) : null}
 
-            {healthMessage ? (
-              <div className="rounded-lg border border-slate-800 bg-[#0d131c] px-4 py-3 text-sm text-slate-300">
-                {healthMessage}
-              </div>
-            ) : null}
+        <LiveTimeline
+          phase={job.phase}
+          transport={job.transport}
+          timeline={job.timeline}
+          onCancel={() => void job.cancel()}
+        />
 
-            <LiveTimeline
-              phase={job.phase}
-              transport={job.transport}
-              timeline={job.timeline}
-              onCancel={() => void job.cancel()}
-            />
+        {diagnosis ? (
+          <div className="grid items-start gap-5 xl:grid-cols-[1.3fr_0.7fr]">
+            <div className="grid gap-5">
+              <DiagnosisCard diagnosis={diagnosis} />
+              <HypothesisPanel diagnosis={diagnosis} />
+              <ConfidenceBreakdown diagnosis={diagnosis} />
+              <SignalTable diagnosis={diagnosis} />
+              <RemediationPlanPanel diagnosis={diagnosis} />
+              <ConfidenceEvidence diagnosis={diagnosis} />
+              <RemediationPanel
+                diagnosis={diagnosis}
+                investigation={investigationData}
+              />
+            </div>
+            <div className="grid gap-5 xl:sticky xl:top-5">
+              <IncidentAssistantPanel
+                diagnosis={diagnosis}
+                investigation={investigationData}
+              />
+              <PlaybookRounds investigation={investigationData} />
+            </div>
+          </div>
+        ) : (
+          <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-8 text-center shadow-sm shadow-black/20">
+            <p className="text-sm font-semibold text-slate-100">
+              No investigation has been run yet.
+            </p>
+            <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-400">
+              Select a kubeconfig context from the sidebar and click
+              Investigate Cluster to start collecting evidence.
+            </p>
+          </section>
+        )}
 
-            {diagnosis ? (
-              <div className="grid items-start gap-5 xl:grid-cols-[1.3fr_0.7fr]">
-                <div className="grid gap-5">
-                  <DiagnosisCard diagnosis={diagnosis} />
-                  <HypothesisPanel diagnosis={diagnosis} />
-                  <ConfidenceBreakdown diagnosis={diagnosis} />
-                  <SignalTable diagnosis={diagnosis} />
-                  <RemediationPlanPanel diagnosis={diagnosis} />
-                  <ConfidenceEvidence diagnosis={diagnosis} />
-                  <RemediationPanel
-                    diagnosis={diagnosis}
-                    investigation={investigationData}
-                  />
-                </div>
-                <div className="grid gap-5 xl:sticky xl:top-5">
-                  <IncidentAssistantPanel
-                    diagnosis={diagnosis}
-                    investigation={investigationData}
-                  />
-                  <PlaybookRounds investigation={investigationData} />
-                </div>
-              </div>
-            ) : (
-              <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-8 text-center shadow-sm shadow-black/20">
-                <p className="text-sm font-semibold text-slate-100">
-                  No investigation has been run yet.
-                </p>
-                <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-400">
-                  Select a kubeconfig context from the sidebar and click
-                  Investigate Cluster to start collecting evidence.
-                </p>
-              </section>
-            )}
+        <section className="grid gap-5 xl:grid-cols-2">
+          <ClusterTopologyPanel topology={investigationData?.topology} />
+          <TimelinePanel timeline={investigationData?.timeline} />
+        </section>
 
-            <section className="grid gap-5 xl:grid-cols-2">
-              <ClusterTopologyPanel topology={investigationData?.topology} />
-              <TimelinePanel timeline={investigationData?.timeline} />
-            </section>
+        <EvidenceExplorer
+          investigation={investigationData}
+          citedEvidence={diagnosis?.cited_evidence}
+        />
 
-            <EvidenceExplorer
-              investigation={investigationData}
-              citedEvidence={diagnosis?.cited_evidence}
-            />
-
-            <section className="grid gap-5 xl:grid-cols-2">
-              <CommandsPanel commands={investigationData?.executed_commands} />
-              <ArtifactsPanel historyItem={job.historyItem} />
-            </section>
+        <section className="grid gap-5 xl:grid-cols-2">
+          <CommandsPanel commands={investigationData?.executed_commands} />
+          <ArtifactsPanel historyItem={job.historyItem} />
+        </section>
 
     </div>
   );
@@ -1615,6 +1691,7 @@ function AuthenticatedApp() {
     <Routes>
       <Route element={<AppShell />}>
         <Route path="/" element={<InvestigatePage />} />
+        <Route path="/investigations/:id" element={<InvestigationPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         {/* Destinations arrive as later phases give them data. Until then an

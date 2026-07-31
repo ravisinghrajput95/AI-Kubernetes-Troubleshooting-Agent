@@ -10,9 +10,11 @@
 
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ErrorBoundary } from "../components/ErrorBoundary";
+import { InvestigationPage } from "../App";
 import { ReportsPage } from "./ReportsPage";
 import { SettingsPage } from "./SettingsPage";
 import * as api from "../services/api";
@@ -72,5 +74,61 @@ describe("settings", () => {
     renderPage(<SettingsPage />);
 
     expect(await screen.findByText(/this backend is unauthenticated/i)).toBeInTheDocument();
+  });
+});
+
+describe("an investigation at its own address", () => {
+  it("renders the run that id refers to", async () => {
+    vi.spyOn(api, "getInvestigationJob").mockResolvedValue({
+      id: "job-1",
+      status: "succeeded",
+      investigation: { context: "prod-eu-west" },
+      diagnosis: { root_cause: "Memory limit too low" },
+    } as unknown as Awaited<ReturnType<typeof api.getInvestigationJob>>);
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/investigations/job-1"]}>
+          <Routes>
+            <Route path="/investigations/:id" element={<InvestigationPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // The cluster it ran against, and the id itself, both addressable.
+    expect(await screen.findByRole("heading", { name: "prod-eu-west" })).toBeInTheDocument();
+    expect(screen.getByText("job-1")).toBeInTheDocument();
+    expect(api.getInvestigationJob).toHaveBeenCalledWith("job-1");
+  });
+});
+
+describe("a payload the console did not expect", () => {
+  it("degrades to a message instead of blanking the page", () => {
+    // The backend types investigation and diagnosis as dict[str, Any], so the
+    // TypeScript interfaces are the only contract. A report written by an
+    // older version can be missing a field the UI treats as required.
+    function Exploding(): React.ReactNode {
+      throw new Error("kubectl_commands is not iterable");
+    }
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <ErrorBoundary>
+            <Exploding />
+          </ErrorBoundary>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText(/could not be displayed/i)).toBeInTheDocument();
+    expect(screen.getByText(/kubectl_commands is not iterable/i)).toBeInTheDocument();
   });
 });

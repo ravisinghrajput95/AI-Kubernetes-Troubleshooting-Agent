@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { CommandPalette } from "./CommandPalette";
 import { DESTINATIONS, NavRail } from "./NavRail";
 import { ScopeSwitcher } from "./ScopeSwitcher";
+import { ErrorBoundary } from "../ErrorBoundary";
 import { getHealth } from "../../services/api";
 
 /**
@@ -111,7 +112,9 @@ export function AppShell() {
         </header>
 
         <main className="min-w-0 flex-1">
-          <Outlet />
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
 

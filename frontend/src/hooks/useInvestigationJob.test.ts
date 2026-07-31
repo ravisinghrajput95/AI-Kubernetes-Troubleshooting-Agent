@@ -302,3 +302,94 @@ describe("useInvestigationJob", () => {
     expect(cancelSpy).toHaveBeenCalledWith("job-1");
   });
 });
+
+describe("attach", () => {
+  it("adopts a finished investigation without opening a stream", async () => {
+    // Opening a finished run must not start an EventSource that would
+    // immediately close, nor fetch the payload twice.
+    const { result } = renderHook(() => useInvestigationJob());
+
+    await act(async () => {
+      await result.current.attach("job-1");
+    });
+
+    await waitFor(() => expect(result.current.phase).toBe("succeeded"));
+    expect(result.current.diagnosis?.root_cause).toBe("Missing DB_HOST");
+    expect(FakeEventSource.instances).toHaveLength(0);
+    expect(api.getInvestigationJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("follows a run that is still collecting", async () => {
+    vi.spyOn(api, "getInvestigationJob").mockResolvedValueOnce({
+      id: "job-1",
+      status: "running",
+      timeline: [{ type: "started", message: "Investigation started" }],
+    } as unknown as Awaited<ReturnType<typeof api.getInvestigationJob>>);
+
+    const { result } = renderHook(() => useInvestigationJob());
+    await act(async () => {
+      await result.current.attach("job-1");
+    });
+
+    await waitFor(() => expect(result.current.phase).toBe("running"));
+    expect(FakeEventSource.latest()).toBeDefined();
+    expect(result.current.timeline).toHaveLength(1);
+  });
+
+  it("streams progress for a run it did not start", async () => {
+    vi.spyOn(api, "getInvestigationJob").mockResolvedValueOnce({
+      id: "job-1",
+      status: "running",
+    } as unknown as Awaited<ReturnType<typeof api.getInvestigationJob>>);
+
+    const { result } = renderHook(() => useInvestigationJob());
+    await act(async () => {
+      await result.current.attach("job-1");
+    });
+
+    await act(async () => {
+      FakeEventSource.latest().emit({
+        type: "progress",
+        message: "Retrieved Pods",
+        at: new Date().toISOString(),
+        time: "00:00:01",
+        seq: 3,
+      });
+    });
+
+    expect(result.current.timeline.map((event) => event.message)).toContain("Retrieved Pods");
+  });
+
+  it("reports an id that does not resolve", async () => {
+    vi.spyOn(api, "getInvestigationJob").mockRejectedValueOnce(new Error("404"));
+
+    const { result } = renderHook(() => useInvestigationJob());
+    await act(async () => {
+      await result.current.attach("nope");
+    });
+
+    await waitFor(() => expect(result.current.phase).toBe("failed"));
+    expect(result.current.error).toMatch(/could not load/i);
+  });
+
+  it("carries the evidence a failed run did collect", async () => {
+    // A total collection failure still has degraded evidence behind it, and
+    // the page has to be able to show it.
+    vi.spyOn(api, "getInvestigationJob").mockResolvedValueOnce({
+      id: "job-1",
+      status: "failed",
+      error: "Kubernetes investigation failed.",
+      investigation: { evidence_coverage: { total: 11, usable: 0 } },
+      diagnosis: {},
+    } as unknown as Awaited<ReturnType<typeof api.getInvestigationJob>>);
+
+    const { result } = renderHook(() => useInvestigationJob());
+    await act(async () => {
+      await result.current.attach("job-1");
+    });
+
+    await waitFor(() => expect(result.current.phase).toBe("failed"));
+    expect(result.current.investigation?.evidence_coverage?.total).toBe(11);
+    expect(result.current.error).toMatch(/investigation failed/i);
+  });
+});

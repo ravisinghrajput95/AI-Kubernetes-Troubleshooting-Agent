@@ -10,6 +10,7 @@ import {
 import type {
   Diagnosis,
   InvestigationHistoryItem,
+  InvestigationJobState,
   InvestigationResponse,
   JobEvent,
   JobStatus,
@@ -40,6 +41,7 @@ export interface InvestigationJobHandle {
   historyItem?: InvestigationHistoryItem;
   error: string;
   start: (context?: string, scope?: InvestigationScope) => Promise<string | null>;
+  attach: (id: string) => Promise<void>;
   cancel: () => Promise<void>;
   reset: () => void;
 }
@@ -85,6 +87,25 @@ export function useInvestigationJob(): InvestigationJobHandle {
     };
   }, [teardown]);
 
+  /** Adopt a terminal state that has already been fetched. */
+  const applyResult = useCallback(
+    (state: InvestigationJobState, fallback: JobStatus) => {
+      settledRef.current = true;
+      teardown();
+      setInvestigation(state.investigation);
+      setDiagnosis(state.diagnosis);
+      setHistoryItem(state.history_item);
+      setPhase(state.status ?? fallback);
+      if (state.timeline?.length) {
+        setTimeline(state.timeline);
+      }
+      if (state.error) {
+        setError(state.error);
+      }
+    },
+    [teardown],
+  );
+
   const settle = useCallback(
     async (id: string, status: JobStatus) => {
       if (settledRef.current) {
@@ -98,16 +119,7 @@ export function useInvestigationJob(): InvestigationJobHandle {
         if (!mountedRef.current) {
           return;
         }
-        setInvestigation(state.investigation);
-        setDiagnosis(state.diagnosis);
-        setHistoryItem(state.history_item);
-        setPhase(state.status ?? status);
-        if (state.timeline?.length) {
-          setTimeline(state.timeline);
-        }
-        if (state.error) {
-          setError(state.error);
-        }
+        applyResult(state, status);
       } catch {
         if (mountedRef.current) {
           setPhase(status);
@@ -115,7 +127,7 @@ export function useInvestigationJob(): InvestigationJobHandle {
         }
       }
     },
-    [teardown],
+    [applyResult, teardown],
   );
 
   const poll = useCallback(
@@ -240,6 +252,45 @@ export function useInvestigationJob(): InvestigationJobHandle {
     [reset, stream],
   );
 
+  /**
+   * Follow an investigation this hook did not start.
+   *
+   * What makes a result addressable: opening `/investigations/:id` joins a run
+   * already in flight, or renders one that finished — including one that has
+   * been evicted from the job store and is served from its persisted report.
+   */
+  const attach = useCallback(
+    async (id: string) => {
+      reset();
+      setJobId(id);
+      setPhase("pending");
+
+      try {
+        const state = await getInvestigationJob(id);
+        if (!mountedRef.current) {
+          return;
+        }
+        if (state.timeline?.length) {
+          setTimeline(state.timeline);
+        }
+        if (isTerminal(state.status)) {
+          // Already finished: adopt what was just fetched rather than opening
+          // a stream that would immediately close, or fetching it twice.
+          applyResult(state, state.status);
+          return;
+        }
+        setPhase(state.status);
+        stream(id);
+      } catch {
+        if (mountedRef.current) {
+          setPhase("failed");
+          setError("Could not load this investigation.");
+        }
+      }
+    },
+    [applyResult, reset, stream],
+  );
+
   const cancel = useCallback(async () => {
     if (!jobId || isTerminal(phase)) {
       return;
@@ -262,6 +313,7 @@ export function useInvestigationJob(): InvestigationJobHandle {
     historyItem,
     error,
     start,
+    attach,
     cancel,
     reset,
   };
