@@ -123,6 +123,24 @@ describe("fleet", () => {
   });
 });
 
+describe("a cluster that could not be read", () => {
+  it("says so, rather than calling it healthy or critical", async () => {
+    vi.spyOn(api, "getInvestigationHistory").mockResolvedValue([
+      entry({
+        id: "1",
+        context: "prod-eu-west",
+        severity: "Unknown",
+        root_cause: "Kubernetes investigation failed. Verify kubeconfig.",
+      }),
+    ]);
+
+    renderFleet();
+    expect(await screen.findByText("Could not read")).toBeInTheDocument();
+    expect(screen.queryByText("Healthy")).not.toBeInTheDocument();
+    expect(screen.queryByText("Critical")).not.toBeInTheDocument();
+  });
+});
+
 describe("fleet-wide correlation", () => {
   it("surfaces a failure seen on more than one cluster", async () => {
     vi.spyOn(api, "getInvestigationReport").mockResolvedValue({

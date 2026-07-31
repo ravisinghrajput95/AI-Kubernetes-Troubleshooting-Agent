@@ -4,6 +4,7 @@ import { relativeAge, type ClusterState, type FleetState } from "../../lib/fleet
 
 const CELL: Record<FleetState, string> = {
   critical: "bg-critical/80 hover:bg-critical",
+  unreadable: "bg-warning/60 hover:bg-warning",
   warning: "bg-warning/80 hover:bg-warning",
   healthy: "bg-healthy/50 hover:bg-healthy/80",
   neutral: "bg-line hover:bg-ink-3",
@@ -13,6 +14,7 @@ const CELL: Record<FleetState, string> = {
 
 const GLYPH: Record<FleetState, string> = {
   critical: "●",
+  unreadable: "◍",
   warning: "◐",
   healthy: "○",
   neutral: "◌",

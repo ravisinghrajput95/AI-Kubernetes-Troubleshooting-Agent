@@ -13,7 +13,13 @@ import { severityTone, type SeverityTone } from "./report";
 /** Beyond this, a cluster's last investigation is too old to speak for it. */
 export const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
-export type FleetState = SeverityTone | "stale" | "unknown";
+export type FleetState =
+  | SeverityTone
+  | "stale"
+  /** Investigated, but the cluster could not be read. */
+  | "unreadable"
+  /** Never investigated at all. */
+  | "unknown";
 
 export interface ClusterState {
   name: string;
@@ -31,11 +37,14 @@ export interface ClusterState {
 
 const ORDER: Record<FleetState, number> = {
   critical: 0,
-  warning: 1,
-  stale: 2,
-  unknown: 3,
-  healthy: 4,
-  neutral: 5,
+  // A cluster nobody could read outranks a degraded one: the finding count is
+  // not just bad, it is not trustworthy. It must never sort below healthy.
+  unreadable: 1,
+  warning: 2,
+  stale: 3,
+  unknown: 4,
+  healthy: 5,
+  neutral: 6,
 };
 
 /**
@@ -94,7 +103,12 @@ export function fleetState(
 
     const at = Date.parse(item.timestamp ?? "");
     const ageMs = Number.isNaN(at) ? null : Math.max(0, now - at);
-    const tone = severityTone(item.severity);
+    // "Unknown" is what the backend reports when the collectors that produce
+    // findings did not run — distinct from a cluster never investigated.
+    const tone: FleetState =
+      (item.severity ?? "").toLowerCase() === "unknown"
+        ? "unreadable"
+        : severityTone(item.severity);
 
     rows.push({
       name,
@@ -137,6 +151,7 @@ function compare(a: ClusterState, b: ClusterState): number {
 export function rollup(rows: ClusterState[]): Record<FleetState, number> {
   const counts: Record<FleetState, number> = {
     critical: 0,
+    unreadable: 0,
     warning: 0,
     healthy: 0,
     neutral: 0,

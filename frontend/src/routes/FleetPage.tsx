@@ -32,6 +32,7 @@ const CORRELATION_LIMIT = 12;
 
 const ROLLUP: Array<[FleetState, string]> = [
   ["critical", "critical"],
+  ["unreadable", "could not read"],
   ["warning", "degraded"],
   ["stale", "stale"],
   ["unknown", "not investigated"],
@@ -154,7 +155,13 @@ export function FleetPage() {
         {ROLLUP.filter(([state]) => counts[state] > 0).map(([state, label]) => (
           <SeverityDot
             key={state}
-            tone={state === "stale" || state === "unknown" ? "neutral" : state}
+            tone={
+              state === "stale" || state === "unknown"
+                ? "neutral"
+                : state === "unreadable"
+                  ? "warning"
+                  : state
+            }
             label={`${counts[state]} ${label}`}
           />
         ))}

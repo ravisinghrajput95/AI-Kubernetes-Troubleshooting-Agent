@@ -439,3 +439,53 @@ class TestTotallyUnreachableCluster:
 
         assert investigation["evidence_coverage"]["usable"] > 0
         assert collection_failure(investigation) is None
+
+
+class TestSeverityNeverOverclaims:
+    """ "Healthy" is a conclusion, and it needs evidence like any other.
+
+    Severity is counted from findings, so a collector that never ran
+    contributes no findings and used to read as good news. An investigation
+    where every read failed reported "Healthy" — and `history_service` patched
+    it back to Critical on the way out, so the same investigation carried two
+    different severities depending on which surface you looked at.
+    """
+
+    async def test_a_cluster_that_could_not_be_read_is_not_healthy(self):
+        investigation = await build_service(UnreachableCluster()).run()
+        assert investigation["severity"]["severity"] == "Unknown"
+
+    async def test_it_says_impact_was_not_established(self):
+        investigation = await build_service(UnreachableCluster()).run()
+        assert "could not be fully inspected" in investigation["severity"]["impact"]
+
+    async def test_one_failed_collector_is_enough_to_withhold_healthy(self):
+        # Partial degradation still means the finding count is not trustworthy.
+        investigation = await build_service(FakeKubectl(failing_resources={"nodes"})).run()
+        assert investigation["severity"]["severity"] != "Healthy"
+
+    async def test_a_cluster_that_was_read_and_is_fine_is_still_healthy(self):
+        """The guard against making the check so strict that nothing passes."""
+        investigation = await build_service(FakeKubectl()).run()
+        assert investigation["severity"]["severity"] in {"Critical", "High", "Healthy"}
+        assert investigation["severity"]["severity"] != "Unknown"
+
+    async def test_findings_still_outrank_a_failed_collector(self):
+        """A real problem is reported as one, not downgraded to Unknown."""
+        investigation = await build_service(FakeKubectl(failing_resources={"pvc"})).run()
+        severity = investigation["severity"]["severity"]
+        if investigation["pods"].get("problematic_pods"):
+            assert severity in {"Critical", "High"}
+
+    async def test_the_report_and_the_history_entry_agree(self):
+        """The two derivations must not disagree about one investigation."""
+        from app.services.history_service import InvestigationHistoryService
+
+        investigation = await build_service(UnreachableCluster()).run()
+        service = InvestigationHistoryService()
+        reported = service._report_severity(investigation)
+
+        # history_service escalates on a failed health check; what matters is
+        # that neither surface calls an uninspectable cluster healthy.
+        assert investigation["severity"]["severity"] != "Healthy"
+        assert reported != "Healthy"

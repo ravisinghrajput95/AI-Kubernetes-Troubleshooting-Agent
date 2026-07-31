@@ -221,3 +221,56 @@ describe("age", () => {
     expect(relativeAge(null)).toBe("");
   });
 });
+
+describe("a cluster that could not be read", () => {
+  it("is its own state, not a healthy or an uninvestigated one", () => {
+    // The backend reports "Unknown" when the collectors that produce findings
+    // did not run. That is different from never having looked.
+    const rows = fleetState(
+      [context("prod")],
+      [entry({ id: "1", context: "prod", severity: "Unknown" })],
+      new Map(),
+      NOW,
+    );
+    expect(rows[0].state).toBe("unreadable");
+  });
+
+  it("never sorts below a healthy cluster", () => {
+    // The finding count is not just bad, it is not trustworthy — burying it
+    // under clusters that were successfully read would hide the gap.
+    const rows = fleetState(
+      [context("readable"), context("unreadable")],
+      [
+        entry({ id: "1", context: "readable", severity: "Healthy" }),
+        entry({ id: "2", context: "unreadable", severity: "Unknown" }),
+      ],
+      new Map(),
+      NOW,
+    );
+    expect(rows.map((row) => row.name)).toEqual(["unreadable", "readable"]);
+  });
+
+  it("still sorts below a cluster with real findings", () => {
+    const rows = fleetState(
+      [context("broken"), context("unreadable")],
+      [
+        entry({ id: "1", context: "broken", severity: "Critical" }),
+        entry({ id: "2", context: "unreadable", severity: "Unknown" }),
+      ],
+      new Map(),
+      NOW,
+    );
+    expect(rows.map((row) => row.name)).toEqual(["broken", "unreadable"]);
+  });
+
+  it("is counted separately in the rollup", () => {
+    const rows = fleetState(
+      [context("a")],
+      [entry({ id: "1", context: "a", severity: "Unknown" })],
+      new Map(),
+      NOW,
+    );
+    expect(rollup(rows).unreadable).toBe(1);
+    expect(rollup(rows).healthy).toBe(0);
+  });
+});

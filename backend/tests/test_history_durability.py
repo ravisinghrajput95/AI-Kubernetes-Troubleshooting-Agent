@@ -151,3 +151,33 @@ class TestClusterAttribution:
         item = service.save(DIAGNOSIS, {**INVESTIGATION, "context": "prod-eu-west"})
         service.regenerate(item["id"])
         assert service.list_history()[0]["context"] == "prod-eu-west"
+
+
+class TestHistorySeverityAgreesWithTheReport:
+    """One investigation must not carry two severities.
+
+    The history entry and the report body are derived separately, and they
+    disagreed: the body said Healthy while the entry said Critical, because
+    this class patched the upstream bug on its way out.
+    """
+
+    def test_an_unreadable_cluster_is_not_escalated_to_critical(self, service):
+        unreadable = {
+            "context": "prod",
+            "severity": {"severity": "Unknown"},
+            "health": {"status": "error", "message": "Kubernetes investigation failed."},
+        }
+        assert service._report_severity(unreadable) == "Unknown"
+
+    def test_a_real_finding_is_still_reported_as_found(self, service):
+        investigation = {"severity": {"severity": "Critical"}, "health": {"status": "error"}}
+        assert service._report_severity(investigation) == "Critical"
+
+    def test_a_legacy_report_claiming_health_after_a_failure_is_corrected(self, service):
+        # Written before severity accounted for failed collectors.
+        legacy = {"severity": {"severity": "Healthy"}, "health": {"status": "error"}}
+        assert service._report_severity(legacy) == "Unknown"
+
+    def test_a_genuinely_healthy_cluster_stays_healthy(self, service):
+        healthy = {"severity": {"severity": "Healthy"}, "health": {"status": "healthy"}}
+        assert service._report_severity(healthy) == "Healthy"

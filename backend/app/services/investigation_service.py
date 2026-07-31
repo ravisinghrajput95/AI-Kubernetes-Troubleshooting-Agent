@@ -295,11 +295,9 @@ class InvestigationService:
         storage: dict[str, Any],
         workloads: dict[str, Any],
     ) -> dict[str, Any]:
-        errors = [
-            item.get("error")
-            for item in [pods, events, deployments, network, nodes, storage, workloads]
-            if item.get("error")
-        ]
+        errors = self._collector_errors(
+            pods, events, deployments, network, nodes, storage, workloads
+        )
         if errors:
             return {
                 "status": "error",
@@ -543,17 +541,33 @@ class InvestigationService:
             severity = "Critical"
         elif workload_count > 0 or event_count > 0 or storage_count > 0:
             severity = "High"
+        elif self._collector_errors(pods, events, deployments, network, nodes, storage, workloads):
+            # No findings, but the collectors that produce findings did not all
+            # run. Absence of evidence is not evidence of absence: reporting
+            # "Healthy" here claims a cluster is well on the strength of reads
+            # that failed. The report said Healthy while the history entry said
+            # Critical, because `history_service` patched the same hole further
+            # downstream — one investigation with two severities.
+            severity = "Unknown"
         else:
             severity = "Healthy"
 
+        impact = {
+            "Critical": "Production",
+            "High": "Production",
+            "Unknown": "Not established — the cluster could not be fully inspected",
+        }.get(severity, "No active impact detected")
+
         return {
             "severity": severity,
-            "impact": "Production"
-            if severity in {"Critical", "High"}
-            else "No active impact detected",
+            "impact": impact,
             "affected_workloads": workload_count,
             "affected_namespace": next(iter(namespaces), "none"),
         }
+
+    def _collector_errors(self, *sections: dict[str, Any]) -> list[str]:
+        """Errors from the collectors whose findings decide severity."""
+        return [str(item.get("error")) for item in sections if item.get("error")]
 
     def _scope(self) -> dict[str, Any]:
         return self.scope.to_dict()

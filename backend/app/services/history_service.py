@@ -443,14 +443,22 @@ class InvestigationHistoryService:
         return "Resolved" if health == "healthy" else "Open"
 
     def _report_severity(self, investigation: dict[str, Any]) -> str:
-        if investigation.get("health", {}).get("status") == "error":
-            return "Critical"
+        """Severity for the history entry.
+
+        This used to escalate a failed investigation to Critical, which was a
+        workaround for severity reporting "Healthy" when no collector had run.
+        That is fixed at the source now, and escalating here would be the same
+        overclaim pointing the other way: a cluster nobody could read is not
+        Critical, it is unknown. The correction is kept only for reports
+        written before the upstream fix.
+        """
         severity = investigation.get("severity", {}).get("severity", "Not assessed")
-        return (
-            "Critical"
-            if severity == "Healthy" and self._has_failed_evidence(investigation)
-            else severity
-        )
+        if severity == "Healthy" and (
+            investigation.get("health", {}).get("status") == "error"
+            or self._has_failed_evidence(investigation)
+        ):
+            return "Unknown"
+        return severity
 
     def _business_impact(self, investigation: dict[str, Any]) -> list[str]:
         if investigation.get("health", {}).get("status") == "healthy":

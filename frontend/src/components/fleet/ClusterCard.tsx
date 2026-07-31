@@ -6,6 +6,7 @@ import type { SeverityTone } from "../../lib/report";
 
 const LABEL: Record<FleetState, string> = {
   critical: "Critical",
+  unreadable: "Could not read",
   warning: "Degraded",
   healthy: "Healthy",
   neutral: "Unknown",
@@ -15,6 +16,7 @@ const LABEL: Record<FleetState, string> = {
 
 const STRIPE: Record<FleetState, string> = {
   critical: "bg-critical",
+  unreadable: "bg-warning",
   warning: "bg-warning",
   healthy: "bg-healthy",
   neutral: "bg-ink-3",
@@ -25,6 +27,7 @@ const STRIPE: Record<FleetState, string> = {
 /** Staleness and never-investigated are not severities; they read as neutral. */
 function tone(state: FleetState): SeverityTone {
   if (state === "stale" || state === "unknown") return "neutral";
+  if (state === "unreadable") return "warning";
   return state;
 }
 
