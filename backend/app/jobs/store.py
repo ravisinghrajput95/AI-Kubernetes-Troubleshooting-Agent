@@ -90,12 +90,19 @@ class InMemoryJobStore:
         self.publish(job_id, JobEvent(JobEventType.COMPLETED, "Investigation complete"))
         self._close(job_id)
 
-    def mark_failed(self, job_id: str, error: str) -> None:
+    def mark_failed(
+        self,
+        job_id: str,
+        error: str,
+        result: dict[str, Any] | None = None,
+    ) -> None:
         job = self._jobs.get(job_id)
         if job is None:
             return
         job.status = JobStatus.FAILED
         job.error = error
+        if result is not None:
+            job.result = result
         job.finished_at = datetime.now(UTC)
         self.publish(job_id, JobEvent(JobEventType.FAILED, error))
         self._close(job_id)

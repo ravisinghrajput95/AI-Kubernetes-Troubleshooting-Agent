@@ -136,12 +136,27 @@ class PostgresRedisJobStore:
         )
         self.publish(job_id, JobEvent(JobEventType.COMPLETED, "Investigation complete"))
 
-    def mark_failed(self, job_id: str, error: str) -> None:
+    def mark_failed(
+        self,
+        job_id: str,
+        error: str,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        from psycopg.types.json import Jsonb
+
+        # COALESCE so a failure with nothing to show does not erase a result
+        # an earlier transition already stored.
         self._transition(
             job_id,
-            "UPDATE investigations SET status = %s, error = %s, finished_at = now(), "
+            "UPDATE investigations SET status = %s, error = %s, "
+            "result = COALESCE(%s, result), finished_at = now(), "
             "lease_worker = NULL, lease_expires_at = NULL WHERE id = %s",
-            (str(JobStatus.FAILED), error, job_id),
+            (
+                str(JobStatus.FAILED),
+                error,
+                Jsonb(result) if result is not None else None,
+                job_id,
+            ),
         )
         self.publish(job_id, JobEvent(JobEventType.FAILED, error))
 

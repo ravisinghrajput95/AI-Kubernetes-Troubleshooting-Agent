@@ -78,7 +78,19 @@ class JobStore(Protocol):
 
     def mark_succeeded(self, job_id: str, result: dict[str, Any]) -> None: ...
 
-    def mark_failed(self, job_id: str, error: str) -> None: ...
+    def mark_failed(
+        self,
+        job_id: str,
+        error: str,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        """Record a failure, optionally with whatever the run did produce.
+
+        A collection failure still has an investigation behind it — degraded
+        evidence, and the reason each collector could not answer. Carrying it
+        means a failed job explains itself instead of only naming the error.
+        """
+        ...
 
     def mark_cancelled(self, job_id: str) -> None: ...
 

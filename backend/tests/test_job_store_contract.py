@@ -74,6 +74,25 @@ class TestLifecycle:
         assert failed.status is JobStatus.FAILED
         assert failed.to_dict()["error"] == "cluster unreachable"
 
+    async def test_a_failure_can_carry_what_the_run_did_produce(self, store):
+        """A collection failure still has degraded evidence behind it."""
+        job = store.create({})
+        store.mark_failed(job.id, "nothing usable", {"investigation": {"evidence": []}})
+
+        failed = store.get(job.id)
+        assert failed.status is JobStatus.FAILED
+        body = failed.to_dict()
+        assert body["error"] == "nothing usable"
+        assert body["investigation"] == {"evidence": []}
+
+    async def test_a_later_failure_does_not_erase_an_earlier_result(self, store):
+        """A worker lost after finishing must not blank what it recorded."""
+        job = store.create({})
+        store.mark_failed(job.id, "nothing usable", {"investigation": {"evidence": []}})
+        store.mark_failed(job.id, "worker lost")
+
+        assert store.get(job.id).to_dict()["investigation"] == {"evidence": []}
+
     async def test_cancellation_is_terminal(self, store):
         job = store.create({})
         store.mark_running(job.id)

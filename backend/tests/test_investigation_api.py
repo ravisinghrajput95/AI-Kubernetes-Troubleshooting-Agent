@@ -349,3 +349,93 @@ def test_cancelling_records_the_request_on_the_job(client, monkeypatch):
 
     assert client.post(f"/investigations/{job_id}/cancel").status_code == 200
     assert client.job_store.get(job_id).cancel_requested is True
+
+
+def test_a_failed_job_still_reports_what_it_collected(client, monkeypatch):
+    """A total collection failure must explain itself, not just name an error.
+
+    The persisted-report fallback already returns `investigation` and
+    `diagnosis` for a failed run, so a live job that returned only an error
+    made the same id answer with two different shapes depending on whether it
+    was still in the store.
+    """
+    import app.kubernetes.kubectl_executor as executor_module
+
+    monkeypatch.setattr(
+        executor_module.KubectlExecutor,
+        "failing_resources",
+        {
+            "pods",
+            "events",
+            "deployments",
+            "nodes",
+            "pvc",
+            "pv",
+            "services",
+            "ingress",
+            "networkpolicies",
+            "endpoints",
+            "statefulsets",
+            "daemonsets",
+            "jobs",
+            "cronjobs",
+            "namespaces",
+            "configmaps",
+            "secrets",
+        },
+        raising=False,
+    )
+
+    job_id = client.post("/investigations", json={"context": "test-cluster"}).json()["id"]
+    body = wait_for_terminal(client, job_id)
+
+    assert body["status"] == "failed"
+    assert body["error"]
+    assert body["investigation"]["evidence_coverage"]["usable"] == 0
+    assert body["investigation"]["health"]["status"] == "error"
+    assert "diagnosis" in body
+
+
+def test_a_live_failed_job_and_its_persisted_report_agree(client, monkeypatch):
+    """The same id must not change shape when the job leaves the store."""
+    import app.kubernetes.kubectl_executor as executor_module
+
+    monkeypatch.setattr(
+        executor_module.KubectlExecutor,
+        "failing_resources",
+        {
+            "pods",
+            "events",
+            "deployments",
+            "nodes",
+            "pvc",
+            "pv",
+            "services",
+            "ingress",
+            "networkpolicies",
+            "endpoints",
+            "statefulsets",
+            "daemonsets",
+            "jobs",
+            "cronjobs",
+            "namespaces",
+            "configmaps",
+            "secrets",
+        },
+        raising=False,
+    )
+
+    job_id = client.post("/investigations", json={"context": "test-cluster"}).json()["id"]
+    live = wait_for_terminal(client, job_id)
+
+    # Evict the job, so the next read is served from the persisted report.
+    client.job_store._jobs.pop(job_id, None)
+    persisted = client.get(f"/investigations/{job_id}").json()
+
+    assert persisted["status"] == live["status"] == "failed"
+    for key in ("investigation", "diagnosis"):
+        assert key in persisted and key in live
+    assert (
+        persisted["investigation"]["evidence_coverage"]
+        == live["investigation"]["evidence_coverage"]
+    )

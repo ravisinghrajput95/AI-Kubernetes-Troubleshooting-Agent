@@ -170,7 +170,12 @@ class InvestigationJobRunner:
 
         failure = collection_failure(result["investigation"])
         if failure:
-            self.store.mark_failed(job_id, failure)
+            # The result goes with the failure. Collection produced degraded
+            # evidence and a reason for every gap, and that is exactly what an
+            # operator needs to see; it is also what the persisted-report
+            # fallback already returns, so the same id cannot answer with two
+            # different shapes depending on whether the job is still in memory.
+            await asyncio.to_thread(self.store.mark_failed, job_id, failure, result)
             return
 
         # The result carries the whole investigation; writing it can be slow
