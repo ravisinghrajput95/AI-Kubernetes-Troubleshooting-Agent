@@ -33,6 +33,7 @@ class StateBackend:
     consumer: Any = None
     database: Any = None
     bus: Any = None
+    gateway: Any = None
 
     async def shutdown(self) -> None:
         """Tear down in dependency order, and un-install what startup installed.
@@ -47,6 +48,8 @@ class StateBackend:
         call would hand out a store whose connections are gone.
         """
         await self.runner.shutdown()
+        if self.gateway is not None:
+            await self.gateway.stop()
         if self.consumer is not None:
             await self.consumer.stop()
         if self.bus is not None:
@@ -61,6 +64,22 @@ class StateBackend:
 
 def worker_identity() -> str:
     return settings.worker_id or f"{socket.gethostname()}:{os.getpid()}"
+
+
+async def start_agent_gateway():
+    """The gRPC endpoint cluster agents dial into, when one is configured.
+
+    Off by default and imported lazily: a deployment reading a local kubeconfig
+    needs no agent, and should not load grpc to find that out.
+    """
+    if not settings.agent_gateway_enabled:
+        return None
+
+    from app.gateway.server import AgentGateway
+
+    gateway = AgentGateway(settings.agent_gateway_port)
+    await gateway.start()
+    return gateway
 
 
 def build_state() -> StateBackend:

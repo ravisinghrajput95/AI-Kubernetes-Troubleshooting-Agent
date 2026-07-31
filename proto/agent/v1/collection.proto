@@ -13,6 +13,10 @@ syntax = "proto3";
 
 package agent.v1;
 
+// The agent is written in Go (ADR: one static binary, no runtime in the
+// customer's cluster), so the contract carries its package for both sides.
+option go_package = "github.com/ravisinghrajput95/ai-kubernetes-agent/agent/gen/agentv1;agentv1";
+
 import "agent/v1/evidence.proto";
 
 // The user on whose behalf a read is performed.

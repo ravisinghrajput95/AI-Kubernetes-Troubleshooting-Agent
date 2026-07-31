@@ -81,6 +81,19 @@ class Settings(BaseSettings):
     # Identifies this worker in leases. Defaults to host:pid at startup.
     worker_id: str = Field(default="", validation_alias="WORKER_ID")
 
+    # --- Cluster agents -----------------------------------------------------
+    # 0 disables the gateway entirely, which is the default: an agent is opt-in
+    # and the local kubeconfig path needs none of this.
+    agent_gateway_port: int = Field(default=0, validation_alias="AGENT_GATEWAY_PORT")
+    # Shared secret an agent presents when it dials in. Empty accepts any
+    # agent, which is only acceptable on a trusted network — mTLS identity
+    # (ADR-005) arrives with M4b.
+    agent_bootstrap_token: str = Field(default="", validation_alias="AGENT_BOOTSTRAP_TOKEN")
+
+    @property
+    def agent_gateway_enabled(self) -> bool:
+        return self.agent_gateway_port > 0
+
     @property
     def distributed_state(self) -> bool:
         return bool(self.database_url and self.redis_url)

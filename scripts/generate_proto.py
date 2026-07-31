@@ -45,9 +45,10 @@ def generate(destination: Path) -> None:
         f"--proto_path={PROTO_ROOT}",
         f"--python_out={destination}",
         f"--pyi_out={destination}",
-        # Service stubs are deliberately not generated yet: they import `grpc`,
-        # which is not a dependency until the transport lands in M4. The service
-        # definition still lives in the .proto and is reviewable there.
+        # Service stubs land with M4, which is when `grpc` becomes a real
+        # dependency. Until then they were deliberately omitted so the schema
+        # could be reviewed without the transport being installed.
+        f"--grpc_python_out={destination}",
         *[str(path) for path in proto_files()],
     ]
     result = subprocess.run(command, capture_output=True, text=True)
@@ -61,6 +62,7 @@ def generate(destination: Path) -> None:
 def _rewrite_imports(destination: Path) -> None:
     """Point generated imports at the package the files actually live in."""
     pattern = re.compile(r"^from (agent\.[\w.]*) import ", re.MULTILINE)
+    # grpc stubs additionally import their own _pb2 module by bare name.
     for path in destination.rglob("*.py*"):
         text = path.read_text()
         rewritten = pattern.sub(rf"from {OUTPUT_PACKAGE}.\1 import ", text)

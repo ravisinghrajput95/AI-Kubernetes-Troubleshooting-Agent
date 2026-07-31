@@ -148,6 +148,11 @@ def _encode_payload(data: Any) -> bytes:
         raise WireEncodeError(f"Evidence payload is not JSON-encodable: {error}") from error
 
 
+def decode_payload(payload: bytes) -> Any:
+    """Public entry point: the remote provider decodes payloads it receives."""
+    return _decode_payload(payload)
+
+
 def _decode_payload(payload: bytes) -> Any:
     if not payload:
         return None

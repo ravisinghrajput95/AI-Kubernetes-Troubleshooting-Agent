@@ -151,9 +151,26 @@ Every collected fact is an `Evidence` record with a **deterministic id** (`kind:
 
 `CollectionContext.kubectl` remains as a delegating property (`provider.raw_executor()`) for collectors not yet migrated — `LegacyInspectorCollector` and the nine inspectors still take a `KubectlExecutor`. **`raw_executor()` is deliberately absent from the `ClusterProvider` protocol**, so an unmigrated collector fails loudly against a remote cluster rather than appearing to work because development happens to run locally. All of `app/collectors/targeted.py`, `RawNodesCollector` and `ResourceMetricsCollector` are on the seam.
 
+### The cluster agent (`/agent`, `app/gateway/`, `app/providers/remote_agent.py`)
+
+A Go binary, one per cluster, that **dials out** to the platform and answers evidence requests on that connection. No inbound port is opened into a customer cluster — that is the binding constraint the transport is shaped around (ADR-004), not throughput or schema.
+
+Run it: `cd agent && go build ./cmd/agent`. The gateway is off unless `AGENT_GATEWAY_PORT` is set, and `app/gateway/` is imported lazily so a local-kubeconfig deployment never loads grpc.
+
+Four things here are load-bearing:
+
+- **The agent refuses a kind it does not know** (`agent/internal/policy`). The platform names a *kind* of evidence; it cannot describe an operation. This is a security control rather than validation, and it is why the agent is a separate process at all — enforced only on the platform, the read-only guarantee would be a promise the customer cannot verify. Mutation-tested in Go.
+- **Raw JSON, not typed objects.** client-go's typed structs drop unknown fields and reorder keys, which would make an agent's evidence differ from the same read performed locally. Raw reads keep the two comparable and still avoid subprocess-per-call.
+- **Correlation is on the envelope, not the record.** `EvidenceEnvelope` carries `request_id`; `EvidenceRecord` stays the storage and audit format, which has no such thing.
+- **kubectl rewrites list envelopes.** `kubectl get pods -o json` returns `kind: List`; the API server returns `PodList`. Evidence is therefore compared on objects, never bytes — see `tests/test_agent_transport.py`.
+
+`K8S_AGENT_CLUSTER_INTEGRATION=1` runs the differential suite against a real cluster (`kind create cluster --name m4`); it skips otherwise, so `python -m pytest` still needs nothing.
+
+**mTLS is not implemented (M4b).** The agent presents a bootstrap token on a plaintext stream; do not expose the gateway port outside a trusted network.
+
 ### Wire contract (`/proto`, `app/wire/`)
 
-The schema for the future cluster-agent protocol. **Nothing transports these messages yet** — the contract lands ahead of the transport (M4) so it can be reviewed on its own terms.
+The schema for the cluster-agent protocol, and the source of both the Python bindings and the Go ones under `agent/gen/`.
 
 `app/wire/codec.py` maps `Evidence` ↔ protobuf losslessly in both directions, which is the whole of M2's guarantee: if a value can change on a round trip, a fleet diagnosis stops being reproducible from its own evidence. `tests/test_wire_contract.py` fuzzes it (seeded, so failures reproduce) rather than spot-checking, and every mutation of the codec — dropping a field, treating `""` as absent, losing sub-second precision, non-canonical key order — fails it.
 

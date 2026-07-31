@@ -33,11 +33,21 @@ class AgentMessage(_message.Message):
     HEALTH_FIELD_NUMBER: _ClassVar[int]
     EVENT_FIELD_NUMBER: _ClassVar[int]
     hello: AgentHello
-    evidence: _evidence_pb2.EvidenceRecord
+    evidence: EvidenceEnvelope
     done: _collection_pb2.CollectionDone
     health: AgentHealth
     event: ClusterEvent
-    def __init__(self, hello: _Optional[_Union[AgentHello, _Mapping]] = ..., evidence: _Optional[_Union[_evidence_pb2.EvidenceRecord, _Mapping]] = ..., done: _Optional[_Union[_collection_pb2.CollectionDone, _Mapping]] = ..., health: _Optional[_Union[AgentHealth, _Mapping]] = ..., event: _Optional[_Union[ClusterEvent, _Mapping]] = ...) -> None: ...
+    def __init__(self, hello: _Optional[_Union[AgentHello, _Mapping]] = ..., evidence: _Optional[_Union[EvidenceEnvelope, _Mapping]] = ..., done: _Optional[_Union[_collection_pb2.CollectionDone, _Mapping]] = ..., health: _Optional[_Union[AgentHealth, _Mapping]] = ..., event: _Optional[_Union[ClusterEvent, _Mapping]] = ...) -> None: ...
+
+class EvidenceEnvelope(_message.Message):
+    __slots__ = ("investigation_id", "request_id", "record")
+    INVESTIGATION_ID_FIELD_NUMBER: _ClassVar[int]
+    REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    RECORD_FIELD_NUMBER: _ClassVar[int]
+    investigation_id: str
+    request_id: str
+    record: _evidence_pb2.EvidenceRecord
+    def __init__(self, investigation_id: _Optional[str] = ..., request_id: _Optional[str] = ..., record: _Optional[_Union[_evidence_pb2.EvidenceRecord, _Mapping]] = ...) -> None: ...
 
 class AgentHello(_message.Message):
     __slots__ = ("cluster_id", "agent_version", "kubernetes_version", "supported_kinds", "available_backends", "protocol_version")

@@ -598,11 +598,43 @@ supported default, not a dev-only fallback** — with neither `DATABASE_URL` nor
 --reload` still needs no infrastructure. Exactly one of the two set is refused
 at startup rather than silently half-configuring.
 
-**M4 — Agent MVP + gateway.**
+**M4 — Agent MVP + gateway. ◐ Partially delivered (M4a).**
 Go agent implementing pods, events, deployments, logs. mTLS registration.
 `RemoteAgentProvider`. Runs beside the local provider, selected per cluster
 record. *Exit:* one cluster investigated end-to-end through an agent, producing
 byte-identical evidence to the local path.
+
+*Outcome (M4a — transport):* `/agent/` is a Go binary that dials out, advertises
+the evidence kinds it serves, and answers `CollectionRequest`s with streamed
+`EvidenceRecord`s. `app/gateway/` terminates the stream; `RemoteAgentProvider`
+turns a `ResourceRequest` into an `EvidenceSpec` and satisfies `ClusterProvider`
+unchanged. Verified against a real kind cluster: 16 tests, including the
+engine's own `RawNodesCollector` running verbatim with nothing between it and
+the cluster but a socket. M1's prediction — that swapping how a cluster is
+reached is a substitution at one field — held a second time.
+
+**The exit criterion did not survive contact and has been corrected.**
+"Byte-identical evidence to the local path" is not achievable while the local
+path is kubectl: kubectl replaces the API server's typed list envelope
+(`PodList`) with a generic one (`List`), on every list read, chunked or not. The
+agent reads the API directly and is therefore the *more* faithful of the two.
+Nothing downstream reads the envelope — every collector works from `items` — so
+the criterion is now **the objects, their contents, and the derived conditions
+match**, which is what a diagnosis actually rests on. The envelope difference is
+asserted explicitly by a test so it stays a known fact rather than a surprise.
+
+Two decisions worth recording. The agent reads **raw JSON rather than typed
+objects**: client-go's typed structs drop fields the binary's compiled-in schema
+does not know and reorder keys on re-marshal, which would have made an agent's
+evidence differ from the same read performed locally for reasons nobody could
+see. And correlation lives in an `EvidenceEnvelope` on the transport rather than
+on `EvidenceRecord`, because the record is also the storage and audit format and
+a stored record has no request id.
+
+*Not delivered (M4b):* mTLS registration. The agent presents a bootstrap token
+on a plaintext stream today, the gateway says so in its startup log, and
+ADR-005's certificate identity is the next step. The remaining collectors and
+`RemoteAgentProvider` selection per cluster record follow with M5.
 
 **M5 — Collector parity.**
 Migrate the remaining collectors, including Prometheus and Loki, to the agent.

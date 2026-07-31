@@ -24,3 +24,8 @@ protobuf==7.35.1
 # stays the one instruction, and so the opt-in integration suite can run.
 psycopg[binary,pool]==3.3.4
 redis==8.1.0
+# The agent transport. Imported only when AGENT_GATEWAY_PORT is set, so a
+# deployment reading a local kubeconfig never loads it — but installed
+# unconditionally so the generated service stubs import and `pip install -r
+# requirements.txt` stays the one instruction.
+grpcio==1.83.0

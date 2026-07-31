@@ -8,7 +8,7 @@ from app.api.health import router as health_router
 from app.api.investigate import router as investigate_router
 from app.core.config import settings
 from app.core.logging import configure_logging
-from app.state import build_state
+from app.state import build_state, start_agent_gateway
 
 
 @asynccontextmanager
@@ -20,6 +20,7 @@ async def lifespan(app: FastAPI):
     migrations and starts the queue, control and reaper loops.
     """
     state = build_state()
+    state.gateway = await start_agent_gateway()
     app.state.backend = state
     logger.info("{service} started", service=settings.service_name)
     try:
