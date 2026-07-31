@@ -579,6 +579,10 @@ Five unnamed dark hexes in `App.tsx` become four named tokens:
 --bg-overlay   #1D222C   palette, inspector, dialogs
 --border       #232935   default
 --border-muted #1A1F28   internal dividers
+
+--txt          #E6E9EE   body                 15.0:1 on surface
+--txt-2        #A2AAB7   secondary prose       7.8:1
+--txt-3        #8A929E   metadata, labels      5.8:1
 ```
 
 ### 8.2 Semantic — the only colours that carry meaning
@@ -707,9 +711,16 @@ the evidence table degrades to stacked cards.
 Not a compliance checklist — several of these are correctness issues in a tool
 used under stress.
 
-- **Contrast.** Body text ≥ 7:1 on canvas (AAA); all semantic colours ≥ 4.5:1
-  against the surface they sit on. The current `text-slate-500` on `#0d131c`
-  measures ≈ 3.9:1 and fails.
+- **Contrast.** Body text ≥ 7:1 on canvas (AAA); every other foreground ≥ 4.5:1
+  against each surface it can sit on. The `text-slate-500` on `#0d131c` in the
+  UI this replaces measures 3.92:1 and fails.
+
+  Measured, not eyeballed — and the first draft of this palette failed its own
+  rule. `--txt-3` was specified as `#6E7681`, which is **3.98:1 on
+  `--bg-surface`**: the same defect, one hex apart. It is `#8A929E` because a
+  contrast check over every foreground/background pair the console actually
+  renders caught it. Run that check whenever a token changes; a palette is not
+  accessible because it looks dark enough.
 - **Severity never encoded in colour alone** (§8.3).
 - **Focus visible always** — 2px `--info` ring, 2px offset. Never `outline:none`
   without a replacement.

@@ -13,6 +13,8 @@
  */
 
 const TOKEN_KEY = "k8s-agent-token";
+/** Acknowledgement that this backend accepts unauthenticated requests. */
+const INSECURE_ACK_KEY = "k8s-agent-insecure-ack";
 
 type Listener = (token: string) => void;
 
@@ -74,4 +76,29 @@ export function onTokenChange(listener: Listener): () => void {
 export function authHeaders(): Record<string, string> {
   const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/**
+ * Whether the operator has already been told this backend is unauthenticated.
+ *
+ * Scoped to the tab like the credential, so the warning returns in a new
+ * session rather than being dismissed once and forgotten.
+ */
+export function isInsecureAcknowledged(): boolean {
+  return storage()?.getItem(INSECURE_ACK_KEY) === "1";
+}
+
+export function acknowledgeInsecure(): void {
+  storage()?.setItem(INSECURE_ACK_KEY, "1");
+}
+
+/**
+ * End the session, whichever kind it is.
+ *
+ * Clears the credential *and* the unauthenticated acknowledgement, so signing
+ * out of an open backend returns to the warning rather than straight back in.
+ */
+export function signOut(): void {
+  storage()?.removeItem(INSECURE_ACK_KEY);
+  clearToken();
 }

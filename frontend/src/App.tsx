@@ -17,7 +17,16 @@ import type {
   InvestigationResponse,
   KubernetesContext,
 } from "./types/investigation";
-import { getToken, onTokenChange } from "./services/auth";
+import {
+  acknowledgeInsecure,
+  getToken,
+  isInsecureAcknowledged,
+  onTokenChange,
+} from "./services/auth";
+import { useScope } from "./hooks/useScope";
+import { AppShell } from "./components/shell/AppShell";
+import { ReportsPage } from "./routes/ReportsPage";
+import { SettingsPage } from "./routes/SettingsPage";
 import { useInvestigationJob } from "./hooks/useInvestigationJob";
 import { SignIn } from "./components/SignIn";
 import { ConfidenceBreakdown } from "./components/ConfidenceBreakdown";
@@ -30,10 +39,7 @@ import { SignalTable } from "./components/SignalTable";
 
 type InvestigationData = InvestigationResponse["investigation"];
 
-const logoSrc = "/ai-kubernetes-agent-logo.svg";
 
-/** Acknowledgement of an unauthenticated backend, per tab. */
-const INSECURE_ACK = "k8s-agent-insecure-ack";
 
 function StatusPill({
   label,
@@ -55,95 +61,6 @@ function StatusPill({
     >
       {label}
     </span>
-  );
-}
-
-function Sidebar({
-  selectedContext,
-  onSelectContext,
-}: {
-  selectedContext: string;
-  onSelectContext: (context: string) => void;
-}) {
-  const { data, isLoading } = useQuery({
-    queryKey: ["kubernetes-contexts"],
-    queryFn: getKubernetesContexts,
-  });
-
-  useEffect(() => {
-    if (!selectedContext && data?.current_context) {
-      onSelectContext(data.current_context);
-    }
-  }, [data?.current_context, onSelectContext, selectedContext]);
-
-  return (
-    <aside className="w-full border-b border-slate-800 bg-[#0b1119] lg:min-h-screen lg:w-80 lg:border-b-0 lg:border-r">
-      <div className="border-b border-slate-800 p-5">
-        <div className="flex items-center gap-3">
-          <img
-            src={logoSrc}
-            alt="AI Kubernetes Agent logo"
-            className="size-12 rounded-md"
-          />
-          <div>
-            <p className="font-semibold text-slate-100">AI Kubernetes Agent</p>
-            <p className="text-sm text-lime-300">Online</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="p-5">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Kubeconfig Contexts
-            </p>
-            <p className="mt-1 text-xs leading-5 text-slate-500">
-              Contexts are loaded from your local kubeconfig. Each context points
-              to a cluster.
-            </p>
-          </div>
-          <StatusPill label={`${data?.items.length ?? 0}`} />
-        </div>
-
-        {isLoading ? (
-          <p className="mt-4 text-sm text-slate-400">Loading clusters...</p>
-        ) : null}
-
-        {data?.error ? (
-          <div className="mt-4 rounded-md border border-red-900/70 bg-red-950/40 p-3 text-sm text-red-200">
-            {data.error}
-          </div>
-        ) : null}
-
-        <div className="mt-4 space-y-2">
-          {data?.items.map((context) => (
-            <button
-              key={context.name}
-              type="button"
-              onClick={() => onSelectContext(context.name)}
-              className={`w-full rounded-md border px-3 py-3 text-left text-sm transition ${
-                selectedContext === context.name
-                  ? "border-cyan-400 bg-cyan-950/30 text-cyan-200 shadow-sm shadow-cyan-950"
-                  : "border-slate-800 bg-[#0f1621] text-slate-300 hover:border-slate-600"
-              }`}
-            >
-              <span className="flex items-center justify-between gap-3">
-                <span className="font-medium">{context.name}</span>
-                {context.current ? (
-                  <span className="rounded bg-lime-500/15 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-lime-300">
-                    Current
-                  </span>
-                ) : null}
-              </span>
-              <span className="mt-2 block text-xs text-slate-500">
-                Cluster target: {context.cluster}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-    </aside>
   );
 }
 
@@ -1235,7 +1152,7 @@ function ReportPreview({
   );
 }
 
-function HistoryTable() {
+export function HistoryTable() {
   const { data = [], isLoading } = useQuery({
     queryKey: ["investigation-history"],
     queryFn: getInvestigationHistory,
@@ -1386,20 +1303,15 @@ function HistoryTable() {
   );
 }
 
-function Dashboard({ userName }: { userName: string }) {
+export function InvestigatePage() {
   const queryClient = useQueryClient();
-  const [selectedContext, setSelectedContext] = useState("");
+  // Scope lives in the URL so it is shareable and survives a reload.
+  const { cluster: selectedContext, setCluster: setSelectedContext } = useScope();
   const [scopeNamespace, setScopeNamespace] = useState("");
   const [scopeKind, setScopeKind] = useState("");
   const [scopeName, setScopeName] = useState("");
   const [clusterStatuses, setClusterStatuses] = useState<Record<string, string>>({});
   const [isInvestigatingAll, setIsInvestigatingAll] = useState(false);
-
-  const { data, isError: healthError } = useQuery({
-    queryKey: ["health"],
-    queryFn: getHealth,
-    retry: false,
-  });
 
   // Investigations run as background jobs; progress streams from the backend.
   const job = useInvestigationJob();
@@ -1472,45 +1384,8 @@ function Dashboard({ userName }: { userName: string }) {
   const diagnosis = job.diagnosis;
   const healthMessage = investigationData?.health?.message;
   const healthStatus = investigationData?.health?.status;
-  const systemStatus = useMemo(() => {
-    if (healthError) {
-      return "Backend Offline";
-    }
-    return data?.status === "healthy" ? "Ready" : "Checking";
-  }, [data?.status, healthError]);
-
   return (
-    <main className="min-h-screen bg-[#080d14] text-slate-100">
-      <div className="flex min-h-screen flex-col lg:flex-row">
-        <Sidebar
-          selectedContext={selectedContext}
-          onSelectContext={setSelectedContext}
-        />
-
-        <section className="min-w-0 flex-1">
-          <header className="border-b border-slate-800 bg-[#0b1119] px-5 py-4">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-semibold text-slate-100">
-                  Operations Dashboard
-                </p>
-                <p className="mt-1 text-sm text-slate-500">
-                  {selectedContext
-                    ? `Selected context: ${selectedContext}`
-                    : "Select a kubeconfig context to begin"}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <StatusPill
-                  label={systemStatus}
-                  tone={systemStatus === "Ready" ? "good" : "warning"}
-                />
-                <StatusPill label={userName} tone="info" />
-              </div>
-            </div>
-          </header>
-
-          <div className="grid gap-5 p-5">
+    <div className="grid gap-5 p-5">
             <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-5 shadow-sm shadow-black/20">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
@@ -1679,11 +1554,7 @@ function Dashboard({ userName }: { userName: string }) {
               <ArtifactsPanel historyItem={job.historyItem} />
             </section>
 
-            <HistoryTable />
-          </div>
-        </section>
-      </div>
-    </main>
+    </div>
   );
 }
 
@@ -1696,9 +1567,7 @@ function AuthenticatedApp() {
 
   const [token, setTokenState] = useState(getToken);
   const [authError, setAuthError] = useState("");
-  const [acknowledged, setAcknowledged] = useState(
-    () => window.sessionStorage.getItem(INSECURE_ACK) === "1",
-  );
+  const [acknowledged, setAcknowledged] = useState(isInsecureAcknowledged);
 
   // `http.ts` clears the credential when the backend answers 401, which fires
   // here. That is what turns an expired token into a sign-in prompt rather
@@ -1707,6 +1576,7 @@ function AuthenticatedApp() {
     () =>
       onTokenChange((next) => {
         setTokenState(next);
+        setAcknowledged(isInsecureAcknowledged());
         if (!next) {
           setAuthError("Your session is no longer valid. Sign in again to continue.");
         }
@@ -1724,7 +1594,7 @@ function AuthenticatedApp() {
       <SignIn
         health={health}
         onAuthenticated={() => {
-          window.sessionStorage.setItem(INSECURE_ACK, "1");
+          acknowledgeInsecure();
           setAcknowledged(true);
         }}
       />
@@ -1741,19 +1611,22 @@ function AuthenticatedApp() {
     );
   }
 
-  return <Dashboard userName={insecure ? "anonymous" : "signed in"} />;
+  return (
+    <Routes>
+      <Route element={<AppShell />}>
+        <Route path="/" element={<InvestigatePage />} />
+        <Route path="/reports" element={<ReportsPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        {/* Destinations arrive as later phases give them data. Until then an
+            unknown path returns to the one page that exists rather than 404. */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
+  );
 }
 
 function App() {
-  return (
-    <Routes>
-      <Route path="/" element={<AuthenticatedApp />} />
-      {/* Phase 0 introduces routing without introducing routes. Later phases
-          add /investigations/:id and the rest; until then every path resolves
-          to the existing dashboard rather than 404ing. */}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
-  );
+  return <AuthenticatedApp />;
 }
 
 export default App;

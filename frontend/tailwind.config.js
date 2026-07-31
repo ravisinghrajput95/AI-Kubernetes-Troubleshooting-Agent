@@ -22,7 +22,10 @@ export default {
         overlay: "#1D222C",
         line: { DEFAULT: "#232935", muted: "#1A1F28" },
         // Text, by descending emphasis.
-        ink: { DEFAULT: "#E6E9EE", 2: "#A2AAB7", 3: "#6E7681" },
+        // ink-3 is #8A929E rather than a darker grey because anything
+        // dimmer fails 4.5:1 on `raised` — the same defect the redesign
+        // called out in the UI it replaces. Verified, not eyeballed.
+        ink: { DEFAULT: "#E6E9EE", 2: "#A2AAB7", 3: "#8A929E" },
         // Severity and provenance. `ai` marks model-authored prose — a
         // provenance signal, not a premium one (§8.3).
         critical: "#F4645F",
