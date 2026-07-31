@@ -90,8 +90,16 @@ describe("fleet", () => {
 
   it("shows a cluster that has never been investigated", async () => {
     renderFleet();
-    expect(await screen.findByText("Never investigated")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /investigate/i })).toBeInTheDocument();
+    expect(await screen.findByText("Not investigated")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^investigate$/i })).toBeInTheDocument();
+  });
+
+  it("does not say the same thing twice on an uninvestigated cluster", async () => {
+    renderFleet();
+    await screen.findByText("Not investigated");
+    // The chip carries the state; the line below it names the cluster.
+    expect(screen.queryByText("Never investigated")).not.toBeInTheDocument();
+    expect(screen.getByText("kind")).toBeInTheDocument();
   });
 
   it("says the state is not live", async () => {

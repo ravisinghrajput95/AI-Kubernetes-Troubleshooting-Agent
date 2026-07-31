@@ -132,3 +132,68 @@ describe("a payload the console did not expect", () => {
     expect(screen.getByText(/kubectl_commands is not iterable/i)).toBeInTheDocument();
   });
 });
+
+describe("the headline must not contradict the body", () => {
+  function renderInvestigation() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/investigations/job-1"]}>
+          <Routes>
+            <Route path="/investigations/:id" element={<InvestigationPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("does not report a failed run as healthy", async () => {
+    // Severity is derived from findings, so a run that collected nothing has
+    // no findings and the backend reports "Healthy". Showing that beside a
+    // failure notice is the misrepresentation the grounding checks exist to
+    // prevent, moved into the UI.
+    vi.spyOn(api, "getInvestigationJob").mockResolvedValue({
+      id: "job-1",
+      status: "failed",
+      error: "Kubernetes investigation failed.",
+      investigation: { context: "staging-1", severity: { severity: "Healthy" } },
+      diagnosis: {},
+    } as never);
+    vi.spyOn(api, "getInvestigationReport").mockResolvedValue({ report: undefined } as never);
+
+    renderInvestigation();
+
+    expect(await screen.findByText("Failed")).toBeInTheDocument();
+    expect(screen.queryByText("Healthy")).not.toBeInTheDocument();
+  });
+
+  it("reports severity when the run actually produced findings", async () => {
+    vi.spyOn(api, "getInvestigationJob").mockResolvedValue({
+      id: "job-1",
+      status: "succeeded",
+      investigation: { context: "prod", severity: { severity: "Critical" } },
+      diagnosis: {},
+    } as never);
+    vi.spyOn(api, "getInvestigationReport").mockResolvedValue({ report: undefined } as never);
+
+    renderInvestigation();
+    expect(await screen.findByText("Critical")).toBeInTheDocument();
+  });
+
+  it("does not repeat the timeline once the run is over", async () => {
+    // The live stream is for watching; the composed Investigation Timeline
+    // section is the record. Both at once said the same thing twice.
+    vi.spyOn(api, "getInvestigationJob").mockResolvedValue({
+      id: "job-1",
+      status: "succeeded",
+      timeline: [{ type: "progress", message: "Retrieved Pods", at: "", time: "17:43" }],
+      investigation: { context: "prod" },
+      diagnosis: {},
+    } as never);
+    vi.spyOn(api, "getInvestigationReport").mockResolvedValue({ report: undefined } as never);
+
+    renderInvestigation();
+    await screen.findByRole("heading", { name: "prod" });
+    expect(screen.queryByText(/investigation progress/i)).not.toBeInTheDocument();
+  });
+});

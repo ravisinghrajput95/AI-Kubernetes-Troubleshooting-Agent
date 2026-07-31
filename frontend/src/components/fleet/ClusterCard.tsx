@@ -45,8 +45,12 @@ export function ClusterCard({
       <div className="min-w-0">
         <p className="truncate font-semibold text-ink">{row.name}</p>
         <p className="mt-1 truncate text-sm text-ink-2">
-          {row.rootCause || "No finding recorded"}
-          {row.namespace ? (
+          {/* The state chip already says "Not investigated"; repeating it here
+              wastes the line. Name the cluster behind the context instead. */}
+          {row.state === "unknown"
+            ? row.cluster || "No investigation on record"
+            : row.rootCause || "No finding recorded"}
+          {row.state !== "unknown" && row.namespace && row.namespace !== "unknown" ? (
             <span className="text-ink-3"> · {row.namespace}</span>
           ) : null}
         </p>

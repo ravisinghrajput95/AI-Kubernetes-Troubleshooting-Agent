@@ -415,7 +415,7 @@ function MultiClusterPanel({
         </div>
         <button
           type="button"
-          onClick={() => onInvestigateAll(data?.items.map((item) => item.name) ?? [])}
+          onClick={() => onInvestigateAll(data?.items?.map((item) => item.name) ?? [])}
           disabled={!data?.items.length || isInvestigating}
           className="rounded-md border border-cyan-800 bg-cyan-950/30 px-4 py-2 text-sm font-semibold text-cyan-200 disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-900 disabled:text-slate-500"
         >
@@ -427,7 +427,7 @@ function MultiClusterPanel({
         {isLoading ? (
           <p className="text-sm text-slate-400">Loading clusters...</p>
         ) : null}
-        {data?.items.map((context) => {
+        {data?.items?.map((context) => {
           const status = statusFor(context);
           return (
             <button
@@ -483,7 +483,10 @@ function buildRemediationYaml(
   investigation?: InvestigationData,
 ) {
   const workload = firstAffectedWorkload(investigation);
-  const rootCause = diagnosis?.root_cause.toLowerCase() ?? "";
+  // `a?.b.c()` guards `a` and not `b`: a diagnosis without a root cause used
+  // to crash the whole page here. The backend types this dict as
+  // `dict[str, Any]`, so the interface saying it is required proves nothing.
+  const rootCause = diagnosis?.root_cause?.toLowerCase() ?? "";
   const imageValue = rootCause.includes("image")
     ? "<replace-with-valid-image-tag>"
     : "<validated-image-tag>";
@@ -1231,7 +1234,22 @@ export function InvestigationPage() {
   const investigation = job.investigation;
   const diagnosis = job.diagnosis;
   const evidence = evidenceIndex(investigation).get(selectedEvidence);
-  const severity = investigation?.severity?.severity;
+
+  // Severity is derived from findings, so a run that collected nothing has no
+  // findings and reports "Healthy". Showing that next to a failure notice
+  // would have the header contradict the body — the same misrepresentation the
+  // grounding checks exist to prevent, moved into the UI. The outcome wins.
+  const outcome =
+    job.phase === "failed"
+      ? { tone: "critical" as const, label: "Failed" }
+      : job.phase === "cancelled"
+        ? { tone: "neutral" as const, label: "Cancelled" }
+        : investigation?.severity?.severity
+          ? {
+              tone: severityTone(investigation.severity.severity),
+              label: investigation.severity.severity,
+            }
+          : null;
 
   return (
     <div className="flex min-h-full">
@@ -1252,9 +1270,7 @@ export function InvestigationPage() {
               <p className="mt-1 font-mono text-sm text-ink-3">{id}</p>
             </div>
             <div className="flex items-center gap-3">
-              {severity ? (
-                <SeverityDot tone={severityTone(severity)} label={severity} />
-              ) : null}
+              {outcome ? <SeverityDot tone={outcome.tone} label={outcome.label} /> : null}
               {job.isRunning ? (
                 <button
                   type="button"
@@ -1273,14 +1289,16 @@ export function InvestigationPage() {
             </p>
           ) : null}
 
-          <div className="mt-8">
-            <LiveTimeline
-              phase={job.phase}
-              transport={job.transport}
-              timeline={job.timeline}
-              onCancel={() => void job.cancel()}
-            />
-          </div>
+          {!terminal ? (
+            <div className="mt-8">
+              <LiveTimeline
+                phase={job.phase}
+                transport={job.transport}
+                timeline={job.timeline}
+                onCancel={() => void job.cancel()}
+              />
+            </div>
+          ) : null}
 
           {terminal ? (
             <div className="mt-8">
