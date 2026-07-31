@@ -1,0 +1,11 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- The mark in the navigation rail, in the design system's own tokens:
+       surface #12151B, border #232935, info #5B9DF9. The predecessor was a
+       cyan-to-purple-to-amber gradient — the decorative rainbow the redesign
+       removed, spending purple on ornament when it now means model-authored.
+       A solid diamond stays legible at 16px, where an outline does not. -->
+  <rect width="64" height="64" rx="14" fill="#12151B"/>
+  <rect x="0.5" y="0.5" width="63" height="63" rx="13.5" stroke="#232935"/>
+  <path d="M32 12L52 32L32 52L12 32L32 12Z" fill="#5B9DF9"/>
+  <path d="M32 25L39 32L32 39L25 32L32 25Z" fill="#12151B"/>
+</svg>

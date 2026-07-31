@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiBaseUrl } from "../services/http";
 import { getHealth } from "../services/api";
 import { getToken, signOut } from "../services/auth";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 /**
  * Connection and session.
@@ -12,6 +13,7 @@ import { getToken, signOut } from "../services/auth";
  * discard one.
  */
 export function SettingsPage() {
+  useDocumentTitle("Settings");
   const { data: health, isError } = useQuery({
     queryKey: ["health"],
     queryFn: getHealth,

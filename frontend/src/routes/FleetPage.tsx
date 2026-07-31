@@ -6,6 +6,7 @@ import { ClusterCard } from "../components/fleet/ClusterCard";
 import { FleetGrid } from "../components/fleet/FleetGrid";
 import { SignalCorrelation } from "../components/fleet/SignalCorrelation";
 import { SeverityDot } from "../components/report/SeverityDot";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import {
   correlateSignals,
   fleetState,
@@ -40,6 +41,7 @@ const ROLLUP: Array<[FleetState, string]> = [
 ];
 
 export function FleetPage() {
+  useDocumentTitle("Fleet");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [view, setView] = useState<"auto" | "board" | "grid">("auto");

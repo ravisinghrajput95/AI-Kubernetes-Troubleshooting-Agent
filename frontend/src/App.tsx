@@ -32,6 +32,7 @@ import {
   onTokenChange,
 } from "./services/auth";
 import { useScope } from "./hooks/useScope";
+import { useDocumentTitle } from "./hooks/useDocumentTitle";
 import { AppShell } from "./components/shell/AppShell";
 import { FleetPage } from "./routes/FleetPage";
 import { ReportsPage } from "./routes/ReportsPage";
@@ -1007,6 +1008,7 @@ export function HistoryTable() {
 }
 
 export function InvestigatePage() {
+  useDocumentTitle("Investigations");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   // Scope lives in the URL so it is shareable and survives a reload.
@@ -1234,6 +1236,12 @@ export function InvestigationPage() {
   const investigation = job.investigation;
   const diagnosis = job.diagnosis;
   const evidence = evidenceIndex(investigation).get(selectedEvidence);
+
+  useDocumentTitle(
+    investigation?.context
+      ? `${investigation.context} · ${job.isRunning ? "running" : job.phase}`
+      : "Investigation",
+  );
 
   // Severity is derived from findings, so a run that collected nothing has no
   // findings and reports "Healthy". Showing that next to a failure notice

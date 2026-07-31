@@ -167,6 +167,20 @@ describe("the headline must not contradict the body", () => {
     expect(screen.queryByText("Healthy")).not.toBeInTheDocument();
   });
 
+  it("names the tab after the cluster and the outcome", async () => {
+    vi.spyOn(api, "getInvestigationJob").mockResolvedValue({
+      id: "job-1",
+      status: "failed",
+      investigation: { context: "staging-1" },
+      diagnosis: {},
+    } as never);
+    vi.spyOn(api, "getInvestigationReport").mockResolvedValue({ report: undefined } as never);
+
+    renderInvestigation();
+    await screen.findByRole("heading", { name: "staging-1" });
+    expect(document.title).toBe("staging-1 · failed · Kubernetes Operations");
+  });
+
   it("reports severity when the run actually produced findings", async () => {
     vi.spyOn(api, "getInvestigationJob").mockResolvedValue({
       id: "job-1",

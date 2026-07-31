@@ -1,4 +1,5 @@
 import { HistoryTable } from "../App";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 /**
  * Saved investigation reports.
@@ -8,6 +9,8 @@ import { HistoryTable } from "../App";
  * component itself out of `App.tsx`; this phase only gives it somewhere to be.
  */
 export function ReportsPage() {
+  useDocumentTitle("Reports");
+
   return (
     <div className="mx-auto max-w-document px-6 py-8">
       <h1 className="text-h1">Reports</h1>

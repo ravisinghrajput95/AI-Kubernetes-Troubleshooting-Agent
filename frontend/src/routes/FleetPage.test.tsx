@@ -183,3 +183,13 @@ describe("an empty fleet", () => {
     expect(screen.getByText(/nothing is ever applied/i)).toBeInTheDocument();
   });
 });
+
+describe("the tab", () => {
+  it("is named after what is in it", async () => {
+    // An operator working an incident has several of these open at once;
+    // identical titles make the pile unnavigable.
+    renderFleet();
+    await screen.findByText("prod-eu-west");
+    expect(document.title).toBe("Fleet · Kubernetes Operations");
+  });
+});
