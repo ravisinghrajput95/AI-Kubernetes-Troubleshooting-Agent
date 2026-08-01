@@ -154,7 +154,7 @@ class IncidentReportComposer:
         return ReportSection(
             title="Root Cause",
             body=tuple(line for line in body if line),
-            headers=("Candidate cause", "Confidence", "Severity", ""),
+            headers=("Candidate cause", "Confidence", "Severity", "Selection"),
             table=tuple(rows),
             note=note,
         )
@@ -197,7 +197,7 @@ class IncidentReportComposer:
         return ReportSection(
             title="Evidence",
             body=tuple(body),
-            headers=("Severity", "Observation", ""),
+            headers=("Severity", "Observation", "Provenance"),
             table=tuple(rows),
         )
 

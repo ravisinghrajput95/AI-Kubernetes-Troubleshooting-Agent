@@ -15,7 +15,7 @@ import os
 import re
 import tempfile
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -30,11 +30,35 @@ EXTENSIONS = {"pdf": "pdf", "json": "json", "markdown": "md"}
 
 HISTORY_LIMIT = 25
 
+# How long a rendered report is kept.
+#
+# Investigations accumulate: a fleet under load produces them faster than
+# anyone reads them, and the value of a report falls off a cliff once the
+# incident is closed. Two weeks covers a fortnightly review and a
+# post-incident writeup, and it is the operator's to change.
+#
+# Deleting a report does not rewrite history — the *record* that an
+# investigation happened is cheap and stays; the rendered PDF, JSON and
+# Markdown are what get pruned. An operator following a stale link gets
+# "expired", not a lie about the investigation never having existed.
+DEFAULT_RETENTION_DAYS = 14
+
 # Serialises the read-modify-write of the history index within this process.
 # Across processes the atomic replace prevents a torn file, but a concurrent
 # writer can still lose an entry — which is one of the reasons the Postgres
 # backend exists.
 _HISTORY_LOCK = threading.Lock()
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    """History timestamps, tolerantly. An unparseable one is never pruned."""
+    if not value:
+        return None
+    try:
+        stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
 
 
 class FilesystemReportStore:
@@ -50,6 +74,50 @@ class FilesystemReportStore:
 
     def ensure(self, investigation_id: str, owner: str = "") -> None:
         """Nothing to reserve on a filesystem."""
+
+    def prune(self, older_than_days: int = DEFAULT_RETENTION_DAYS) -> int:
+        """Delete report files past retention. Returns how many were removed.
+
+        Index entries for pruned investigations gain `expired: true` rather
+        than disappearing, so the console can say "this report has expired"
+        instead of behaving as though the investigation never ran.
+        """
+        cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+        removed = 0
+
+        with _HISTORY_LOCK:
+            entries = self._read_index()
+            changed = False
+
+            for entry in entries:
+                if entry.get("expired"):
+                    continue
+                stamp = _parse_timestamp(entry.get("timestamp", ""))
+                if stamp is None or stamp >= cutoff:
+                    continue
+
+                for report_format in EXTENSIONS:
+                    path = self.reports_dir / (f"{entry.get('id')}.{EXTENSIONS[report_format]}")
+                    if path.exists():
+                        path.unlink(missing_ok=True)
+                        removed += 1
+
+                entry["expired"] = True
+                changed = True
+
+            if changed:
+                self._write_atomic(
+                    self.index_path,
+                    json.dumps(entries[:HISTORY_LIMIT], indent=2).encode("utf-8"),
+                )
+
+        if removed:
+            logger.info(
+                "Pruned {count} report file(s) older than {days} days",
+                count=removed,
+                days=older_than_days,
+            )
+        return removed
 
     def write(self, investigation_id: str, report_format: str, content: bytes) -> None:
         path = self.reports_dir / f"{investigation_id}.{EXTENSIONS[report_format]}"
@@ -178,6 +246,47 @@ class PostgresReportStore:
                 "ON CONFLICT (id) DO NOTHING",
                 (investigation_id, owner, "succeeded"),
             )
+
+    def prune(self, older_than_days: int = DEFAULT_RETENTION_DAYS) -> int:
+        """Delete report blobs past retention. Returns how many rows went.
+
+        Blobs only. The `investigations` row survives, so the fact that an
+        investigation happened outlives the rendered artefact — which is the
+        distinction that makes this retention rather than deletion. The
+        history projection is marked expired in the same transaction so a
+        listing cannot show a downloadable report that is no longer there.
+        """
+        with self._db.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM investigation_reports
+                 WHERE investigation_id IN (
+                       SELECT id FROM investigations
+                        WHERE created_at < now() - %s::interval
+                 )
+                """,
+                (f"{older_than_days} days",),
+            )
+            removed = cursor.rowcount
+
+            cursor.execute(
+                """
+                UPDATE investigations
+                   SET history_item = jsonb_set(history_item, '{expired}', 'true'::jsonb)
+                 WHERE created_at < now() - %s::interval
+                   AND history_item IS NOT NULL
+                   AND COALESCE(history_item->>'expired', 'false') <> 'true'
+                """,
+                (f"{older_than_days} days",),
+            )
+
+        if removed:
+            logger.info(
+                "Pruned {count} report blob(s) older than {days} days",
+                count=removed,
+                days=older_than_days,
+            )
+        return removed
 
     def write(self, investigation_id: str, report_format: str, content: bytes) -> None:
         with self._db.cursor() as cursor:

@@ -13,6 +13,7 @@ agent already opened, and wait.
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
@@ -24,6 +25,12 @@ from app.wire.gen.agent.v1 import agent_pb2, collection_pb2, evidence_pb2
 # The agent enforces its own budget too; this is the platform's backstop
 # against an agent that accepted work and went silent.
 DEFAULT_COLLECTION_TIMEOUT = 60.0
+
+# How often the platform pings a connected agent, and how long silence may last
+# before the console stops calling it online. The gap between the two is
+# deliberate: one missed heartbeat is a slow network, three is a problem.
+AGENT_HEARTBEAT_SECONDS = 15.0
+AGENT_STALE_SECONDS = 45.0
 
 
 @dataclass
@@ -69,7 +76,13 @@ class AgentSession:
         self.termination_reason = ""
         self._pending: dict[str, PendingCollection] = {}
         self._counter = 0
-        self.connected_at = asyncio.get_event_loop().time()
+        self.connected_at = datetime.now(UTC)
+        # Refreshed by every inbound message, including the heartbeat reply.
+        # An open TCP connection is not proof an agent is alive — a half-open
+        # stream looks identical to a healthy idle one from this side — so
+        # liveness is "we heard from it recently", not "the socket exists".
+        self.last_seen = self.connected_at
+        self.degradation = ""
 
     @property
     def cluster_id(self) -> str:
@@ -140,6 +153,19 @@ class AgentSession:
 
         return pending
 
+    def touch(self, degradation: str = "") -> None:
+        """Record that the agent just spoke."""
+        self.last_seen = datetime.now(UTC)
+        self.degradation = degradation
+
+    @property
+    def seconds_since_seen(self) -> float:
+        return (datetime.now(UTC) - self.last_seen).total_seconds()
+
+    def online(self, stale_after: float = AGENT_STALE_SECONDS) -> bool:
+        """Whether this agent counts as reachable right now."""
+        return self.seconds_since_seen <= stale_after
+
     def on_evidence(self, record: evidence_pb2.EvidenceRecord, request_id: str) -> None:
         pending = self._pending.get(request_id)
         if pending is None:
@@ -173,6 +199,11 @@ class AgentSession:
     def describe(self) -> dict[str, Any]:
         return {
             "cluster_id": self.cluster_id,
+            "online": self.online(),
+            "connected_at": self.connected_at.isoformat(),
+            "last_seen": self.last_seen.isoformat(),
+            "seconds_since_seen": round(self.seconds_since_seen, 1),
+            "degradation": self.degradation,
             "identity_source": self.identity.source,
             "certificate_serial": self.identity.serial,
             "certificate_expires_at": (

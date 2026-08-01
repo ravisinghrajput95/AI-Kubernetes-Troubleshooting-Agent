@@ -11,6 +11,7 @@ Two deployments, one decision point:
 Nothing above this module knows which one it got.
 """
 
+import asyncio
 import os
 import socket
 from dataclasses import dataclass
@@ -24,6 +25,43 @@ from app.jobs.store import InMemoryJobStore, set_job_store
 from app.services.report_store import set_report_store
 
 
+async def _retention_sweep() -> None:
+    """Prune expired reports, now and then periodically.
+
+    Runs in-process rather than as a cron job because the single-process
+    deployment has nowhere else to put it, and the distributed one would
+    otherwise need an operator to remember. Every worker sweeps; the work is
+    idempotent, so overlap costs a little I/O and never correctness.
+    """
+    from app.services.report_store import get_report_store
+
+    interval = max(0.5, settings.report_retention_sweep_hours) * 3600
+    while True:
+        try:
+            removed = await asyncio.to_thread(
+                get_report_store().prune, settings.report_retention_days
+            )
+            if removed:
+                logger.info("Retention sweep removed {count} report artefact(s)", count=removed)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - a sweep must not kill startup
+            logger.opt(exception=exc).warning("Retention sweep failed")
+        await asyncio.sleep(interval)
+
+
+def start_retention(state: "StateBackend") -> None:
+    if settings.report_retention_days <= 0:
+        logger.info("Report retention is disabled; reports are kept indefinitely.")
+        return
+    state.retention = asyncio.create_task(_retention_sweep())
+    logger.info(
+        "Reports are kept for {days} days; sweeping every {hours}h",
+        days=settings.report_retention_days,
+        hours=settings.report_retention_sweep_hours,
+    )
+
+
 @dataclass
 class StateBackend:
     """Everything startup created, so shutdown can take it down again."""
@@ -34,6 +72,7 @@ class StateBackend:
     database: Any = None
     bus: Any = None
     gateway: Any = None
+    retention: Any = None
 
     async def shutdown(self) -> None:
         """Tear down in dependency order, and un-install what startup installed.
@@ -48,6 +87,9 @@ class StateBackend:
         call would hand out a store whose connections are gone.
         """
         await self.runner.shutdown()
+        if self.retention is not None:
+            self.retention.cancel()
+            self.retention = None
         if self.gateway is not None:
             await self.gateway.stop()
         if self.consumer is not None:

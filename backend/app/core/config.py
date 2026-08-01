@@ -62,6 +62,16 @@ class Settings(BaseSettings):
 
     audit_log_path: str = Field(default="", validation_alias="AUDIT_LOG_PATH")
 
+    # How long rendered reports are kept. Investigations accumulate faster than
+    # anyone reads them; the record that one happened is cheap and stays, the
+    # PDF/JSON/Markdown are pruned. 0 disables pruning entirely.
+    report_retention_days: int = Field(default=14, validation_alias="REPORT_RETENTION_DAYS")
+    # How often the sweep runs. Retention is a floor, not a deadline: a report
+    # may outlive it by up to one interval.
+    report_retention_sweep_hours: float = Field(
+        default=6.0, validation_alias="REPORT_RETENTION_SWEEP_HOURS"
+    )
+
     # --- Distributed state --------------------------------------------------
     # Both unset is the supported single-process default: jobs and reports stay
     # in this process and on local disk, and no infrastructure is required.

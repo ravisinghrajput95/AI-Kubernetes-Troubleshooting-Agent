@@ -4,11 +4,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
+from app.api.agents import router as agents_router
 from app.api.health import router as health_router
 from app.api.investigate import router as investigate_router
 from app.core.config import settings
 from app.core.logging import configure_logging
-from app.state import build_state, start_agent_gateway
+from app.state import build_state, start_agent_gateway, start_retention
 
 
 @asynccontextmanager
@@ -21,6 +22,7 @@ async def lifespan(app: FastAPI):
     """
     state = build_state()
     state.gateway = await start_agent_gateway(state)
+    start_retention(state)
     app.state.backend = state
     logger.info("{service} started", service=settings.service_name)
     try:
@@ -50,6 +52,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(investigate_router)
+    app.include_router(agents_router)
 
     return app
 

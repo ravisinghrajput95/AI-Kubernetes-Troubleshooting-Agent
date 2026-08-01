@@ -292,7 +292,16 @@ class InvestigationHistoryService:
         sections = [
             {
                 "title": section.title,
-                "body": section.as_lines(),
+                # Structured rather than pre-flattened: `as_lines()` joins table
+                # rows with " | ", and a proportional font wrapping that string
+                # produced ragged pseudo-columns with orphaned separators. The
+                # PDF lays the same rows out as real columns instead. Markdown
+                # and JSON still use the composer's own rendering.
+                "fields": [(item.label, item.value) for item in section.fields],
+                "body": list(section.body),
+                "table": [list(row) for row in section.table],
+                "headers": list(section.headers),
+                "note": section.note,
                 "monospace": section.title.startswith("Appendix"),
             }
             for section in report.sections
@@ -642,6 +651,17 @@ class InvestigationHistoryService:
     def _markdown_list(self, values: list[str]) -> str:
         return "\n".join(f"- {value}" for value in values) or "- None recorded."
 
+    # Layout constants for the hand-rolled PDF. Named because the relationship
+    # between them is the thing that was wrong: the header band runs to
+    # HEADER_BOTTOM, and body text has to start below it on every page.
+    #
+    # There is no PDF library here on purpose — see `_pdf_bytes` — so these are
+    # the only thing standing between a section and the title it would
+    # otherwise be drawn through.
+    HEADER_BOTTOM = 720
+    BODY_TOP = HEADER_BOTTOM - 30
+    PAGE_BOTTOM = 56
+
     def _styled_pdf(
         self,
         title: str,
@@ -658,7 +678,11 @@ class InvestigationHistoryService:
             if page:
                 pages.append(page)
             page = []
-            y = 740
+            # The header band occupies HEADER_BOTTOM..792. Body text used to start at
+            # 740, which is *inside* it, so every page after the first drew its
+            # first lines through the title and the generation timestamp. Page
+            # one never showed it because the meta box resets y to 580.
+            y = self.BODY_TOP
             page.extend(
                 [
                     "0.04 0.07 0.11 rg 0 0 612 792 re f",
@@ -671,7 +695,7 @@ class InvestigationHistoryService:
             )
 
         def ensure_space(required: int) -> None:
-            if y - required < 56:
+            if y - required < self.PAGE_BOTTOM:
                 new_page()
 
         def add_text(
@@ -684,25 +708,125 @@ class InvestigationHistoryService:
             leading: int = 15,
         ) -> None:
             nonlocal y
-            for line in wrap(str(text), width=width) or [""]:
+            lines = wrap(str(text), width=width) or [""]
+            for position, line in enumerate(lines):
                 ensure_space(leading + 2)
-                page.append(self._pdf_text(42 + indent, y, line, font, size, color))
+                # Continuation lines are indented, so a wrapped record reads as
+                # one record. Flush-left continuations made every wrapped row
+                # look like a new finding.
+                offset = indent if position == 0 else indent + 12
+                page.append(self._pdf_text(42 + offset, y, line, font, size, color))
                 y -= leading
 
-        def add_section(title_text: str, body: list[str], monospace: bool = False) -> None:
+        def add_field(label: str, value: str) -> None:
+            """A label/value pair on one baseline, in two aligned columns."""
+            nonlocal y
+            ensure_space(17)
+            page.append(self._pdf_text(48, y, str(label), "F2", 9, (0.52, 0.66, 0.84)))
+            for position, line in enumerate(wrap(str(value), width=64) or [""]):
+                if position:
+                    ensure_space(15)
+                page.append(self._pdf_text(196, y, line, "F1", 10, (0.86, 0.91, 0.96)))
+                y -= 15
+            y -= 2
+
+        def add_table(headers: list[str], rows: list[list[str]]) -> None:
+            """Real columns, sized to their contents.
+
+            Flattening a row to "a | b | c" and letting a proportional font wrap
+            it is what produced the ragged output with separators stranded on
+            their own line.
+
+            Widths are proportional to the longest cell in each column rather
+            than split evenly. An evenly split table gave a severity column
+            reading "HIGH" the same 190pt as the sentence beside it, so the
+            sentence wrapped five times against acres of empty page.
+            """
+            nonlocal y
+            if not rows:
+                return
+
+            columns = max(len(row) for row in rows)
+            if columns == 0:
+                return
+
+            longest = [1] * columns
+            for row in [headers, *rows] if headers else rows:
+                for index, cell in enumerate(row[:columns]):
+                    longest[index] = max(longest[index], len(str(cell)))
+
+            # Proportional, but no column may vanish or hog the page.
+            available = 516
+            total = sum(longest)
+            widths = [max(46, min(300, int(available * portion / total))) for portion in longest]
+            # Rescale if the floors pushed the row past the page.
+            overflow = sum(widths) - available
+            if overflow > 0:
+                widest = widths.index(max(widths))
+                widths[widest] = max(46, widths[widest] - overflow)
+
+            positions = [48]
+            for width in widths[:-1]:
+                positions.append(positions[-1] + width)
+
+            def draw(row: list[str], font: str, colour: tuple[float, float, float]) -> None:
+                nonlocal y
+                cells = [
+                    wrap(str(cell), width=max(6, widths[index] // 5)) or [""]
+                    for index, cell in enumerate(row[:columns])
+                ]
+                height = max(len(cell) for cell in cells)
+                ensure_space(height * 13 + 4)
+                top = y
+                for index, lines in enumerate(cells):
+                    for offset, line in enumerate(lines):
+                        page.append(
+                            self._pdf_text(
+                                positions[index], top - offset * 13, line, font, 9, colour
+                            )
+                        )
+                y = top - height * 13 - 3
+
+            if headers:
+                draw(list(headers), "F2", (0.52, 0.66, 0.84))
+                page.append(f"0.20 0.28 0.38 RG 48 {y + 8} m 564 {y + 8} l S")
+                y -= 6
+
+            for row in rows:
+                draw(row, "F1", (0.86, 0.91, 0.96))
+
+        def add_section(section: dict[str, Any]) -> None:
             nonlocal y
             ensure_space(54)
             y -= 10
             page.append("0.09 0.14 0.21 rg 36 " + str(y - 8) + " 540 28 re f")
             page.append("0.17 0.55 0.75 RG 36 " + str(y - 8) + " 540 28 re S")
-            page.append(self._pdf_text(48, y, title_text, "F2", 12, (1, 1, 1)))
+            page.append(self._pdf_text(48, y, str(section["title"]), "F2", 12, (1, 1, 1)))
             y -= 32
-            for item in body:
+
+            monospace = bool(section.get("monospace"))
+
+            for label, value in section.get("fields", []):
+                add_field(label, value)
+
+            for item in section.get("body", []):
                 if monospace:
                     add_text(item, "F3", 8, (0.78, 0.93, 1), width=96, indent=10, leading=13)
                 else:
                     add_text(item, "F1", 10, (0.82, 0.88, 0.95), width=92, indent=6)
                 y -= 4
+
+            table = section.get("table", [])
+            if table:
+                y -= 4
+                add_table(
+                    [str(cell) for cell in section.get("headers", [])],
+                    [[str(cell) for cell in row] for row in table],
+                )
+
+            if section.get("note"):
+                y -= 2
+                add_text(section["note"], "F1", 9, (0.55, 0.66, 0.80), width=104, indent=6)
 
         new_page()
         page.append("0.07 0.10 0.15 rg 36 608 540 88 re f")
@@ -716,13 +840,16 @@ class InvestigationHistoryService:
         y = 580
 
         for section in sections:
-            add_section(
-                section["title"],
-                [str(item) for item in section.get("body", [])],
-                bool(section.get("monospace")),
-            )
+            add_section(section)
 
         pages.append(page)
+
+        total = len(pages)
+        for number, rendered in enumerate(pages, start=1):
+            rendered.append(
+                self._pdf_text(511, 32, f"Page {number} of {total}", "F1", 8, (0.45, 0.55, 0.68))
+            )
+
         return self._pdf_bytes(pages)
 
     def _pdf_bytes(self, pages: list[list[str]]) -> bytes:
@@ -791,5 +918,35 @@ class InvestigationHistoryService:
         safe = self._escape_pdf_text(value)
         return f"BT {red:.2f} {green:.2f} {blue:.2f} rg /{font} {size} Tf 1 0 0 1 {x} {y} Tm ({safe}) Tj ET"
 
+    # Typographic characters the composer emits, and their ASCII equivalents.
+    #
+    # The PDF is written with base-14 fonts and encoded latin-1, so anything
+    # outside that range was silently turned into `?` by `errors="replace"` —
+    # which is how "Gap — k8s.quotas" reached operators as "Gap ? k8s.quotas".
+    # Transliterating first keeps the punctuation meaningful; the fallback
+    # still exists for genuinely unrepresentable text, but it no longer fires
+    # on the dashes and quotes the reports actually contain.
+    # Written as escapes, not literals: the whole point is that these
+    # characters are hard to tell apart from their ASCII lookalikes, which is
+    # also how they reached the writer unnoticed in the first place.
+    TRANSLITERATIONS = str.maketrans(
+        {
+            "\u2014": "-",  # em dash
+            "\u2013": "-",  # en dash
+            "\u2018": "'",  # left single quote
+            "\u2019": "'",  # right single quote
+            "\u201c": '"',  # left double quote
+            "\u201d": '"',  # right double quote
+            "\u2022": "-",  # bullet
+            "\u00b7": "-",  # middle dot
+            "\u2026": "...",  # ellipsis
+            "\u2192": "->",  # rightwards arrow
+            "\u00a0": " ",  # non-breaking space
+            "\u2713": "OK",  # check mark
+            "\u2717": "X",  # ballot X
+        }
+    )
+
     def _escape_pdf_text(self, value: str) -> str:
-        return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        readable = str(value).translate(self.TRANSLITERATIONS)
+        return readable.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")

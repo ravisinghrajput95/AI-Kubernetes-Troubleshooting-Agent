@@ -29,7 +29,7 @@ port off entirely and lose nothing but the ability to add clusters.
 
 import asyncio
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import grpc
@@ -191,6 +191,7 @@ class AgentGatewayService(agent_pb2_grpc.AgentGatewayServicer):
         """Read the stream until it ends. Returns a refusal for the caller to abort with."""
         session: AgentSession | None = None
         pump: asyncio.Task | None = None
+        heartbeat: asyncio.Task | None = None
 
         try:
             async for message in request_iterator:
@@ -214,13 +215,17 @@ class AgentGatewayService(agent_pb2_grpc.AgentGatewayServicer):
                     # Outbound is a separate task: reading the inbound stream
                     # must not block on there being work to send.
                     pump = asyncio.create_task(self._pump(session, context))
+                    heartbeat = asyncio.create_task(self._heartbeat(session))
                     continue
+
+                session.touch(session.degradation)
 
                 if kind == "evidence":
                     session.on_evidence(message.evidence.record, message.evidence.request_id)
                 elif kind == "done":
                     session.on_done(message.done)
                 elif kind == "health":
+                    session.touch(message.health.degradation)
                     if message.health.degradation:
                         logger.warning(
                             "Agent {cluster} degraded: {detail}",
@@ -234,8 +239,9 @@ class AgentGatewayService(agent_pb2_grpc.AgentGatewayServicer):
         except Exception as exc:
             logger.opt(exception=exc).warning("Agent stream failed")
         finally:
-            if pump is not None:
-                pump.cancel()
+            for task in (pump, heartbeat):
+                if task is not None:
+                    task.cancel()
         return None
 
     def _reconcile(
@@ -286,6 +292,23 @@ class AgentGatewayService(agent_pb2_grpc.AgentGatewayServicer):
                 cluster=identity.cluster_id,
                 expiry=identity.expires_at.isoformat() if identity.expires_at else "unknown",
             )
+
+    async def _heartbeat(self, session: AgentSession) -> None:
+        """Ping the agent so silence means something.
+
+        An idle stream and a half-open one look identical from this side: no
+        bytes either way. Without a heartbeat the console would report a
+        cluster as connected until TCP eventually noticed, which on a keepalive
+        default can be hours. The agent answers with `AgentHealth`, and that
+        reply is what `last_seen` records.
+        """
+        from app.gateway.session import AGENT_HEARTBEAT_SECONDS
+
+        while True:
+            await asyncio.sleep(AGENT_HEARTBEAT_SECONDS)
+            beat = agent_pb2.Heartbeat()
+            beat.sent_at.FromDatetime(datetime.now(UTC))
+            await session.outbound.put(agent_pb2.PlatformMessage(heartbeat=beat))
 
     async def _pump(self, session: AgentSession, context: grpc.aio.ServicerContext) -> None:
         """Drain queued work onto the stream until the connection ends."""

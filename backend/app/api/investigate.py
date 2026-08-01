@@ -44,9 +44,64 @@ REPORT_FORMATS = {
 
 @router.get("/clusters")
 def list_clusters(principal: Principal = Depends(require_principal)) -> dict:
+    """Every cluster this platform can reach, however it reaches it.
+
+    Two sources, deliberately merged rather than exposed separately: a cluster
+    is a cluster whether the platform holds a kubeconfig for it or an agent
+    dialled out from inside it. Before this merge the console could only show
+    kubeconfig contexts, so a cluster that had done nothing wrong except be
+    remote was invisible — which is the whole fleet, in the deployment this
+    platform is being built for.
+    """
     result = KubernetesContextService(principal=principal).list_contexts()
+    result["items"] = merge_agent_clusters(result.get("items", []))
     get_audit_log().record_action("clusters.list", principal)
     return result
+
+
+def merge_agent_clusters(contexts: list[dict]) -> list[dict]:
+    """Fold connected agents into the kubeconfig context list.
+
+    A cluster present in both is one cluster: the agent is the better route, so
+    it wins the `connection` field, and the kubeconfig entry keeps its name.
+    """
+    items = [{**context, "connection": "kubeconfig", "agent": None} for context in contexts]
+
+    for session in connected_agents():
+        existing = next((item for item in items if item["name"] == session["cluster_id"]), None)
+        if existing is not None:
+            existing["connection"] = "agent"
+            existing["agent"] = session
+            continue
+
+        items.append(
+            {
+                "name": session["cluster_id"],
+                "cluster": session["cluster_id"],
+                "current": False,
+                "connection": "agent",
+                "agent": session,
+            }
+        )
+
+    return items
+
+
+def connected_agents() -> list[dict]:
+    """Agents currently attached to *this* worker.
+
+    Imported lazily so a deployment with no gateway never loads grpc. The
+    per-process caveat from `select_provider` applies here too and is why the
+    console labels this "connected to this worker" rather than "connected".
+    """
+    from app.core.config import settings
+
+    if not settings.agent_gateway_enabled:
+        return []
+
+    from app.gateway.session import get_agent_registry
+
+    return get_agent_registry().clusters()
 
 
 @router.post("/investigate", response_model=InvestigationResponse)
