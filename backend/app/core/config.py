@@ -190,6 +190,18 @@ class Settings(BaseSettings):
         default="127.0.0.1,::1", validation_alias="AGENT_GATEWAY_IP_ADDRESSES"
     )
 
+    # The image the onboarding manifest installs.
+    #
+    # Configurable because a customer running an air-gapped or mirrored
+    # registry cannot pull from GHCR, and the manifest is useless to them if
+    # the reference is baked in. The default tracks `main`; a published
+    # release moves it to a version, and pinning one is the right thing to do
+    # for a fleet.
+    agent_image: str = Field(
+        default="ghcr.io/ravisinghrajput95/k8s-ops-agent:edge",
+        validation_alias="AGENT_IMAGE",
+    )
+
     # Issued certificate life, per ADR-005. Agents renew at 2/3 of it, so the
     # default leaves a 30-day overlap window.
     agent_cert_ttl_hours: int = Field(default=24 * 90, validation_alias="AGENT_CERT_TTL_HOURS")

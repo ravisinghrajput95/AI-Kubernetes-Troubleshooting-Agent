@@ -23,6 +23,23 @@ export function getHealth(): Promise<HealthResponse> {
   return get<HealthResponse>("/health");
 }
 
+/** The signed-in caller. `/health` is unauthenticated and cannot answer this. */
+export interface SessionInfo {
+  subject: string;
+  email: string;
+  groups: string[];
+  tenant: string;
+  auth_method: string;
+  anonymous: boolean;
+  /** Where to end the provider's session. Empty unless OIDC publishes one. */
+  end_session_url: string;
+  multi_tenant: boolean;
+}
+
+export function getSession(): Promise<SessionInfo> {
+  return get<SessionInfo>("/me");
+}
+
 export function investigateCluster(
   context?: string,
   options?: InvestigationScope,

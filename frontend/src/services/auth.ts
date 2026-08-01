@@ -97,8 +97,19 @@ export function acknowledgeInsecure(): void {
  *
  * Clears the credential *and* the unauthenticated acknowledgement, so signing
  * out of an open backend returns to the warning rather than straight back in.
+ *
+ * With OIDC that is only half of it. Discarding this tab's copy of a token
+ * leaves the provider's own session intact, so the next sign-in is a silent
+ * redirect straight back in — the user believes they signed out and did not.
+ * When the provider publishes an end-session endpoint the browser is sent
+ * there afterwards, local state first so a failed redirect still leaves this
+ * console signed out.
  */
-export function signOut(): void {
+export function signOut(endSessionUrl = ""): void {
   storage()?.removeItem(INSECURE_ACK_KEY);
   clearToken();
+
+  if (endSessionUrl) {
+    window.location.assign(endSessionUrl);
+  }
 }

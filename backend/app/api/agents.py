@@ -280,7 +280,7 @@ spec:
         fsGroup: 65532
       containers:
         - name: agent
-          image: ghcr.io/ravisinghrajput95/k8s-ops-agent:latest
+          image: {settings.agent_image}
           args:
             - "--cluster={cluster_id}"
             - "--gateway={endpoints["gateway_endpoint"]}"
@@ -327,7 +327,7 @@ def _docker_command(cluster_id: str, token: str, endpoints: dict[str, str]) -> s
         "  -v $HOME/.kube/config:/kubeconfig:ro \\\n"
         "  -v k8s-ops-agent-identity:/var/lib/k8s-ops-agent \\\n"
         "  -e KUBECONFIG=/kubeconfig \\\n"
-        "  ghcr.io/ravisinghrajput95/k8s-ops-agent:latest \\\n"
+        f"  {settings.agent_image} \\\n"
         f"  --cluster={cluster_id} \\\n"
         f"  --gateway={endpoints['gateway_endpoint']} \\\n"
         f"  --enrol={endpoints['enrolment_endpoint']} \\\n"

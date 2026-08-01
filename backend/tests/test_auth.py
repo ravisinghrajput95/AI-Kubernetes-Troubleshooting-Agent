@@ -189,21 +189,51 @@ def api(monkeypatch, tmp_path):
 ALICE_AUTH = {"Authorization": "Bearer alice-tok"}
 BOB_AUTH = {"Authorization": "Bearer bob-tok"}
 
-PROTECTED = [
-    ("get", "/clusters"),
-    ("get", "/investigations"),
-    ("get", "/investigation-jobs"),
-    ("get", "/investigations/abc"),
-    ("get", "/investigations/abc/report"),
-    ("get", "/investigations/abc/pdf"),
-    ("post", "/investigate"),
-    ("post", "/investigations"),
-    ("post", "/investigations/abc/cancel"),
-    ("post", "/investigations/abc/regenerate"),
-]
+# Unauthenticated by design. Everything else must reject an anonymous caller.
+#
+# `/health` is reached by container probes before any credential exists; the
+# docs routes are FastAPI's own and carry no data.
+PUBLIC = {"/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
+
+
+def _protected_routes() -> list[tuple[str, str]]:
+    """Every route the application actually serves, derived rather than listed.
+
+    This was a hand-maintained list, which is a promise that someone will
+    remember — and four endpoints had already been added without being added
+    to it. Deriving it means a new route is covered the moment it exists, and
+    a route deliberately left public has to be named in `PUBLIC` where the
+    decision is visible.
+    """
+    from app.main import create_app
+
+    # The OpenAPI schema rather than `app.routes`: this FastAPI version keeps
+    # included routers wrapped rather than flattened, and the schema is the
+    # authoritative list of what the application actually serves regardless of
+    # how the router internals are shaped in any given release.
+    schema = create_app().openapi()
+
+    routes = []
+    for path, operations in schema.get("paths", {}).items():
+        if path in PUBLIC:
+            continue
+        for method in operations:
+            if method.lower() in {"head", "options"}:
+                continue
+            # Path parameters need a concrete value to reach the dependency.
+            concrete = path.replace("{investigation_id}", "abc").replace("{report_type}", "pdf")
+            routes.append((method.lower(), concrete))
+    return sorted(set(routes))
+
+
+PROTECTED = _protected_routes()
 
 
 class TestEndpointProtection:
+    def test_the_derived_route_list_is_not_empty(self):
+        """A bug in the derivation would silently test nothing at all."""
+        assert len(PROTECTED) >= 12, PROTECTED
+
     @pytest.mark.parametrize("method,path", PROTECTED)
     def test_every_endpoint_rejects_anonymous_requests(self, api, method, path):
         response = getattr(api, method)(path)

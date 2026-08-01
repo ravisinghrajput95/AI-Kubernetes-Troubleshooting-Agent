@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { AgentDot } from "../components/fleet/AgentDot";
 import { apiBaseUrl } from "../services/http";
-import { getAgents, getHealth } from "../services/api";
+import { getAgents, getHealth, getSession } from "../services/api";
 import { getToken, signOut } from "../services/auth";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
@@ -29,17 +29,41 @@ export function SettingsPage() {
     refetchInterval: 10_000,
   });
 
+  // `/health` knows the auth *mode*; only `/me` knows who you are. The
+  // console used to show "Bearer token" here, which is the mechanism and not
+  // the person — the only part anyone wants on a shared deployment.
+  const session = useQuery({
+    queryKey: ["session"],
+    queryFn: getSession,
+    retry: false,
+  });
+
   const authenticated = Boolean(getToken());
   const connected = agents.data?.items ?? [];
   const online = connected.filter((agent) => agent.online).length;
+
+  const identity = session.data?.email || session.data?.subject || "";
 
   const rows: Array<[string, string]> = [
     ["Backend", apiBaseUrl],
     ["Status", isError ? "Unreachable" : (health?.status ?? "Checking…")],
     ["Service", health?.service ?? "—"],
     ["Authentication", health?.auth_mode ?? "—"],
-    ["This session", authenticated ? "Bearer token" : "No credential"],
+    [
+      "Signed in as",
+      identity || (authenticated ? "Checking…" : "No credential"),
+    ],
   ];
+
+  // Only shown where it means something. On a single-tenant deployment every
+  // caller is in `default`, and a row saying so is noise pretending to be
+  // information.
+  if (session.data?.multi_tenant) {
+    rows.push(["Tenant", session.data.tenant]);
+  }
+  if (session.data?.groups?.length) {
+    rows.push(["Groups", session.data.groups.join(", ")]);
+  }
 
   return (
     <div className="mx-auto max-w-document px-6 py-8">
@@ -128,10 +152,18 @@ export function SettingsPage() {
         <p className="mt-2 max-w-measure text-sm leading-6 text-ink-2">
           Credentials are held for this browser tab only and are cleared when it
           closes.
+          {session.data?.end_session_url ? (
+            <>
+              {" "}
+              Signing out also ends your session with the identity provider —
+              without that step the next sign-in is a silent redirect straight
+              back in.
+            </>
+          ) : null}
         </p>
         <button
           type="button"
-          onClick={signOut}
+          onClick={() => signOut(session.data?.end_session_url ?? "")}
           className="mt-4 rounded-md border border-line bg-raised px-3 py-2 text-sm transition-colors duration-fast hover:border-critical hover:text-critical focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info"
         >
           Sign out
