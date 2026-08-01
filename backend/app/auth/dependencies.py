@@ -2,6 +2,7 @@ from fastapi import Depends, HTTPException, Request, status
 
 from app.auth.authenticators import Authenticator, build_authenticator
 from app.auth.models import AuthenticationError, Principal
+from app.tenancy.context import _current
 
 _authenticator: Authenticator | None = None
 
@@ -47,4 +48,13 @@ def require_principal(
         ) from exc
 
     request.state.principal = principal
+    # Enter the caller's tenant for the rest of this request, including any
+    # background task started from it — asyncio copies the context at task
+    # creation, so an investigation submitted here keeps this tenant even after
+    # the request that submitted it has returned.
+    #
+    # Not a `with` block: a FastAPI dependency returns before the handler runs.
+    # The token is deliberately dropped, because the context this sets belongs
+    # to the request's own context copy and dies with it.
+    _current.set(principal.tenant)
     return principal

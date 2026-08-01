@@ -144,11 +144,47 @@ class TestTheCertificateNamesTheCluster:
             authority.issue_from_csr(csr, cluster_id)
 
     def test_spiffe_ids_round_trip(self):
-        assert parse_spiffe_id(spiffe_id(TRUST_DOMAIN, "prod-eu-1"), TRUST_DOMAIN) == "prod-eu-1"
+        assert parse_spiffe_id(spiffe_id(TRUST_DOMAIN, "prod-eu-1"), TRUST_DOMAIN) == (
+            "default",
+            "prod-eu-1",
+        )
+
+    def test_a_tenanted_identity_round_trips(self):
+        uri = spiffe_id(TRUST_DOMAIN, "prod-eu-1", tenant="acme")
+        assert uri == f"spiffe://{TRUST_DOMAIN}/tenant/acme/cluster/prod-eu-1"
+        assert parse_spiffe_id(uri, TRUST_DOMAIN) == ("acme", "prod-eu-1")
+
+    def test_an_untenanted_certificate_belongs_to_the_default_tenant(self):
+        """Every certificate issued before M6 carries the untenanted form.
+
+        They must keep working and must land somewhere unambiguous, or an
+        upgrade silently disconnects the fleet.
+        """
+        tenant, cluster = parse_spiffe_id(
+            f"spiffe://{TRUST_DOMAIN}/cluster/prod-eu-1", TRUST_DOMAIN
+        )
+        assert (tenant, cluster) == ("default", "prod-eu-1")
 
     def test_a_user_spiffe_id_is_not_a_cluster(self):
         with pytest.raises(IdentityError):
             parse_spiffe_id(f"spiffe://{TRUST_DOMAIN}/user/alice", TRUST_DOMAIN)
+
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            # A cluster id that smuggles a tenant path, and a tenant that
+            # smuggles a cluster — both would resolve to the wrong owner if the
+            # URI were matched by prefix rather than by segment.
+            "spiffe://{d}/cluster/prod/../../tenant/acme/cluster/prod",
+            "spiffe://{d}/tenant/acme/cluster/a/b",
+            "spiffe://{d}/tenant//cluster/prod",
+            "spiffe://{d}/tenant/acme/prod",
+            "spiffe://{d}/",
+        ],
+    )
+    def test_a_malformed_identity_is_refused_rather_than_guessed(self, uri):
+        with pytest.raises(IdentityError):
+            parse_spiffe_id(uri.format(d=TRUST_DOMAIN), TRUST_DOMAIN)
 
 
 class TestTheCaRefusesWhatItShould:

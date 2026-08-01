@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     oidc_jwks_url: str = Field(default="", validation_alias="OIDC_JWKS_URL")
     oidc_username_claim: str = Field(default="email", validation_alias="OIDC_USERNAME_CLAIM")
     oidc_groups_claim: str = Field(default="groups", validation_alias="OIDC_GROUPS_CLAIM")
+    # Empty means one tenant for everyone. Set it and the claim decides.
+    oidc_tenant_claim: str = Field(default="", validation_alias="OIDC_TENANT_CLAIM")
 
     # `token:subject:group1,group2` entries, comma separated.
     api_tokens: str = Field(default="", validation_alias="API_TOKENS")
@@ -71,6 +73,39 @@ class Settings(BaseSettings):
     report_retention_sweep_hours: float = Field(
         default=6.0, validation_alias="REPORT_RETENTION_SWEEP_HOURS"
     )
+
+    # --- Tenancy ------------------------------------------------------------
+    # `single` is the default and the supported single-tenant deployment
+    # (ADR-006): one implicit tenant, nothing to isolate, no behaviour change.
+    # `shared` puts a tenant on every row and enforces it with row-level
+    # security — which needs Postgres, so it is refused without one rather than
+    # half-honoured.
+    tenancy_mode: str = Field(default="single", validation_alias="TENANCY_MODE")
+
+    @property
+    def multi_tenant(self) -> bool:
+        return self.tenancy_mode.strip().lower() == "shared"
+
+    def validate_tenancy(self) -> None:
+        mode = self.tenancy_mode.strip().lower()
+        if mode not in {"single", "shared"}:
+            raise RuntimeError(
+                f"TENANCY_MODE={self.tenancy_mode!r} is not a mode. Use 'single' "
+                f"(the default) or 'shared'."
+            )
+        if mode == "shared" and not self.database_url:
+            raise RuntimeError(
+                "TENANCY_MODE=shared requires DATABASE_URL. Tenant isolation is "
+                "enforced by Postgres row-level security; there is no in-memory "
+                "equivalent, and a multi-tenant deployment whose isolation is a "
+                "Python conditional is worse than one that refused to start."
+            )
+        if mode == "shared" and self.auth_mode.strip().lower() == "disabled":
+            raise RuntimeError(
+                "TENANCY_MODE=shared requires authentication. Without it every "
+                "caller is anonymous, so every caller is the same tenant and "
+                "the isolation is decorative."
+            )
 
     # --- Distributed state --------------------------------------------------
     # Both unset is the supported single-process default: jobs and reports stay

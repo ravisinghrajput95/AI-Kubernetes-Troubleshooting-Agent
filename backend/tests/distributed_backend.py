@@ -65,6 +65,37 @@ class DistributedBackend:
 
         return PostgresReportStore(self.database)
 
+    def unprivileged(self):
+        """A second connection as a role that cannot bypass row-level security.
+
+        The tenancy tests must not run as a superuser, because a superuser
+        skips policies and would pass every isolation assertion while proving
+        nothing. This creates the kind of role a real deployment uses and
+        connects as it.
+        """
+        from app.persistence.postgres import Database
+
+        with self.database.cursor() as cursor:
+            cursor.execute(
+                """
+                DO $$ BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'k8sagent_app') THEN
+                        CREATE ROLE k8sagent_app LOGIN PASSWORD 'k8sagent_app';
+                    END IF;
+                END $$;
+                """
+            )
+            cursor.execute("GRANT USAGE ON SCHEMA public TO k8sagent_app")
+            cursor.execute(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public "
+                "TO k8sagent_app"
+            )
+            cursor.execute("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO k8sagent_app")
+
+        url = database_url()
+        separator = "&" if "?" in url else "?"
+        return Database(f"{url}{separator}user=k8sagent_app&password=k8sagent_app", max_size=4)
+
     def enrolment(self):
         from app.persistence.agent_identity import PostgresEnrolmentStore
 

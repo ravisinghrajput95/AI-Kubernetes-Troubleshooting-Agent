@@ -19,6 +19,8 @@ from loguru import logger
 
 from app.auth.models import ANONYMOUS, AuthenticationError, Principal, TokenRecord
 from app.core.config import Settings, settings
+from app.tenancy import DEFAULT_TENANT
+from app.tenancy.models import require_tenant_id
 
 
 class Authenticator(Protocol):
@@ -39,8 +41,12 @@ class DisabledAuthenticator:
 class StaticTokenAuthenticator:
     """Shared bearer tokens mapped to identities.
 
-    Configured as `API_TOKENS=tok1:alice@example.com:platform,sre` — comma
-    separated entries of `token:subject[:group,group]`.
+    Configured as `API_TOKENS=tok1:alice@example.com:platform|sre:acme` —
+    comma separated entries of `token:subject[:group|group][:tenant]`.
+
+    The tenant is last and optional so every existing configuration keeps
+    working and lands in the default tenant, which is what a single-tenant
+    deployment wants anyway.
     """
 
     mode = "token"
@@ -63,7 +69,11 @@ class StaticTokenAuthenticator:
             groups = (
                 tuple(group for group in parts[2].split("|") if group) if len(parts) > 2 else ()
             )
-            records.append(TokenRecord(token=parts[0], subject=parts[1], groups=groups))
+            tenant = parts[3].strip() if len(parts) > 3 and parts[3].strip() else DEFAULT_TENANT
+            require_tenant_id(tenant)
+            records.append(
+                TokenRecord(token=parts[0], subject=parts[1], groups=groups, tenant=tenant)
+            )
         return cls(records)
 
     def authenticate(self, credential: str | None) -> Principal:
@@ -84,6 +94,7 @@ class StaticTokenAuthenticator:
             subject=matched.subject,
             groups=matched.groups,
             auth_method=self.mode,
+            tenant=matched.tenant,
         )
 
 
@@ -103,6 +114,7 @@ class OIDCAuthenticator:
         jwks_url: str,
         username_claim: str = "email",
         groups_claim: str = "groups",
+        tenant_claim: str = "",
         jwk_client: PyJWKClient | None = None,
     ) -> None:
         if not issuer or not audience:
@@ -112,6 +124,11 @@ class OIDCAuthenticator:
         self.audience = audience
         self.username_claim = username_claim
         self.groups_claim = groups_claim
+        # Empty means every authenticated user belongs to the default tenant,
+        # which is the single-tenant deployment. When set, the claim is
+        # authoritative: a token issued by the provider decides the tenant, and
+        # nothing in the request can override it.
+        self.tenant_claim = tenant_claim
         # Cached and refreshed by PyJWKClient; a key rotation does not require
         # a restart.
         self._jwks = jwk_client or PyJWKClient(
@@ -154,7 +171,29 @@ class OIDCAuthenticator:
             groups=groups,
             email=str(claims.get("email", "")),
             auth_method=self.mode,
+            tenant=self._tenant(claims),
         )
+
+    def _tenant(self, claims: dict) -> str:
+        """The tenant this token asserts, validated.
+
+        A malformed claim is a rejected login rather than a fallback to the
+        default tenant: silently placing a user from an unrecognised
+        organisation into the shared default is precisely the mistake this
+        milestone exists to prevent.
+        """
+        if not self.tenant_claim:
+            return DEFAULT_TENANT
+
+        raw = str(claims.get(self.tenant_claim, "")).strip()
+        if not raw:
+            raise AuthenticationError(
+                f"Token carries no {self.tenant_claim!r} claim, so the tenant is unknown."
+            )
+        try:
+            return require_tenant_id(raw)
+        except Exception as exc:
+            raise AuthenticationError("Token carries an unusable tenant claim.") from exc
 
 
 def build_authenticator(config: Settings | None = None) -> Authenticator:
@@ -174,6 +213,7 @@ def build_authenticator(config: Settings | None = None) -> Authenticator:
             jwks_url=config.oidc_jwks_url,
             username_claim=config.oidc_username_claim,
             groups_claim=config.oidc_groups_claim,
+            tenant_claim=config.oidc_tenant_claim,
         )
 
     if mode == "token":

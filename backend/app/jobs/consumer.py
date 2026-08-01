@@ -22,6 +22,7 @@ from app.jobs.distributed import PostgresRedisJobStore
 from app.jobs.runner import WORKER_LOST, InvestigationJobRunner
 from app.models.investigation import InvestigationRequest
 from app.persistence.redis_bus import RedisBus
+from app.tenancy import DEFAULT_TENANT, system_scope, tenant_scope
 
 REAPER_INTERVAL_SECONDS = 15.0
 # How long a job may sit `pending` before the queue message is presumed lost.
@@ -92,9 +93,13 @@ class JobConsumer:
             await self._claim_and_run(job_id)
 
     async def _claim_and_run(self, job_id: str) -> None:
-        job = await asyncio.to_thread(
-            self._store.claim, job_id, self._worker, settings.job_lease_seconds
-        )
+        # Claiming is genuinely cross-tenant: the queue hands out an id, and
+        # the row that names a tenant is the one being claimed. This is one of
+        # the two `system_scope()` callers, and both are here.
+        with system_scope():
+            job = await asyncio.to_thread(
+                self._store.claim, job_id, self._worker, settings.job_lease_seconds
+            )
         if job is None:
             # Another worker won the claim, the job already finished, or it was
             # cancelled before anyone started it. Only the last needs settling.
@@ -103,21 +108,30 @@ class JobConsumer:
 
         logger.info("Worker {worker} claimed investigation {id}", worker=self._worker, id=job_id)
         request = InvestigationRequest(**job.request) if job.request else None
-        self._runner.start(
-            job.id,
-            request,
-            Principal.from_dict(job.principal),
-            already_running=True,
-        )
+        principal = Principal.from_dict(job.principal)
+
+        # Back into the owning tenant before anything runs. The runner creates
+        # a task, which copies this context — so every read and write the
+        # investigation makes is scoped to the tenant that submitted it, on a
+        # worker that never saw their request.
+        with tenant_scope(principal.tenant if principal else DEFAULT_TENANT):
+            self._runner.start(
+                job.id,
+                request,
+                principal,
+                already_running=True,
+            )
 
     async def _settle_unclaimable(self, job_id: str) -> None:
-        job = await asyncio.to_thread(self._store.get, job_id)
+        with system_scope():
+            job = await asyncio.to_thread(self._store.get, job_id)
         if job is None or job.status.terminal:
             return
         if job.cancel_requested:
             # Cancelled while queued: nothing ever ran, but the record still
             # has to reach a terminal state.
-            await asyncio.to_thread(self._store.mark_cancelled, job_id)
+            with system_scope():
+                await asyncio.to_thread(self._store.mark_cancelled, job_id)
 
     # --- control ------------------------------------------------------------
 
@@ -137,5 +151,8 @@ class JobConsumer:
     async def _reap(self) -> None:
         while True:
             await asyncio.sleep(REAPER_INTERVAL_SECONDS)
-            await asyncio.to_thread(self._store.reap_expired, WORKER_LOST)
-            await asyncio.to_thread(self._store.requeue_unclaimed, UNCLAIMED_GRACE_SECONDS)
+            # The reaper cannot know a tenant either: it is looking for jobs
+            # whose worker died, across everyone.
+            with system_scope():
+                await asyncio.to_thread(self._store.reap_expired, WORKER_LOST)
+                await asyncio.to_thread(self._store.requeue_unclaimed, UNCLAIMED_GRACE_SECONDS)

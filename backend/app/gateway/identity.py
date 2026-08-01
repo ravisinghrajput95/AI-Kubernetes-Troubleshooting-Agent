@@ -198,7 +198,14 @@ class AgentIdentityService:
                 f"the agent's --cluster flag or issue a token for {claimed!r}."
             )
 
-        granted = self._issue(request.certificate_signing_request, cluster_id)
+        # The tenant comes from whoever minted the token, carried on the
+        # ambient scope through to the certificate. The enrolling agent has no
+        # say in it, exactly as it has no say in its cluster id.
+        from app.tenancy import current_tenant
+
+        granted = self._issue(
+            request.certificate_signing_request, cluster_id, tenant=current_tenant()
+        )
         logger.info(
             "Enrolled cluster {cluster} as certificate {serial}, valid until {expiry}",
             cluster=cluster_id,
@@ -237,7 +244,11 @@ class AgentIdentityService:
                 cluster=current.cluster_id,
             )
 
-        granted = self._issue(request.certificate_signing_request, current.cluster_id)
+        # Renewal keeps the tenant the certificate already carries, for the
+        # same reason it keeps the cluster: a renewal is not a re-enrolment.
+        granted = self._issue(
+            request.certificate_signing_request, current.cluster_id, tenant=current.tenant
+        )
         logger.info(
             "Renewed cluster {cluster}: {old} → {new}, valid until {expiry}. The old "
             "certificate stays valid until it expires, which is the overlap window "
@@ -249,7 +260,7 @@ class AgentIdentityService:
         )
         return granted
 
-    def _issue(self, csr_pem: bytes, cluster_id: str) -> GrantedCertificate:
+    def _issue(self, csr_pem: bytes, cluster_id: str, tenant: str = "") -> GrantedCertificate:
         if not csr_pem:
             raise RegistrationRefused(
                 "A certificate signing request is required. The agent generates "
@@ -263,7 +274,9 @@ class AgentIdentityService:
             )
 
         try:
-            issued = self._authority.issue_from_csr(csr_pem, cluster_id, self._leaf_lifetime)
+            issued = self._authority.issue_from_csr(
+                csr_pem, cluster_id, self._leaf_lifetime, tenant=tenant
+            )
         except CertificateAuthorityError as exc:
             raise RegistrationRefused(str(exc), grpc.StatusCode.INVALID_ARGUMENT) from exc
 

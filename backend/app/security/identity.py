@@ -33,6 +33,10 @@ SPIFFE_SCHEME = "spiffe"
 # `spiffe://.../user/...` cannot be mistaken for a cluster.
 CLUSTER_PATH = "cluster"
 
+# Tenanted identities put the organisation above the cluster, so the two can
+# never be confused for one another by a path-prefix comparison.
+TENANT_PATH = "tenant"
+
 # What a cluster id may contain.
 #
 # This is a security boundary, not tidiness: the id becomes a URI path segment,
@@ -59,23 +63,54 @@ def require_cluster_id(cluster_id: str) -> str:
     return cluster_id
 
 
-def spiffe_id(trust_domain: str, cluster_id: str) -> str:
-    """The SPIFFE URI naming one cluster's agent."""
-    return f"{SPIFFE_SCHEME}://{trust_domain}/{CLUSTER_PATH}/{require_cluster_id(cluster_id)}"
+def spiffe_id(trust_domain: str, cluster_id: str, tenant: str = "") -> str:
+    """The SPIFFE URI naming one cluster's agent.
+
+    Two forms. Without a tenant it is the M4b shape, which every certificate
+    issued before M6 carries and which still parses. With one, the tenant is a
+    path segment *above* the cluster — so an agent's certificate states which
+    organisation it belongs to, and a cluster id alone is not enough to reach
+    it.
+    """
+    cluster = require_cluster_id(cluster_id)
+    if not tenant:
+        return f"{SPIFFE_SCHEME}://{trust_domain}/{CLUSTER_PATH}/{cluster}"
+    return f"{SPIFFE_SCHEME}://{trust_domain}/{TENANT_PATH}/{tenant}/{CLUSTER_PATH}/{cluster}"
 
 
-def parse_spiffe_id(uri: str, trust_domain: str) -> str:
-    """The cluster id inside a SPIFFE URI, or raise.
+def parse_spiffe_id(uri: str, trust_domain: str) -> tuple[str, str]:
+    """The `(tenant, cluster)` inside a SPIFFE URI, or raise.
 
     Every component is checked. A URI from another trust domain is refused
     rather than accepted-and-namespaced: this platform issues its own
     certificates, and a validly-signed certificate naming a foreign trust
     domain means something is wrong that should be looked at, not routed.
+
+    An untenanted URI resolves to the default tenant, which is what a
+    single-tenant deployment has and what every M4b certificate carries.
     """
-    prefix = f"{SPIFFE_SCHEME}://{trust_domain}/{CLUSTER_PATH}/"
-    if not uri.startswith(prefix):
+    from app.tenancy.models import TenantError, require_tenant_id
+
+    root = f"{SPIFFE_SCHEME}://{trust_domain}/"
+    if not uri.startswith(root):
         raise IdentityError(f"{uri!r} does not name a cluster in trust domain {trust_domain!r}.")
-    return require_cluster_id(uri[len(prefix) :])
+
+    parts = uri[len(root) :].split("/")
+
+    if len(parts) == 2 and parts[0] == CLUSTER_PATH:
+        return "default", require_cluster_id(parts[1])
+
+    if len(parts) == 4 and parts[0] == TENANT_PATH and parts[2] == CLUSTER_PATH:
+        try:
+            tenant = require_tenant_id(parts[1])
+        except TenantError as exc:
+            # Callers of identity resolution handle one exception type. A
+            # certificate naming an unusable tenant is an identity failure,
+            # not a tenancy failure, from where they stand.
+            raise IdentityError(f"{uri!r} names an unusable tenant.") from exc
+        return tenant, require_cluster_id(parts[3])
+
+    raise IdentityError(f"{uri!r} is not a cluster identity this platform issues.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +118,10 @@ class AgentIdentity:
     """Who the platform believes it is talking to, and on what evidence."""
 
     cluster_id: str
+    # The organisation this agent belongs to. Read from the certificate, so an
+    # agent cannot claim another tenant's any more than it can claim another
+    # tenant's cluster.
+    tenant: str = "default"
     # Lowercase hex, the certificate's serial. The handle revocation uses.
     serial: str = ""
     # "certificate" when TLS proved it; "declared" on the plaintext
@@ -132,9 +171,10 @@ def identity_from_certificate(certificate: x509.Certificate, trust_domain: str) 
     if len(uris) > 1:
         raise IdentityError(f"The peer certificate names {len(uris)} identities; an agent has one.")
 
-    cluster_id = parse_spiffe_id(uris[0], trust_domain)
+    tenant, cluster_id = parse_spiffe_id(uris[0], trust_domain)
     return AgentIdentity(
         cluster_id=cluster_id,
+        tenant=tenant,
         serial=format_serial(certificate.serial_number),
         source="certificate",
         expires_at=certificate.not_valid_after_utc,

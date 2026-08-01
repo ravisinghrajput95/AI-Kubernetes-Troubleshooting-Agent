@@ -763,9 +763,57 @@ which is a design decision worth making on its own rather than as a footnote to
 a migration. Both remain reachable from the platform today, and the M6 tenancy
 work is the natural moment to settle it.
 
-**M6 — Tenancy and fleet.**
+**M6 — Tenancy and fleet. ✅ Delivered.**
 Organisations, cluster registry, tenant id on every row, per-tenant keys,
 single-tenant deployment mode. *Exit:* two tenants provably isolated by test.
+
+*Outcome:* the exit criterion is met by tests that **do not go through the
+store**. They open a raw cursor, run `SELECT id FROM investigations` with no
+WHERE clause — the worst thing a future contributor could write — and get back
+only the caller's rows. That is the difference ADR-006 was asking for between
+isolation enforced in the data layer and isolation enforced by everyone
+remembering, and it is only demonstrable by writing the forgetful query on
+purpose.
+
+The mechanism is an ambient tenant rather than a parameter. A `ContextVar` is
+set when the caller is authenticated; `Database.cursor()` turns it into a `SET
+LOCAL` on every transaction; the column default stamps inserts and the policy
+filters reads. **No store method gained a tenant argument** — the job store,
+report store and enrolment store are untouched, which is the strongest
+available evidence that the enforcement is not in the handlers.
+
+**The finding that mattered: the control was inert the first time it was
+tested, and nothing looked wrong.** `ENABLE ROW LEVEL SECURITY` and `FORCE ROW
+LEVEL SECURITY` were both set, the policies were correct, and every tenant read
+every row — because the application connected to Postgres as `postgres`, and
+superusers (and any `BYPASSRLS` role) skip policies entirely. A deployment in
+that state has no isolation and no symptom, and the test suite went green
+against it. Two things came out of that: the tenancy tests now connect as an
+unprivileged application role, and a `shared` deployment asks the database what
+role it is and **refuses to start** if that role can bypass RLS. It is the same
+discipline as refusing half-configured distributed state, applied to the one
+setting where being wrong is silent.
+
+`system_scope()` is the single deliberate hole — the queue consumer and the
+reaper cannot know a tenant before reading the row that names one — and a test
+asserts `jobs/consumer.py` is its only caller, so the hole stays the size it
+was designed to be.
+
+Agent identity gained a tenant in the SPIFFE path
+(`spiffe://<domain>/tenant/<t>/cluster/<id>`), with the untenanted M4b form
+still parsing as `default` so an upgrade does not disconnect the fleet. The
+registry is keyed by `(tenant, cluster)`: two customers may both call a cluster
+`prod`, and before this the second to connect would have evicted the first and
+been handed its evidence.
+
+*Deliberately not delivered:* per-tenant encryption keys. ADR-006 lists them,
+and they are a key-management decision rather than a code one — where keys
+live, who can read them, how they rotate, what happens to evidence encrypted
+under a key that has been destroyed. Answering that with a hardcoded local key
+would produce the same shape of false assurance this milestone just spent its
+time removing. The isolation that stops one tenant reading another is built and
+proved; encryption at rest against a compromised *operator* is a separate
+control and deserves the KMS conversation it implies.
 
 **M7 — Knowledge graph.**
 Emit edges during collection; persist; expose traversal; add graph-aware

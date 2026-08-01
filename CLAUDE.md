@@ -103,6 +103,25 @@ Steps 2 and 3 block, so both are dispatched via `asyncio.to_thread` to keep the 
 
 `collection_failure()` draws the line between the two failure modes: **partial** degradation (one collector down) succeeds with reduced completeness; **total** failure (zero usable evidence) fails the job, because there is nothing to reason over and reporting it as success would misrepresent it. The sync endpoint deliberately keeps its old contract — 200 with `health.status == "error"` — so the existing frontend still renders the message.
 
+### Tenancy (`app/tenancy/`, migration `003`)
+
+| `TENANCY_MODE` | Behaviour |
+|---|---|
+| `single` (**default**) | one implicit tenant, nothing to isolate, no behaviour change |
+| `shared` | tenant on every row, enforced by Postgres row-level security |
+
+`shared` without `DATABASE_URL` or without authentication is **refused at startup** — there is no in-memory equivalent of RLS, and every caller being anonymous means every caller is the same tenant.
+
+**The tenant is ambient, not an argument.** A `ContextVar` set when the caller is authenticated; `Database.cursor()` emits `set_config('app.current_tenant', …, true)` on every transaction (`SET LOCAL`, so a pooled connection cannot carry it to the next request). Tenanted tables default `tenant_id` to that setting and have a policy comparing against it, so **no store method mentions a tenant and none had to change**. A `SELECT` with no `WHERE` returns only the caller's rows.
+
+`ContextVar` specifically because asyncio copies the context at task creation: an investigation submitted by a request keeps that request's tenant after the request returns.
+
+**The one thing that would make all of it inert: connecting as a superuser.** `ENABLE`/`FORCE ROW LEVEL SECURITY` were both set and correct, and every tenant could still read every row, because superusers and `BYPASSRLS` roles skip policies entirely — a deployment with no isolation and no symptom. `Database.assert_row_level_security_applies()` refuses to start `shared` on such a role. `tests/test_tenancy.py` connects as an unprivileged role for exactly this reason; run as `postgres` its isolation assertions all pass while proving nothing.
+
+`system_scope()` is the one deliberate hole — the queue consumer and reaper cannot know a tenant before reading the row that names one. A test asserts `jobs/consumer.py` is its only user.
+
+Agent identities carry their tenant in the SPIFFE path (`spiffe://<domain>/tenant/<t>/cluster/<id>`); the untenanted M4b form still parses as `default`. `AgentRegistry` is keyed by `(tenant, cluster)`, so two customers may both call a cluster `prod` without either evicting or reaching the other.
+
 ### State backends (`app/state.py`, `app/persistence/`)
 
 One decision, made once at startup, and the only place either deployment is named:

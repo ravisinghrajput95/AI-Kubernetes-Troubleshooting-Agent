@@ -153,6 +153,7 @@ async def start_agent_gateway(state: "StateBackend | None" = None):
 
 def build_state() -> StateBackend:
     settings.validate_state_backend()
+    settings.validate_tenancy()
 
     if not settings.distributed_state:
         store = InMemoryJobStore()
@@ -177,6 +178,10 @@ def build_state() -> StateBackend:
     worker = worker_identity()
     database = Database(settings.database_url)
     database.migrate()
+    if settings.multi_tenant:
+        # Asked after migrating, because the answer depends on the role this
+        # process connects as rather than on anything the schema can fix.
+        database.assert_row_level_security_applies()
     bus = RedisBus(settings.redis_url, prefix=settings.redis_key_prefix)
 
     store = PostgresRedisJobStore(database, bus)

@@ -14,6 +14,10 @@ class Principal:
     groups: tuple[str, ...] = ()
     email: str = ""
     auth_method: str = "unknown"
+    # The organisation this caller belongs to. Every row they cause to be
+    # written is stamped with it, and every row they can read is filtered by
+    # it. In a single-tenant deployment everyone shares `default`.
+    tenant: str = "default"
 
     @property
     def anonymous(self) -> bool:
@@ -25,6 +29,7 @@ class Principal:
             "groups": list(self.groups),
             "email": self.email,
             "auth_method": self.auth_method,
+            "tenant": self.tenant,
         }
 
     @classmethod
@@ -42,6 +47,9 @@ class Principal:
             groups=tuple(payload.get("groups") or ()),
             email=payload.get("email", ""),
             auth_method=payload.get("auth_method", "unknown"),
+            # Absent on principals serialised before M6; those belong to the
+            # single tenant that existed at the time.
+            tenant=payload.get("tenant") or "default",
         )
 
 
@@ -73,3 +81,4 @@ class TokenRecord:
     token: str
     subject: str
     groups: tuple[str, ...] = field(default=())
+    tenant: str = "default"

@@ -14,13 +14,22 @@ import pytest
 from app.core.config import settings
 from app.providers.local_kubectl import LocalKubectlProvider
 from app.services.investigation_service import select_provider
+from app.tenancy import tenant_scope
 
 
 class FakeSession:
     """Enough of an `AgentSession` for the provider to be built around it."""
 
-    def __init__(self, cluster_id: str) -> None:
+    def __init__(self, cluster_id: str, tenant: str = "default") -> None:
         self.cluster_id = cluster_id
+        self.tenant = tenant
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return (self.tenant, self.cluster_id)
+
+    def cancel_all(self, reason: str) -> None:
+        """Registered sessions may be evicted; nothing to cancel here."""
 
 
 @pytest.fixture
@@ -44,7 +53,7 @@ class TestSelection:
 
     def test_a_connected_agent_is_preferred(self, monkeypatch, registry):
         monkeypatch.setattr(settings, "agent_gateway_port", 5551)
-        registry._sessions["prod-eu-1"] = FakeSession("prod-eu-1")
+        registry.register(FakeSession("prod-eu-1"))
 
         provider = select_provider("prod-eu-1", None)
 
@@ -54,7 +63,7 @@ class TestSelection:
     def test_a_cluster_with_no_agent_falls_back(self, monkeypatch, registry):
         """A gateway being enabled does not mean every cluster has an agent."""
         monkeypatch.setattr(settings, "agent_gateway_port", 5551)
-        registry._sessions["prod-eu-1"] = FakeSession("prod-eu-1")
+        registry.register(FakeSession("prod-eu-1"))
 
         provider = select_provider("staging", None)
 
@@ -82,6 +91,44 @@ class TestSelection:
         select_provider("prod-eu-1", None)
 
         assert not [name for name in imported if name.startswith("app.gateway")]
+
+
+class TestAnAgentBelongsToOneTenant:
+    """A cluster id is not a name another tenant can use to reach an agent."""
+
+    def test_another_tenants_agent_is_not_selected(self, monkeypatch, registry):
+        monkeypatch.setattr(settings, "agent_gateway_port", 5551)
+        registry.register(FakeSession("prod", tenant="acme"))
+
+        # Same cluster id, different tenant. Falling back to the local
+        # kubeconfig is the correct answer; reaching acme's agent is not.
+        with tenant_scope("globex"):
+            provider = select_provider("prod", None)
+
+        assert isinstance(provider, LocalKubectlProvider)
+
+    def test_its_own_tenants_agent_is_selected(self, monkeypatch, registry):
+        monkeypatch.setattr(settings, "agent_gateway_port", 5551)
+        registry.register(FakeSession("prod", tenant="acme"))
+
+        with tenant_scope("acme"):
+            provider = select_provider("prod", None)
+
+        assert type(provider).__name__ == "RemoteAgentProvider"
+
+    def test_two_tenants_may_use_the_same_cluster_name(self, registry):
+        """Neither evicts the other, which keying on cluster id alone would."""
+        acme = FakeSession("prod", tenant="acme")
+        globex = FakeSession("prod", tenant="globex")
+        registry.register(acme)
+        registry.register(globex)
+
+        with tenant_scope("acme"):
+            assert registry.get("prod") is acme
+            assert [session.tenant for session in registry.sessions()] == ["acme"]
+
+        with tenant_scope("globex"):
+            assert registry.get("prod") is globex
 
 
 class TestTheChosenRouteIsVisible:

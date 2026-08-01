@@ -67,6 +67,7 @@ class IssuedCertificate:
     cluster_id: str
     not_before: datetime
     not_after: datetime
+    tenant: str = "default"
 
 
 def _write_private(path: Path, data: bytes) -> None:
@@ -219,6 +220,7 @@ class CertificateAuthority:
         csr_pem: bytes,
         cluster_id: str,
         lifetime: timedelta = DEFAULT_LEAF_LIFETIME,
+        tenant: str = "",
     ) -> IssuedCertificate:
         """Certify the public key in `csr_pem` as belonging to `cluster_id`.
 
@@ -290,7 +292,11 @@ class CertificateAuthority:
             )
             .add_extension(
                 x509.SubjectAlternativeName(
-                    [x509.UniformResourceIdentifier(spiffe_id(self._trust_domain, cluster_id))]
+                    [
+                        x509.UniformResourceIdentifier(
+                            spiffe_id(self._trust_domain, cluster_id, tenant)
+                        )
+                    ]
                 ),
                 critical=False,
             )
@@ -303,6 +309,7 @@ class CertificateAuthority:
             cluster_id=cluster_id,
             not_before=not_before,
             not_after=not_after,
+            tenant=tenant or "default",
         )
 
     def issue_server_certificate(

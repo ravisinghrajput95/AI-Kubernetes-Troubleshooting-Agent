@@ -95,6 +95,21 @@ class AgentSession:
         return self.identity.cluster_id
 
     @property
+    def tenant(self) -> str:
+        """The organisation this agent belongs to, read from its certificate."""
+        return self.identity.tenant
+
+    @property
+    def key(self) -> tuple[str, str]:
+        """How the registry addresses this session.
+
+        Tenant first. Two customers may both call a cluster `prod`, and keying
+        on the cluster id alone would let whichever connected second evict the
+        first — and let either reach the other's evidence.
+        """
+        return (self.identity.tenant, self.cluster_id)
+
+    @property
     def certificate_serial(self) -> str:
         """Empty on the plaintext development path, where there is no certificate."""
         return self.identity.serial
@@ -199,6 +214,7 @@ class AgentSession:
     def describe(self) -> dict[str, Any]:
         return {
             "cluster_id": self.cluster_id,
+            "tenant": self.tenant,
             "online": self.online(),
             "connected_at": self.connected_at.isoformat(),
             "last_seen": self.last_seen.isoformat(),
@@ -227,26 +243,53 @@ class AgentRegistry:
     """
 
     def __init__(self) -> None:
-        self._sessions: dict[str, AgentSession] = {}
+        self._sessions: dict[tuple[str, str], AgentSession] = {}
 
     def register(self, session: AgentSession) -> None:
-        existing = self._sessions.get(session.cluster_id)
+        existing = self._sessions.get(session.key)
         if existing is not None:
             existing.cancel_all("The agent reconnected.")
-        self._sessions[session.cluster_id] = session
-        logger.info("Agent connected for cluster {cluster}", cluster=session.cluster_id)
+        self._sessions[session.key] = session
+        logger.info(
+            "Agent connected for cluster {cluster} (tenant {tenant})",
+            cluster=session.cluster_id,
+            tenant=session.tenant,
+        )
 
     def unregister(self, session: AgentSession) -> None:
-        if self._sessions.get(session.cluster_id) is session:
-            del self._sessions[session.cluster_id]
+        if self._sessions.get(session.key) is session:
+            del self._sessions[session.key]
         session.cancel_all("The agent disconnected.")
-        logger.info("Agent disconnected for cluster {cluster}", cluster=session.cluster_id)
+        logger.info(
+            "Agent disconnected for cluster {cluster} (tenant {tenant})",
+            cluster=session.cluster_id,
+            tenant=session.tenant,
+        )
 
-    def get(self, cluster_id: str) -> AgentSession | None:
-        return self._sessions.get(cluster_id)
+    def get(self, cluster_id: str, tenant: str | None = None) -> AgentSession | None:
+        """The agent for a cluster, within a tenant.
 
-    def sessions(self) -> list[AgentSession]:
-        return list(self._sessions.values())
+        The tenant defaults to whichever one the caller is running as, so a
+        handler cannot reach another tenant's agent by forgetting to pass it —
+        the same reasoning as the ambient tenant on the database.
+        """
+        from app.tenancy import current_tenant
+
+        return self._sessions.get((tenant or current_tenant(), cluster_id))
+
+    def sessions(self, tenant: str | None = None) -> list[AgentSession]:
+        """Every session belonging to one tenant, defaulting to the caller's.
+
+        There is deliberately no "all tenants" branch here. The one thing that
+        legitimately spans tenants — the revocation sweep — reads `_sessions`
+        directly, because a revoked certificate is revoked regardless of who
+        was looking. Giving this method an escape hatch would mean every future
+        caller had to be trusted to not use it.
+        """
+        from app.tenancy import current_tenant
+
+        scope = tenant or current_tenant()
+        return [session for session in self._sessions.values() if session.tenant == scope]
 
     def terminate_revoked(self, revoked_serials: set[str], reason: str) -> list[AgentSession]:
         """End every live session whose certificate has since been revoked.
@@ -256,6 +299,8 @@ class AgentRegistry:
         """
         if not revoked_serials:
             return []
+        # Revocation sweeps every tenant: it is infrastructure, and a revoked
+        # certificate is revoked regardless of who was looking.
         doomed = [
             session
             for session in self._sessions.values()
@@ -266,7 +311,8 @@ class AgentRegistry:
         return doomed
 
     def clusters(self) -> list[dict[str, Any]]:
-        return [session.describe() for session in self._sessions.values()]
+        """What the caller's tenant can see."""
+        return [session.describe() for session in self.sessions()]
 
 
 _registry = AgentRegistry()
