@@ -9,6 +9,8 @@ Authentication alone is not sufficient — it decides *whether* you get in, not
 own RBAC.
 """
 
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -219,15 +221,33 @@ class TestEndpointProtection:
 
 
 class TestOwnership:
-    def _run(self, api, headers):
+    def _run(self, api, headers, timeout: float = 30.0):
+        """Submit an investigation and wait for it to reach a terminal state.
+
+        A wall-clock deadline with a real sleep, not a fixed iteration count.
+        The previous version polled 200 times as fast as it could and called
+        that a timeout, which made it a bet on how many requests fit in the
+        time an investigation takes — a bet it lost on the slower of the two
+        CI Pythons once report rendering got a little heavier. Time is the
+        thing being waited on, so time is what the loop should measure.
+        """
         submitted = api.post("/investigations", json={"context": "test"}, headers=headers)
         job_id = submitted.json()["id"]
 
-        for _ in range(200):
+        deadline = time.monotonic() + timeout
+        state: dict = {}
+        while time.monotonic() < deadline:
             state = api.get(f"/investigations/{job_id}", headers=headers).json()
             if state["status"] in {"succeeded", "failed", "cancelled"}:
                 return job_id, state
-        raise AssertionError("job did not finish")
+            # Yields to the portal thread running the app, rather than
+            # starving it by re-entering immediately.
+            time.sleep(0.02)
+
+        raise AssertionError(
+            f"investigation {job_id} did not finish within {timeout}s; "
+            f"last status was {state.get('status', 'unknown')!r}"
+        )
 
     def test_history_only_lists_your_own_investigations(self, api):
         self._run(api, ALICE_AUTH)
