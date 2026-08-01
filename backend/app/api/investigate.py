@@ -88,20 +88,30 @@ def merge_agent_clusters(contexts: list[dict]) -> list[dict]:
 
 
 def connected_agents() -> list[dict]:
-    """Agents currently attached to *this* worker.
+    """Every agent this tenant has, across every worker that holds one.
 
-    Imported lazily so a deployment with no gateway never loads grpc. The
-    per-process caveat from `select_provider` applies here too and is why the
-    console labels this "connected to this worker" rather than "connected".
+    A single-process deployment answers from its own registry, because there
+    it *is* the fleet. A multi-replica one answers from the shared presence
+    index — otherwise the console would show only the agents attached to
+    whichever pod the load balancer picked, and a different subset on the next
+    refresh.
+
+    Imported lazily so a deployment with no gateway never loads grpc.
     """
     from app.core.config import settings
 
     if not settings.agent_gateway_enabled:
         return []
 
+    from app.gateway.presence import get_agent_presence
     from app.gateway.session import get_agent_registry
+    from app.tenancy import current_tenant
 
-    return get_agent_registry().clusters()
+    presence = get_agent_presence()
+    if presence is None:
+        return [{**item, "local": True, "worker": ""} for item in get_agent_registry().clusters()]
+
+    return presence.fleet(current_tenant())
 
 
 @router.post("/investigate", response_model=InvestigationResponse)

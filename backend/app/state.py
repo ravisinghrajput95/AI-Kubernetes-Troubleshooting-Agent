@@ -104,9 +104,11 @@ class StateBackend:
         set_report_store(None)
 
         if self.gateway is not None:
+            from app.gateway.presence import set_agent_presence
             from app.security.enrolment import set_enrolment_store
 
             set_enrolment_store(None)
+            set_agent_presence(None)
 
 
 def worker_identity() -> str:
@@ -143,6 +145,14 @@ async def start_agent_gateway(state: "StateBackend | None" = None):
             "configuration DATABASE_URL/REDIS_URL already gate.",
             path=settings.agent_identity_dir,
         )
+
+    # The fleet index. Only meaningful with more than one worker, and only
+    # possible when Redis is configured — which is the same condition.
+    if state is not None and settings.distributed_state and state.bus is not None:
+        from app.gateway.presence import AgentPresence, set_agent_presence
+
+        set_agent_presence(AgentPresence(state.bus, worker_identity()))
+        logger.info("Agent presence is shared; the console sees the whole fleet")
 
     from app.gateway.server import AgentGateway
 

@@ -382,6 +382,19 @@ export interface AgentStatus {
   identity_source: string;
   certificate_serial: string;
   certificate_expires_at: string;
+  /** The organisation this agent belongs to. */
+  tenant?: string;
+  /** Which worker holds the agent's stream. Empty in a single-process deployment. */
+  worker?: string;
+  /**
+   * Whether the worker that answered holds this agent's stream.
+   *
+   * Visibility is fleet-wide; collection is not. An agent held by another
+   * replica is genuinely connected and cannot yet be investigated through
+   * from here, and saying so is better than an investigation that silently
+   * falls back to a kubeconfig the platform may not have.
+   */
+  local?: boolean;
 }
 
 export interface KubernetesContext {

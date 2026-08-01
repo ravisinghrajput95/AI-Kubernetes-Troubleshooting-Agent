@@ -53,6 +53,10 @@ class RedisBus:
     # --- key layout ---------------------------------------------------------
 
     @property
+    def prefix(self) -> str:
+        return self._prefix
+
+    @property
     def queue_key(self) -> str:
         return f"{self._prefix}:jobs:queue"
 
@@ -62,6 +66,29 @@ class RedisBus:
 
     def events_channel(self, job_id: str) -> str:
         return f"{self._prefix}:jobs:events:{job_id}"
+
+    # --- presence -----------------------------------------------------------
+    #
+    # Expiring keys rather than a set with explicit removal: a worker that is
+    # killed cannot remove its own entries, and a fleet index that accumulates
+    # phantom agents is worse than one that is briefly a few seconds stale.
+
+    def set_expiring(self, key: str, value: str, ttl_seconds: int) -> None:
+        self._sync.set(key, value, ex=ttl_seconds)
+
+    def delete(self, key: str) -> None:
+        self._sync.delete(key)
+
+    def scan_values(self, pattern: str) -> list[str]:
+        """Values of every key matching `pattern`.
+
+        `scan_iter` rather than `keys`, because `keys` blocks the server for
+        the length of the keyspace and this runs on a page load.
+        """
+        keys = list(self._sync.scan_iter(match=pattern, count=100))
+        if not keys:
+            return []
+        return [value for value in self._sync.mget(keys) if value]
 
     # --- queue --------------------------------------------------------------
 

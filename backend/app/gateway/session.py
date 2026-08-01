@@ -250,6 +250,7 @@ class AgentRegistry:
         if existing is not None:
             existing.cancel_all("The agent reconnected.")
         self._sessions[session.key] = session
+        self._announce(session)
         logger.info(
             "Agent connected for cluster {cluster} (tenant {tenant})",
             cluster=session.cluster_id,
@@ -260,11 +261,30 @@ class AgentRegistry:
         if self._sessions.get(session.key) is session:
             del self._sessions[session.key]
         session.cancel_all("The agent disconnected.")
+        self._withdraw(session)
         logger.info(
             "Agent disconnected for cluster {cluster} (tenant {tenant})",
             cluster=session.cluster_id,
             tenant=session.tenant,
         )
+
+    def _announce(self, session: AgentSession) -> None:
+        from app.gateway.presence import get_agent_presence
+
+        presence = get_agent_presence()
+        if presence is not None:
+            presence.announce(session)
+
+    def _withdraw(self, session: AgentSession) -> None:
+        from app.gateway.presence import get_agent_presence
+
+        presence = get_agent_presence()
+        if presence is not None:
+            presence.withdraw(session)
+
+    def refresh(self, session: AgentSession) -> None:
+        """Re-announce a session that has just proved it is alive."""
+        self._announce(session)
 
     def get(self, cluster_id: str, tenant: str | None = None) -> AgentSession | None:
         """The agent for a cluster, within a tenant.

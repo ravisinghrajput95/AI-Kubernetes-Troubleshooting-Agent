@@ -226,6 +226,9 @@ class AgentGatewayService(agent_pb2_grpc.AgentGatewayServicer):
                     session.on_done(message.done)
                 elif kind == "health":
                     session.touch(message.health.degradation)
+                    # Presence expires; the heartbeat reply is what renews it,
+                    # so a silent agent leaves the fleet index on its own.
+                    self._registry.refresh(session)
                     if message.health.degradation:
                         logger.warning(
                             "Agent {cluster} degraded: {detail}",

@@ -370,6 +370,8 @@ Sections with nothing behind them are **omitted, not padded** — same rule as t
 
 `POST /agents/enrolment` mints a single-use token and returns an apply-able manifest (namespace, ServiceAccount, a ClusterRole granting `get`/`list`/`watch` only, Deployment). **It refuses outright when `AUTH_MODE=disabled`** — an unauthenticated endpoint that enrols clusters is worse than the problem it solves — and points at `agentctl` instead. `agent/Dockerfile` builds the image the manifest references (distroless, non-root, no shell).
 
+**On more than one replica, the console reads a shared index, not its own registry** (`app/gateway/presence.py`). `AgentRegistry` is per-process by necessity, so `GET /agents` used to answer from whichever pod the load balancer picked — thirty clusters behind three replicas showed about ten, and a different ten next refresh. Each gateway now announces its agents into Redis with a 45s TTL, refreshed by the heartbeat, and the API returns the union. Expiry rather than deregistration, because a killed worker cannot deregister and phantom agents are worse than a few seconds of staleness. Every record carries `worker` and `local`: **visibility is fleet-wide, collection is not** — an agent held by another replica cannot be investigated through from here until M8 routes by stream ownership, and the console says so rather than falling back silently.
+
 **"Online" is heartbeat-derived, not socket-derived.** An idle stream and a half-open one look identical from the platform's side, so the gateway pings every 15s and the agent's `AgentHealth` reply refreshes `last_seen`; `AGENT_STALE_SECONDS` (45) decides staleness. Do not replace this with "the stream is open".
 
 ### Report retention

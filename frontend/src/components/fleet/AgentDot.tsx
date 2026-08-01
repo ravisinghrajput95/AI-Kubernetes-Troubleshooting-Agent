@@ -24,13 +24,19 @@ export function AgentDot({
 
   const stale = !agent.online;
   const degraded = Boolean(agent.degradation);
+  // `local === false` only ever appears in a multi-replica deployment, where
+  // the agent is connected to a different pod. It is online; this worker just
+  // cannot collect through it yet.
+  const elsewhere = agent.local === false;
 
   const tone = stale ? "bg-critical" : degraded ? "bg-warning" : "bg-healthy";
   const text = stale
     ? `Agent silent for ${Math.round(agent.seconds_since_seen)}s`
     : degraded
       ? "Agent degraded"
-      : "Agent online";
+      : elsewhere
+        ? "Agent online, on another worker"
+        : "Agent online";
 
   return (
     <span
@@ -38,7 +44,9 @@ export function AgentDot({
       title={
         degraded
           ? agent.degradation
-          : `Last heard from ${new Date(agent.last_seen).toLocaleTimeString()}`
+          : elsewhere
+            ? `Connected to worker ${agent.worker}; investigations are routed per worker until fleet routing lands.`
+            : `Last heard from ${new Date(agent.last_seen).toLocaleTimeString()}`
       }
     >
       <span
