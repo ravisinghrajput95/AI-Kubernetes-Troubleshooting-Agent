@@ -25,25 +25,37 @@ type Material struct {
 	CABundle    []byte
 }
 
-// Store keeps the agent's identity on disk between restarts.
+// Store is anywhere an agent can keep its identity between restarts.
 //
 // Persisting it is what makes a restart cheap: an agent that regenerated its
 // key on every start would need a fresh bootstrap token every time, which at
 // fleet scale means a human per restart.
-type Store struct {
+//
+// Two implementations, because the right answer differs by where the agent
+// runs. `FileStore` is for a laptop or a container with a volume. `SecretStore`
+// is for a Kubernetes cluster, and is the default there — see its own comment
+// for why a PersistentVolumeClaim is the wrong primitive for a fleet agent.
+type Store interface {
+	Exists() bool
+	Save(certPEM, keyPEM, caPEM []byte) error
+	Load() (*Material, error)
+}
+
+// FileStore keeps the identity in a directory.
+type FileStore struct {
 	dir string
 }
 
-func NewStore(dir string) *Store {
-	return &Store{dir: dir}
+func NewStore(dir string) *FileStore {
+	return &FileStore{dir: dir}
 }
 
-func (s *Store) path(name string) string {
+func (s *FileStore) path(name string) string {
 	return filepath.Join(s.dir, name)
 }
 
 // Exists reports whether this agent has already enrolled.
-func (s *Store) Exists() bool {
+func (s *FileStore) Exists() bool {
 	for _, name := range []string{keyFile, certFile, caFile} {
 		if _, err := os.Stat(s.path(name)); err != nil {
 			return false
@@ -57,7 +69,7 @@ func (s *Store) Exists() bool {
 // The key is written 0600 from the moment it is created rather than chmod-ed
 // afterwards, because the gap between the two is a window in which a private
 // key is readable by anything on the host.
-func (s *Store) Save(certPEM, keyPEM, caPEM []byte) error {
+func (s *FileStore) Save(certPEM, keyPEM, caPEM []byte) error {
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", s.dir, err)
 	}
@@ -71,7 +83,7 @@ func (s *Store) Save(certPEM, keyPEM, caPEM []byte) error {
 }
 
 // Load reads the stored identity.
-func (s *Store) Load() (*Material, error) {
+func (s *FileStore) Load() (*Material, error) {
 	certPEM, err := os.ReadFile(s.path(certFile))
 	if err != nil {
 		return nil, fmt.Errorf("read certificate: %w", err)

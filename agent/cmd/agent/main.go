@@ -13,12 +13,14 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"math/rand"
 	"net"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -63,7 +65,9 @@ func main() {
 	enrolEndpoint := flag.String("enrol", envOr("AGENT_ENROLMENT", ""), "platform enrolment address; defaults to the gateway port plus one")
 	cluster := flag.String("cluster", envOr("AGENT_CLUSTER_ID", ""), "cluster identifier this agent reports as")
 	token := flag.String("bootstrap-token", envOr("AGENT_BOOTSTRAP_TOKEN", ""), "single-use enrolment token from `agentctl issue-token`")
-	identityDir := flag.String("identity-dir", envOr("AGENT_IDENTITY_DIR", "/var/lib/k8s-agent"), "where this agent keeps its key and certificate")
+	identityDir := flag.String("identity-dir", envOr("AGENT_IDENTITY_DIR", ""), "keep the key and certificate in this directory instead of a Kubernetes Secret")
+	identitySecret := flag.String("identity-secret", envOr("AGENT_IDENTITY_SECRET", "k8s-ops-agent-identity"), "Secret holding this agent's key and certificate")
+	identityNamespace := flag.String("identity-namespace", envOr("POD_NAMESPACE", ""), "namespace of that Secret; defaults to the pod's own")
 	caFile := flag.String("ca-file", envOr("AGENT_CA_FILE", ""), "platform CA bundle, for verifying the gateway during enrolment")
 	insecureMode := flag.Bool("insecure", envOr("AGENT_INSECURE", "") == "1", "plaintext, no certificate; local development only")
 	kubeconfig := flag.String("kubeconfig", envOr("KUBECONFIG", ""), "kubeconfig path; in-cluster config when empty")
@@ -81,28 +85,6 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Identity first: there is no point building a Kubernetes client for an
-	// agent that will not be allowed to connect.
-	var holder *identity.Holder
-	if *insecureMode {
-		log.Warn("running in insecure mode: plaintext, and this agent's cluster id is asserted rather than proved",
-			"note", "matches the platform's AGENT_GATEWAY_TLS=disabled; for local development only")
-	} else {
-		material, err := establishIdentity(ctx, *identityDir, *enrolEndpoint, *endpoint, *cluster, *token, *caFile, log)
-		if err != nil {
-			log.Error("could not establish this agent's identity", "error", err)
-			os.Exit(1)
-		}
-		holder = identity.NewHolder(material)
-
-		// Renewal runs alongside the stream and never interrupts it: a new
-		// certificate is written and swapped in, and the connection already
-		// open keeps using the old one, which stays valid for the remaining
-		// third of its life.
-		go transport.KeepFresh(ctx, identity.NewStore(*identityDir), holder,
-			*endpoint, *cluster, version, *renewalCheck, log)
-	}
-
 	config, err := loadConfig(*kubeconfig)
 	if err != nil {
 		log.Error("could not build a Kubernetes client", "error", err)
@@ -113,6 +95,32 @@ func main() {
 	if err != nil {
 		log.Error("could not build a Kubernetes client", "error", err)
 		os.Exit(1)
+	}
+
+	var holder *identity.Holder
+	if *insecureMode {
+		log.Warn("running in insecure mode: plaintext, and this agent's cluster id is asserted rather than proved",
+			"note", "matches the platform's AGENT_GATEWAY_TLS=disabled; for local development only")
+	} else {
+		store, err := identityStore(clientset, *identityDir, *identityNamespace, *identitySecret)
+		if err != nil {
+			log.Error("could not decide where to keep this agent's identity", "error", err)
+			os.Exit(1)
+		}
+
+		material, err := establishIdentity(ctx, store, *enrolEndpoint, *endpoint, *cluster, *token, *caFile, log)
+		if err != nil {
+			log.Error("could not establish this agent's identity", "error", err)
+			os.Exit(1)
+		}
+		holder = identity.NewHolder(material)
+
+		// Renewal runs alongside the stream and never interrupts it: a new
+		// certificate is written and swapped in, and the connection already
+		// open keeps using the old one, which stays valid for the remaining
+		// third of its life.
+		go transport.KeepFresh(ctx, store, holder,
+			*endpoint, *cluster, version, *renewalCheck, log)
 	}
 
 	kubeVersion := "unknown"
@@ -175,9 +183,41 @@ func jitter(delay time.Duration) time.Duration {
 // Enrolment happens once in an agent's life. A stored identity is reused on
 // every restart, which is what stops a rolling deploy from needing a fresh
 // bootstrap token per pod.
+// identityStore decides where this agent keeps its credential.
+//
+// A directory when one is named, which covers `docker run` and a laptop. A
+// Kubernetes Secret otherwise, because that is the only durable store every
+// distribution has — see `SecretStore` for the list of places a
+// PersistentVolumeClaim silently fails to bind.
+func identityStore(
+	client kubernetes.Interface,
+	dir string,
+	namespace string,
+	name string,
+) (identity.Store, error) {
+	if dir != "" {
+		return identity.NewStore(dir), nil
+	}
+
+	if namespace == "" {
+		// Falls back to the projected service account namespace, which every
+		// pod has whether or not the manifest set POD_NAMESPACE.
+		data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+		if err != nil {
+			return nil, fmt.Errorf(
+				"no --identity-dir and no namespace to put a Secret in; set " +
+					"POD_NAMESPACE or --identity-namespace when running outside a cluster",
+			)
+		}
+		namespace = strings.TrimSpace(string(data))
+	}
+
+	return identity.NewSecretStore(client, namespace, name), nil
+}
+
 func establishIdentity(
 	ctx context.Context,
-	identityDir string,
+	store identity.Store,
 	enrolEndpoint string,
 	gatewayEndpoint string,
 	cluster string,
@@ -185,8 +225,6 @@ func establishIdentity(
 	caFile string,
 	log *slog.Logger,
 ) (*identity.Material, error) {
-	store := identity.NewStore(identityDir)
-
 	if store.Exists() {
 		material, err := store.Load()
 		if err == nil {
@@ -198,12 +236,12 @@ func establishIdentity(
 		}
 		// Falling through to enrolment would need a token that is probably not
 		// present, so say what is actually wrong.
-		log.Error("the stored identity could not be loaded", "dir", identityDir, "error", err)
+		log.Error("the stored identity could not be loaded", "error", err)
 		return nil, err
 	}
 
 	if token == "" {
-		return nil, errNoIdentity{dir: identityDir}
+		return nil, errNoIdentity{}
 	}
 
 	return transport.Enrol(ctx, store, transport.EnrolOptions{
@@ -232,13 +270,12 @@ func enrolmentAddress(configured, gateway string) string {
 	return net.JoinHostPort(host, strconv.Itoa(number+1))
 }
 
-type errNoIdentity struct{ dir string }
+type errNoIdentity struct{}
 
-func (e errNoIdentity) Error() string {
-	return "this agent has no certificate in " + e.dir +
-		" and no --bootstrap-token to obtain one. Issue a token on the platform with" +
-		" `python -m app.agentctl issue-token --cluster <id>`, or pass --insecure for" +
-		" local development."
+func (errNoIdentity) Error() string {
+	return "this agent has no stored certificate and no --bootstrap-token to obtain" +
+		" one. Issue a token on the platform with `python -m app.agentctl" +
+		" issue-token --cluster <id>`, or pass --insecure for local development."
 }
 
 func loadConfig(kubeconfig string) (*rest.Config, error) {

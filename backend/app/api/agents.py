@@ -245,16 +245,53 @@ stringData:
   ca.crt: |
 {_indent(ca_bundle, 4)}
 ---
+# The agent's own credential lives here. Created empty so the agent needs no
+# permission to create Secrets — only to update this one.
+#
+# A Secret rather than a PersistentVolumeClaim, because a claim does not work
+# everywhere clusters actually are: EKS on Fargate has no EBS and a
+# ReadWriteOnce claim never binds, a cluster with no default StorageClass does
+# the same, and a zonal volume cannot follow a rescheduled pod. Every one of
+# those failures looks like a pod stuck in ContainerCreating with nothing in
+# the agent's logs, because the agent never starts. Every conformant cluster
+# has the Secret API.
 apiVersion: v1
-kind: PersistentVolumeClaim
+kind: Secret
 metadata:
   name: k8s-ops-agent-identity
   namespace: k8s-ops-agent
-spec:
-  accessModes: ["ReadWriteOnce"]
-  resources:
-    requests:
-      storage: 64Mi
+type: Opaque
+---
+# Namespaced, and scoped to one object by name.
+#
+# The ClusterRole above stays get/list/watch — `kubectl describe clusterrole
+# k8s-ops-agent-read` still shows a role that cannot mutate anything in your
+# cluster. This Role lets the agent write exactly one thing: its own
+# certificate, in its own namespace, and nothing else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8s-ops-agent-identity
+  namespace: k8s-ops-agent
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["k8s-ops-agent-identity"]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8s-ops-agent-identity
+  namespace: k8s-ops-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: k8s-ops-agent-identity
+subjects:
+  - kind: ServiceAccount
+    name: k8s-ops-agent
+    namespace: k8s-ops-agent
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -274,10 +311,16 @@ spec:
         app: k8s-ops-agent
     spec:
       serviceAccountName: k8s-ops-agent
+      # Satisfies the restricted Pod Security Standard, which GKE Autopilot,
+      # OpenShift and any cluster enforcing `restricted` will reject a pod
+      # without. Nothing here is optional on those platforms.
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
+        runAsGroup: 65532
         fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: agent
           image: {settings.agent_image}
@@ -286,18 +329,26 @@ spec:
             - "--gateway={endpoints["gateway_endpoint"]}"
             - "--enrol={endpoints["enrolment_endpoint"]}"
             - "--ca-file=/etc/k8s-ops-agent/ca.crt"
-            - "--identity-dir=/var/lib/k8s-ops-agent"
           env:
             - name: AGENT_BOOTSTRAP_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: k8s-ops-agent-bootstrap
                   key: bootstrap-token
+            # Names the Secret the agent keeps its identity in. Without a
+            # writable volume — and there is deliberately none — this is the
+            # only place it can persist one.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           resources:
             requests:
               cpu: 25m
@@ -308,15 +359,10 @@ spec:
             - name: bootstrap
               mountPath: /etc/k8s-ops-agent
               readOnly: true
-            - name: identity
-              mountPath: /var/lib/k8s-ops-agent
       volumes:
         - name: bootstrap
           secret:
             secretName: k8s-ops-agent-bootstrap
-        - name: identity
-          persistentVolumeClaim:
-            claimName: k8s-ops-agent-identity
 """
 
 
@@ -331,5 +377,6 @@ def _docker_command(cluster_id: str, token: str, endpoints: dict[str, str]) -> s
         f"  --cluster={cluster_id} \\\n"
         f"  --gateway={endpoints['gateway_endpoint']} \\\n"
         f"  --enrol={endpoints['enrolment_endpoint']} \\\n"
-        f"  --bootstrap-token={token}"
+        f"  --bootstrap-token={token} \\\n"
+        f"  --identity-dir=/var/lib/k8s-ops-agent"
     )

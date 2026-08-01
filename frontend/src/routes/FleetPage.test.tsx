@@ -159,15 +159,15 @@ describe("fleet-wide correlation", () => {
     } as never);
 
     renderFleet();
-    expect(await screen.findByText(/across the fleet/i)).toBeInTheDocument();
-    const region = screen.getByText(/across the fleet/i).parentElement as HTMLElement;
+    expect(await screen.findByText(/cross-cluster signals/i)).toBeInTheDocument();
+    const region = screen.getByText(/cross-cluster signals/i).parentElement as HTMLElement;
     expect(within(region).getByText("image.no_pull_secret")).toBeInTheDocument();
     expect(within(region).getByText(/2 clusters/i)).toBeInTheDocument();
   });
 
   it("shows nothing when no failure is shared", async () => {
     renderFleet();
-    expect(screen.queryByText(/across the fleet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/cross-cluster signals/i)).not.toBeInTheDocument();
   });
 });
 

@@ -39,7 +39,7 @@ type EnrolOptions struct {
 // private one.
 func Enrol(
 	ctx context.Context,
-	store *identity.Store,
+	store identity.Store,
 	options EnrolOptions,
 	log *slog.Logger,
 ) (*identity.Material, error) {
@@ -103,7 +103,7 @@ func Enrol(
 // for the remaining third of its life, and the next dial picks up the new one.
 func Renew(
 	ctx context.Context,
-	store *identity.Store,
+	store identity.Store,
 	holder *identity.Holder,
 	endpoint string,
 	clusterID string,
@@ -162,7 +162,7 @@ func Renew(
 // the failure this scheduling exists to avoid.
 func KeepFresh(
 	ctx context.Context,
-	store *identity.Store,
+	store identity.Store,
 	holder *identity.Holder,
 	endpoint string,
 	clusterID string,
