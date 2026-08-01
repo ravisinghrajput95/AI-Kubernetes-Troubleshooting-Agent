@@ -43,8 +43,8 @@ NODES = {
             "spec": {},
             "status": {
                 "conditions": [{"type": "Ready", "status": "True"}],
-                "capacity": {"cpu": "4"},
-                "allocatable": {"cpu": "3800m"},
+                "capacity": {"cpu": "4", "memory": "8Gi"},
+                "allocatable": {"cpu": "3800m", "memory": "7600Mi"},
             },
         }
     ]
@@ -221,7 +221,7 @@ def build_service(kubectl: FakeKubectl) -> InvestigationService:
     one rather than reaching past it.
     """
     service = InvestigationService(context="test-cluster")
-    service.provider = LocalKubectlProvider(executor=kubectl)
+    service.provider = LocalKubectlProvider(context="test-cluster", executor=kubectl)
     return service
 
 
@@ -286,12 +286,27 @@ async def test_secrets_never_reach_the_persisted_investigation():
 
 
 async def test_metrics_are_derived_from_collected_evidence():
+    """Usage percentages are computed, not copied out of `kubectl top`.
+
+    The fake reports `node-1 100m 5% 1024Mi 40%`, and those two percentage
+    columns are deliberately ignored: 100m of 3800m allocatable is 3%, and
+    1024Mi of 7600Mi is 13%. Since M5 the ratio is derived on the platform from
+    node allocatable capacity, for both providers, because the metrics API an
+    agent reads returns usage and no percentage at all. Deriving it once is
+    what makes local and remote evidence comparable — and it is also the only
+    version of the number that agrees with the node evidence beside it.
+    """
     investigation = await build_service(FakeKubectl()).run()
 
     assert investigation["metrics"]["available"] is True
-    assert investigation["metrics"]["cpu_usage"] == "5%"
-    assert investigation["metrics"]["memory_usage"] == "40%"
+    assert investigation["metrics"]["cpu_usage"] == "3%"
+    assert investigation["metrics"]["memory_usage"] == "13%"
     assert investigation["overview"]["nodes"] == "1/1 Healthy"
+
+    node = investigation["metrics"]["node_metrics"][0]
+    assert node["name"] == "node-1"
+    assert node["cpu"] == "100m"
+    assert node["memory"] == "1024Mi"
 
 
 async def test_one_failing_inspector_does_not_abort_the_investigation():

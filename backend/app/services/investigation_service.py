@@ -21,6 +21,7 @@ from app.kubernetes.errors import friendly_error
 from app.playbooks.kubernetes import DEFAULT_PLAYBOOKS
 from app.playbooks.orchestrator import DEFAULT_MAX_ROUNDS, InvestigationOrchestrator
 from app.playbooks.registry import PlaybookRegistry
+from app.providers.base import ClusterProvider
 from app.providers.local_kubectl import LocalKubectlProvider
 
 # Evidence kinds already surfaced through a named investigation section.
@@ -73,6 +74,34 @@ DEEP_TIMELINE_LABELS: dict[str, str] = {
 }
 
 
+def select_provider(context: str | None, principal: Principal | None) -> ClusterProvider:
+    """How this investigation will reach its cluster.
+
+    One decision, made once, and the only place the two providers are named
+    together. If an agent is connected for this cluster, the investigation runs
+    through it; otherwise the local kubeconfig serves, which keeps
+    `uvicorn app.main:app --reload` against nothing but a kubeconfig the
+    getting-started path.
+
+    The registry is per-process (a stream belongs to whichever worker holds the
+    socket), so a cluster whose agent is connected to a *different* worker
+    falls back to local here. Routing an investigation to the worker that holds
+    the stream is M8's problem, and until then this is a correct answer rather
+    than a silent one — the chosen provider is reported on the investigation.
+
+    Imported lazily, so a deployment with no agents never loads grpc.
+    """
+    if settings.agent_gateway_enabled:
+        from app.gateway.session import get_agent_registry
+        from app.providers.remote_agent import build_remote_provider
+
+        session = get_agent_registry().get(context or "")
+        if session is not None:
+            return build_remote_provider(session, principal=principal)
+
+    return LocalKubectlProvider(context=context, principal=principal)
+
+
 class InvestigationService:
     """Orchestrates evidence collection and derives the investigation summary.
 
@@ -102,9 +131,10 @@ class InvestigationService:
         self.budget = budget or CollectionBudget()
         self.reporter = reporter or NullProgressReporter()
         # Every cluster read runs as the calling user when impersonation is on.
-        # The engine reaches the cluster only through the provider; the executor
-        # is exposed for collectors not yet migrated to ResourceRequest.
-        self.provider = LocalKubectlProvider(context=context, principal=principal)
+        # The provider is the engine's only route to a cluster — since M5 there
+        # is no executor beside it, and nothing here can tell a local kubeconfig
+        # from an agent on the far end of a stream.
+        self.provider = select_provider(context, principal)
         self.scope = InvestigationScope(
             context=context,
             namespace=namespace,
@@ -121,13 +151,24 @@ class InvestigationService:
         investigation["playbook_rounds"] = rounds
         investigation["collection_limits"] = self._collection_limits()
         investigation["timeline"] = self._timeline(store, started_at)
-        investigation["executed_commands"] = self.kubectl.executed_commands
+        investigation["executed_commands"] = list(self.provider.executed_commands)
+        investigation["cluster_access"] = self._cluster_access()
         return investigation
 
-    @property
-    def kubectl(self):
-        """Executor behind the provider, for the audit trail and legacy collectors."""
-        return self.provider.raw_executor()
+    def _cluster_access(self) -> dict[str, Any]:
+        """How this cluster was actually reached.
+
+        Surfaced for the same reason the console shows its SSE-versus-polling
+        transport: two investigations of the same cluster can be collected by
+        different routes, and an operator comparing them should not have to
+        guess which. It is also the only way to notice that a cluster with an
+        agent was read locally because the agent was connected elsewhere.
+        """
+        remote = type(self.provider).__name__ == "RemoteAgentProvider"
+        return {
+            "provider": "agent" if remote else "kubeconfig",
+            "cluster_id": self.provider.cluster_id,
+        }
 
     def _collection_limits(self) -> dict[str, Any]:
         """Where the cluster was larger than this investigation looked.
@@ -136,7 +177,7 @@ class InvestigationService:
         be visible: a diagnosis drawn from the first 2000 of 40000 pods is not
         the same claim as one drawn from all of them.
         """
-        truncations = list(self.kubectl.truncations)
+        truncations = list(self.provider.truncations)
         return {
             "max_list_items": self.budget_max_items,
             "truncated": bool(truncations),
@@ -203,7 +244,7 @@ class InvestigationService:
         )
         result = await orchestrator.run(
             context,
-            baseline=build_default_collectors(self.kubectl),
+            baseline=build_default_collectors(),
             build_view=self._build_view,
         )
         return result.store, result.to_dict()
@@ -373,28 +414,30 @@ class InvestigationService:
             "message": "metrics-server is unavailable or kubectl top is not permitted.",
         }
 
-        node_lines = (store.data(EvidenceKind.METRICS_NODES, {}) or {}).get("lines")
-        if not node_lines:
+        # Usage arrives already normalised by `ResourceMetricsCollector`, which
+        # is what lets `kubectl top` text and the metrics API produce the same
+        # evidence. Before M5 this method split whitespace columns, so a remote
+        # provider could not have fed it at all.
+        node_records = (store.data(EvidenceKind.METRICS_NODES, {}) or {}).get("records")
+        if not node_records:
             return metrics
 
         cpu_values = []
         memory_values = []
-        for line in node_lines:
-            parts = line.split()
-            if len(parts) >= 5:
-                cpu_percent = self._percent_value(parts[2])
-                memory_percent = self._percent_value(parts[4])
-                cpu_values.append(cpu_percent)
-                memory_values.append(memory_percent)
-                metrics["node_metrics"].append(
-                    {
-                        "name": parts[0],
-                        "cpu": parts[1],
-                        "cpu_percent": f"{cpu_percent}%",
-                        "memory": parts[3],
-                        "memory_percent": f"{memory_percent}%",
-                    }
-                )
+        for record in node_records:
+            if record.get("cpu_percent_value") is not None:
+                cpu_values.append(record["cpu_percent_value"])
+            if record.get("memory_percent_value") is not None:
+                memory_values.append(record["memory_percent_value"])
+            metrics["node_metrics"].append(
+                {
+                    "name": record.get("name", "unknown"),
+                    "cpu": record.get("cpu", ""),
+                    "cpu_percent": record.get("cpu_percent", "N/A"),
+                    "memory": record.get("memory", ""),
+                    "memory_percent": record.get("memory_percent", "N/A"),
+                }
+            )
 
         cpu = round(sum(cpu_values) / len(cpu_values)) if cpu_values else None
         memory = round(sum(memory_values) / len(memory_values)) if memory_values else None
@@ -403,19 +446,16 @@ class InvestigationService:
         metrics["memory_usage"] = f"{memory}%" if memory is not None else "N/A"
         metrics["message"] = "Cluster metrics collected from metrics-server."
 
-        pod_rows = []
-        for line in (store.data(EvidenceKind.METRICS_PODS, {}) or {}).get("lines", []):
-            parts = line.split()
-            if len(parts) >= 4:
-                pod_rows.append(
-                    {
-                        "namespace": parts[0],
-                        "name": parts[1],
-                        "cpu": parts[2],
-                        "memory": parts[3],
-                    }
-                )
-        metrics["top_pods"] = pod_rows[:8]
+        pod_records = (store.data(EvidenceKind.METRICS_PODS, {}) or {}).get("records", [])
+        metrics["top_pods"] = [
+            {
+                "namespace": record.get("namespace", "default"),
+                "name": record.get("name", "unknown"),
+                "cpu": record.get("cpu", ""),
+                "memory": record.get("memory", ""),
+            }
+            for record in pod_records
+        ][:8]
 
         return metrics
 

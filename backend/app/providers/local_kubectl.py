@@ -55,18 +55,6 @@ class LocalKubectlProvider(ClusterProvider):
     async def fetch_many(self, requests: Sequence[ResourceRequest]) -> Sequence[ProviderResult]:
         return await asyncio.gather(*(self.fetch(request) for request in requests))
 
-    # -- migration seam ----------------------------------------------------
-
-    def raw_executor(self) -> KubectlExecutor:
-        """Direct executor access for collectors not yet on `ResourceRequest`.
-
-        Deliberately absent from the `ClusterProvider` protocol. Remote
-        providers raise `ProviderUnsupported` here, so an unmigrated collector
-        fails loudly against a real fleet rather than appearing to work because
-        development happens to run locally.
-        """
-        return self._executor
-
     # -- request translation ------------------------------------------------
 
     @staticmethod

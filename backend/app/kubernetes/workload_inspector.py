@@ -1,33 +1,51 @@
+from collections.abc import Sequence
 from typing import Any
 
-from app.kubernetes.kubectl_executor import KubectlExecutor
+from app.evidence.models import EvidenceKind
+from app.kubernetes.inspector import failure, items, usable
+from app.providers.base import ProviderResult, ReadVerb, ResourceRequest
 
 RESOURCES = ("statefulsets", "daemonsets", "jobs", "cronjobs")
 
 
 class WorkloadInspector:
-    def __init__(self, kubectl: KubectlExecutor | None = None) -> None:
-        self.kubectl = kubectl or KubectlExecutor()
+    id = "k8s.workloads"
+    kind = EvidenceKind.WORKLOADS
+    label = "Checked Extended Workloads"
 
-    def inspect(self, namespace: str | None = None) -> dict[str, Any]:
+    def requests(self, scope) -> list[ResourceRequest]:
+        # One request per resource, in RESOURCES order, so `analyse` can pair
+        # each result with the kind it came from. Before M5 these were four
+        # sequential kubectl calls; the provider now runs them as one batch,
+        # which on a remote agent is one round trip instead of four.
+        return [
+            ResourceRequest(
+                verb=ReadVerb.GET,
+                resource=resource,
+                namespace=scope.namespace,
+                all_namespaces=not scope.namespace,
+            )
+            for resource in RESOURCES
+        ]
+
+    def analyse(self, results: Sequence[ProviderResult], scope) -> dict[str, Any]:
         findings = []
         inventory = []
-        errors: list[str] = []
+        errors: list[ProviderResult] = []
 
-        for resource in RESOURCES:
-            result = self.kubectl.run(self._args(resource, namespace), parse_json=True)
-            if not result.success or not isinstance(result.data, dict):
-                errors.append(result.stderr)
+        for resource, result in zip(RESOURCES, results, strict=True):
+            if not usable(result):
+                errors.append(result)
                 findings.append(
                     {
                         "resource": resource,
                         "issue": "Unable to inspect resource",
-                        "error": result.stderr,
+                        "error": result.error,
                     }
                 )
                 continue
 
-            for item in result.data.get("items", []):
+            for item in items(result):
                 summary = self._summary(resource, item)
                 inventory.append(summary)
                 issue = self._issue(resource, item)
@@ -40,27 +58,13 @@ class WorkloadInspector:
             # `ok` evidence in the store for a cluster that could not be read
             # at all, which was enough to make a wholly failed investigation
             # count as partial degradation and report itself as succeeded.
-            return {
-                "error": errors[0],
-                "healthy": False,
-                "findings": [],
-                "inventory": [],
-            }
+            return failure(errors[0], findings=[], inventory=[])
 
         return {
             "healthy": len(findings) == 0,
             "findings": findings,
             "inventory": inventory,
         }
-
-    def _args(self, resource: str, namespace: str | None) -> list[str]:
-        args = ["get", resource]
-        if namespace:
-            args.extend(["-n", namespace])
-        else:
-            args.append("-A")
-        args.extend(["-o", "json"])
-        return args
 
     def _summary(self, resource: str, item: dict[str, Any]) -> dict[str, Any]:
         metadata = item.get("metadata", {})

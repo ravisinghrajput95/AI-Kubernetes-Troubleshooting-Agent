@@ -26,6 +26,7 @@ import os
 import subprocess
 from datetime import timedelta
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -189,6 +190,186 @@ class TestTheRealAgentProvesWhoItIs:
     async def test_the_bootstrap_token_was_spent(self, connected_agent, tmp_path):
         tokens = FileEnrolmentStore(tmp_path / "enrolment.json").tokens(CONTEXT)
         assert tokens and all(token.spent for token in tokens)
+
+
+class TestEveryCollectorAgrees:
+    """M5's exit criterion: the whole collector set, both providers, compared.
+
+    M4a compared four hand-written reads. That proved the transport, not the
+    engine — it would not have noticed an inspector whose migration changed what
+    it asked for, because no inspector was involved. This runs the actual
+    baseline graph twice against one cluster, once through kubectl and once
+    through the agent, and compares the evidence each produced.
+
+    Comparison is on the analysed payload rather than the raw objects, because
+    the payload is what a diagnosis rests on. Fields that legitimately move
+    between two reads of a live cluster (event counts, usage figures) are
+    excluded by name rather than by rounding, so an exclusion is visible.
+    """
+
+    async def collect_both(self, session):
+        """Run the baseline graph through each provider. Returns two stores."""
+        from app.collectors.base import CollectionContext, InvestigationScope
+        from app.collectors.kubernetes import build_default_collectors
+        from app.collectors.registry import CollectorRegistry
+        from app.collectors.scheduler import CollectionScheduler
+        from app.evidence.store import EvidenceStore
+
+        stores = []
+        for provider in (RemoteAgentProvider(session), local_provider()):
+            registry = CollectorRegistry()
+            for collector in build_default_collectors():
+                registry.register(collector)
+
+            context = CollectionContext(
+                scope=InvestigationScope(context=CONTEXT),
+                provider=provider,
+                store=EvidenceStore(),
+            )
+            stores.append(await CollectionScheduler(registry).run(context))
+
+        return stores[0], stores[1]
+
+    # Values that change between two reads of a running cluster, or that name
+    # the transport rather than the finding.
+    VOLATILE: ClassVar[set[str]] = {
+        "total_events",
+        "findings",  # events findings carry live messages; compared separately
+        "command",
+        "checked_pods",
+        "logs",
+        "records",
+        "items",
+    }
+
+    async def test_the_baseline_graph_produces_the_same_evidence(self, connected_agent):
+        remote, local = await self.collect_both(connected_agent)
+
+        remote_kinds = {record.kind for record in remote}
+        local_kinds = {record.kind for record in local}
+        assert remote_kinds == local_kinds, "the two providers produced different evidence kinds"
+
+        # Nothing may be usable on one path and not the other: that is the
+        # failure mode a differential test exists to catch.
+        for kind in sorted(local_kinds):
+            remote_usable = [record.usable for record in remote.by_kind(kind)]
+            local_usable = [record.usable for record in local.by_kind(kind)]
+            assert remote_usable == local_usable, f"{kind} degraded on only one path"
+
+    @pytest.mark.parametrize(
+        "kind",
+        ["k8s.pods", "k8s.deployments", "k8s.nodes", "k8s.network", "k8s.storage", "k8s.workloads"],
+    )
+    async def test_each_inspector_reaches_the_same_conclusion(self, connected_agent, kind):
+        remote, local = await self.collect_both(connected_agent)
+
+        remote_payload = remote.data(kind, {}) or {}
+        local_payload = local.data(kind, {}) or {}
+
+        assert set(remote_payload) == set(local_payload), f"{kind} payload keys differ"
+
+        for key in sorted(set(local_payload) - self.VOLATILE):
+            assert remote_payload[key] == local_payload[key], f"{kind}.{key} differs"
+
+    async def test_the_pod_inventory_is_identical(self, connected_agent):
+        """The most consequential payload: what the analysis layer reasons over."""
+        remote, local = await self.collect_both(connected_agent)
+
+        def by_name(payload):
+            return {
+                f"{pod['namespace']}/{pod['name']}": pod
+                for pod in (payload or {}).get("pod_inventory", [])
+            }
+
+        remote_pods = by_name(remote.data("k8s.pods", {}))
+        local_pods = by_name(local.data("k8s.pods", {}))
+
+        assert set(remote_pods) == set(local_pods)
+        for name in sorted(local_pods):
+            assert remote_pods[name] == local_pods[name], f"{name} differs between providers"
+
+    async def test_problematic_pods_match(self, connected_agent):
+        remote, local = await self.collect_both(connected_agent)
+
+        def flagged(payload):
+            return sorted(
+                (pod["namespace"], pod["name"], pod["status"])
+                for pod in (payload or {}).get("problematic_pods", [])
+            )
+
+        assert flagged(remote.data("k8s.pods", {})) == flagged(local.data("k8s.pods", {}))
+
+    async def test_pod_logs_are_collected_through_both(self, connected_agent):
+        """`LogsCollector` fans out over pods, so it is the odd one out."""
+        remote, local = await self.collect_both(connected_agent)
+
+        remote_logs = remote.data("k8s.pods.logs", {}) or {}
+        local_logs = local.data("k8s.pods.logs", {}) or {}
+
+        assert remote_logs.get("checked_pods") == local_logs.get("checked_pods")
+        assert [entry["name"] for entry in remote_logs.get("logs", [])] == [
+            entry["name"] for entry in local_logs.get("logs", [])
+        ]
+
+    async def test_metrics_agree_or_are_absent_on_both(self, connected_agent):
+        """The only collector where the two sources genuinely differ.
+
+        kubectl reads `top`, the agent reads metrics.k8s.io. Usage is measured
+        and the percentage derived, so the node *set* must match either way —
+        and if metrics-server is not installed, both must say so rather than
+        one reporting an idle cluster.
+        """
+        remote, local = await self.collect_both(connected_agent)
+
+        remote_record = remote.by_kind("k8s.metrics.nodes")[0]
+        local_record = local.by_kind("k8s.metrics.nodes")[0]
+        assert remote_record.usable == local_record.usable
+
+        if not local_record.usable:
+            pytest.skip("metrics-server is not installed in this cluster")
+
+        remote_rows = (remote_record.data or {})["records"]
+        local_rows = (local_record.data or {})["records"]
+        assert sorted(row["name"] for row in remote_rows) == sorted(
+            row["name"] for row in local_rows
+        )
+
+        # Usage itself cannot be compared — CPU moves between two reads of a
+        # live cluster — so what is checked is that each path's percentage is
+        # *derived from its own measurement*, rather than transported. A
+        # collector that started trusting kubectl's percentage column would
+        # produce a figure inconsistent with the usage printed beside it.
+        from app.kubernetes import metrics as metrics_module
+
+        allocatable = metrics_module.allocatable_by_node(
+            (local.data("k8s.nodes.raw", {}) or {}).get("items", [])
+        )
+        for rows in (remote_rows, local_rows):
+            for row in rows:
+                capacity = allocatable.get(row["name"], {})
+                expected = metrics_module.percent(
+                    metrics_module.parse_cpu(row["cpu"]), capacity.get("cpu_cores")
+                )
+                assert row["cpu_percent"] == (f"{expected}%" if expected is not None else "N/A"), (
+                    f"{row['name']} reports {row['cpu_percent']} for {row['cpu']} of "
+                    f"{capacity.get('cpu_cores')} cores — the percentage was not derived "
+                    f"from the usage beside it"
+                )
+
+    async def test_no_collector_needed_an_executor(self, connected_agent):
+        """The migration's whole point, asserted rather than assumed.
+
+        Before M5 every inspector reached `raw_executor()`, which a remote
+        provider refused — so this graph could not have run at all against an
+        agent. It runs now, and there is no hatch left to fall back through.
+        """
+        from app.providers.remote_agent import RemoteAgentProvider as Remote
+
+        assert not hasattr(Remote, "raw_executor")
+
+        remote, _ = await self.collect_both(connected_agent)
+        usable = [record for record in remote if record.usable]
+        assert len(usable) >= 8, f"only {len(usable)} usable records through the agent"
 
 
 class TestBothPathsAgree:

@@ -701,11 +701,67 @@ a constructor.
 The remaining collectors and `RemoteAgentProvider` selection per cluster record
 follow with M5.
 
-**M5 — Collector parity.**
+**M5 — Collector parity. ✅ Delivered.**
 Migrate the remaining collectors, including Prometheus and Loki, to the agent.
 Differential testing: same cluster, both providers, evidence compared. *Exit:*
 parity across the full collector set; `LocalKubectlProvider` becomes a
 development and single-cluster convenience.
+
+*Outcome:* the seven inspectors and the log collector are off `KubectlExecutor`,
+and **`raw_executor()` is gone** — from the protocol and from both
+implementations. That is the milestone in one line: there is no longer a way for
+a collector to reach past the provider, so "the engine cannot tell which
+provider it has" stopped being an intention. `select_provider()` makes the
+choice an investigation actually goes through, which is what turned the agent
+path from something only tests constructed into the one a request takes.
+
+The split was along one seam: an inspector declares `ResourceRequest`s and
+analyses results, and the analysis bodies moved across unchanged. Deliberate —
+a differential suite can only prove parity if the code on both sides of the
+comparison is the same code. The existing engine tests passed the migration
+unmodified, which is the evidence that the move was a substitution rather than a
+rewrite. A side benefit worth having: an inspector's reads now go out as one
+`fetch_many`, so `WorkloadInspector`'s four sequential kubectl calls became one
+round trip on a stream that may cross a continent.
+
+Three things the work found rather than assumed.
+
+**`kubectl top` and the metrics API do not return the same thing**, and that was
+the last real obstacle. kubectl prints a percentage it computed from node
+allocatable; metrics.k8s.io returns usage and nothing else. Teaching the Go
+agent to reproduce kubectl's column layout would have put a formatting contract
+in a binary shipped to a thousand clusters — the trap M4a avoided by reading raw
+JSON rather than typed objects. So usage is measured and **the percentage is
+derived on the platform, for both providers**, from node evidence already
+collected. kubectl's own percentage column is parsed and discarded. The number
+now agrees with the node evidence beside it, which the transported one did not
+have to.
+
+**A latent bug surfaced, and was fixed separately from the migration.** The
+cluster-DNS check read the same local the service loop assigned to, so after any
+non-empty service list it held the last service's namespace — always truthy, so
+the check never fired and a cluster with no DNS service reported nothing wrong
+with its DNS. It was preserved verbatim through the migration so parity stayed
+provable, then fixed with its own test. Keying it on the scope also gave
+`analyse()` the scope, which is the right shape anyway: some conclusions depend
+on what was *asked for*, not on what came back.
+
+**The differential suite had a hole where it looked strongest.** Comparing live
+metrics is impossible — CPU moves between two reads — so the first version
+compared only node names, and a mutation that reinstated the transported
+percentage passed it. The fix was to assert internal consistency instead: each
+path's percentage must be derivable from the usage printed beside it. Six
+mutations are now checked, including one in the Go agent that silently scoped
+list reads to a single namespace; that one fails five differential tests.
+
+*Deliberately not delivered:* Prometheus and Loki through the agent. Those
+collectors build PromQL and LogQL strings, and a query is a command in
+everything but name — passing one down would contradict the property that makes
+`EvidenceSpec` safe to send to a customer's cluster. The right shape is a query
+catalogue **inside** the agent, named by kind exactly as Kubernetes reads are,
+which is a design decision worth making on its own rather than as a footnote to
+a migration. Both remain reachable from the platform today, and the M6 tenancy
+work is the natural moment to settle it.
 
 **M6 — Tenancy and fleet.**
 Organisations, cluster registry, tenant id on every row, per-tenant keys,

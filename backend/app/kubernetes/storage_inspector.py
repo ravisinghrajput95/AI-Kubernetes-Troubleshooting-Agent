@@ -1,34 +1,39 @@
+from collections.abc import Sequence
 from typing import Any
 
-from app.kubernetes.kubectl_executor import KubectlExecutor
+from app.evidence.models import EvidenceKind
+from app.kubernetes.inspector import failure, items, usable
+from app.providers.base import ProviderResult, ReadVerb, ResourceRequest
 
 
 class StorageInspector:
-    def __init__(self, kubectl: KubectlExecutor | None = None) -> None:
-        self.kubectl = kubectl or KubectlExecutor()
+    id = "k8s.storage"
+    kind = EvidenceKind.STORAGE
+    label = "Checked Storage"
 
-    def inspect(self, namespace: str | None = None) -> dict[str, Any]:
-        pvc_args = ["get", "pvc"]
-        if namespace:
-            pvc_args.extend(["-n", namespace])
-        else:
-            pvc_args.append("-A")
-        pvc_args.extend(["-o", "json"])
+    def requests(self, scope) -> list[ResourceRequest]:
+        return [
+            ResourceRequest(
+                verb=ReadVerb.GET,
+                resource="pvc",
+                namespace=scope.namespace,
+                all_namespaces=not scope.namespace,
+            ),
+            # Cluster-scoped, and deliberately optional: a failed PV read
+            # degrades this inspector's findings without failing it, because
+            # claims are still analysable without volumes.
+            ResourceRequest(verb=ReadVerb.GET, resource="pv"),
+        ]
 
-        pvc_result = self.kubectl.run(pvc_args, parse_json=True)
-        pv_result = self.kubectl.run(["get", "pv", "-o", "json"], parse_json=True)
+    def analyse(self, results: Sequence[ProviderResult], scope) -> dict[str, Any]:
+        pvc_result, pv_result = results[0], results[1]
 
-        if not pvc_result.success or not isinstance(pvc_result.data, dict):
-            return {
-                "healthy": False,
-                "findings": [],
-                "error": pvc_result.stderr,
-                "command": pvc_result.to_dict(),
-            }
+        if not usable(pvc_result):
+            return failure(pvc_result, findings=[])
 
         findings = []
         claims = []
-        for pvc in pvc_result.data.get("items", []):
+        for pvc in items(pvc_result):
             metadata = pvc.get("metadata", {})
             status = pvc.get("status", {})
             spec = pvc.get("spec", {})
@@ -50,8 +55,8 @@ class StorageInspector:
                 )
 
         pv_findings = []
-        if pv_result.success and isinstance(pv_result.data, dict):
-            for pv in pv_result.data.get("items", []):
+        if usable(pv_result):
+            for pv in items(pv_result):
                 metadata = pv.get("metadata", {})
                 phase = pv.get("status", {}).get("phase", "Unknown")
                 if phase in {"Failed", "Released"}:

@@ -1,6 +1,9 @@
+from collections.abc import Sequence
 from typing import Any
 
-from app.kubernetes.kubectl_executor import KubectlExecutor
+from app.evidence.models import EvidenceKind
+from app.kubernetes.inspector import failure, usable
+from app.providers.base import ProviderResult, ReadVerb, ResourceRequest
 
 PROBLEM_STATUSES = {
     "CrashLoopBackOff",
@@ -12,33 +15,38 @@ PROBLEM_STATUSES = {
 
 
 class PodInspector:
-    def __init__(self, kubectl: KubectlExecutor | None = None) -> None:
-        self.kubectl = kubectl or KubectlExecutor()
+    id = "k8s.pods"
+    kind = EvidenceKind.PODS
+    label = "Retrieved Pods"
 
-    def inspect(self, namespace: str | None = None, pod_name: str | None = None) -> dict[str, Any]:
-        args = ["get", "pods"]
-        if pod_name:
-            args = ["get", "pod", pod_name]
-        if namespace:
-            args.extend(["-n", namespace])
-        elif not pod_name:
-            args.append("-A")
-        args.extend(["-o", "json"])
+    def requests(self, scope) -> list[ResourceRequest]:
+        # The same three cases the argv builder had: one named pod, one
+        # namespace, or the whole cluster.
+        pod_name = scope.resource_name if scope.targets("pod") else None
+        return [
+            ResourceRequest(
+                verb=ReadVerb.GET,
+                resource="pod" if pod_name else "pods",
+                name=pod_name,
+                namespace=scope.namespace,
+                all_namespaces=not scope.namespace and not pod_name,
+            )
+        ]
 
-        result = self.kubectl.run(args, parse_json=True)
-        if not result.success or not isinstance(result.data, dict):
-            return {
-                "healthy": False,
-                "problematic_pods": [],
-                "error": result.stderr,
-                "command": result.to_dict(),
-            }
+    def analyse(self, results: Sequence[ProviderResult], scope) -> dict[str, Any]:
+        result = results[0]
+        if not usable(result):
+            return failure(result, problematic_pods=[])
+
+        data: dict[str, Any] = result.data  # type: ignore[assignment]
+        listed = data.get("items")
 
         problematic_pods = []
         pod_inventory = []
         running_pods = 0
 
-        pod_items = result.data.get("items", [result.data] if pod_name else [])
+        # A named read returns the object itself; a list read returns `items`.
+        pod_items = listed if isinstance(listed, list) else [data]
         for pod in pod_items:
             metadata = pod.get("metadata", {})
             if pod.get("status", {}).get("phase") == "Running":
@@ -58,7 +66,10 @@ class PodInspector:
             "healthy": len(problematic_pods) == 0,
             "problematic_pods": problematic_pods,
             "pod_inventory": pod_inventory,
-            "total_pods": len(result.data.get("items", [])),
+            # Counts the list, so a single-pod read reports 0 — preserved
+            # verbatim from the pre-M5 inspector rather than quietly corrected,
+            # because the differential suite compares this field.
+            "total_pods": len(listed) if isinstance(listed, list) else 0,
             "running_pods": running_pods,
         }
 

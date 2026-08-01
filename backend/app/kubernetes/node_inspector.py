@@ -1,25 +1,29 @@
+from collections.abc import Sequence
 from typing import Any
 
-from app.kubernetes.kubectl_executor import KubectlExecutor
+from app.evidence.models import EvidenceKind
+from app.kubernetes.inspector import failure, items, usable
+from app.providers.base import ProviderResult, ReadVerb, ResourceRequest
 
 
 class NodeInspector:
-    def __init__(self, kubectl: KubectlExecutor | None = None) -> None:
-        self.kubectl = kubectl or KubectlExecutor()
+    id = "k8s.nodes"
+    kind = EvidenceKind.NODES
+    label = "Checked Nodes"
 
-    def inspect(self) -> dict[str, Any]:
-        result = self.kubectl.run(["get", "nodes", "-o", "json"], parse_json=True)
-        if not result.success or not isinstance(result.data, dict):
-            return {
-                "healthy": False,
-                "findings": [],
-                "error": result.stderr,
-                "command": result.to_dict(),
-            }
+    def requests(self, scope) -> list[ResourceRequest]:
+        # Nodes are cluster-scoped; a namespaced investigation still needs them.
+        return [ResourceRequest(verb=ReadVerb.GET, resource="nodes")]
 
+    def analyse(self, results: Sequence[ProviderResult], scope) -> dict[str, Any]:
+        result = results[0]
+        if not usable(result):
+            return failure(result, findings=[])
+
+        nodes = items(result)
         findings = []
         inventory = []
-        for node in result.data.get("items", []):
+        for node in nodes:
             metadata = node.get("metadata", {})
             status = node.get("status", {})
             node_name = metadata.get("name", "unknown")
@@ -50,7 +54,7 @@ class NodeInspector:
             "healthy": len(findings) == 0,
             "findings": findings,
             "inventory": inventory,
-            "total_nodes": len(result.data.get("items", [])),
+            "total_nodes": len(nodes),
         }
 
     def _finding(self, node_name: str, condition: dict[str, Any]) -> dict[str, str]:

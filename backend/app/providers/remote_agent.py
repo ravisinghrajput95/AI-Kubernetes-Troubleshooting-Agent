@@ -51,6 +51,8 @@ _KINDS: dict[tuple[ReadVerb, str], str] = {
     (ReadVerb.GET, "ingress"): "k8s.ingress",
     (ReadVerb.GET, "networkpolicies"): "k8s.networkpolicies",
     (ReadVerb.LOGS, ""): "k8s.logs",
+    (ReadVerb.TOP, "nodes"): "k8s.metrics.nodes",
+    (ReadVerb.TOP, "pods"): "k8s.metrics.pods",
 }
 
 _STATUS_TEXT = {
@@ -137,18 +139,6 @@ class RemoteAgentProvider:
     @property
     def truncations(self) -> list[dict[str, Any]]:
         return list(self._truncations)
-
-    def raw_executor(self):
-        """Deliberately absent from the protocol, and it fails loudly here.
-
-        A collector still using the raw escape hatch must break against a
-        remote cluster rather than appear to work because development happens
-        to run locally.
-        """
-        raise ProviderUnsupported(
-            "This collector has not been migrated to ResourceRequest and cannot "
-            "run against a remote cluster."
-        )
 
     async def fetch(self, request: ResourceRequest) -> ProviderResult:
         results = await self.fetch_many([request])

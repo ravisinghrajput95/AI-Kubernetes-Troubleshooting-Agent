@@ -117,14 +117,15 @@ class TestTranslation:
         assert_read_only(LocalKubectlProvider.to_args(request_))
 
     async def test_output_format_decides_whether_the_response_is_parsed(self):
-        local = provider()
+        executor = FakeExecutor()
+        local = LocalKubectlProvider(executor=executor)
 
         await local.fetch(ResourceRequest(verb=ReadVerb.GET, resource="pods"))
         await local.fetch(
             ResourceRequest(verb=ReadVerb.GET, resource="pods", output=OutputFormat.TEXT)
         )
 
-        assert [parse_json for _args, parse_json in local.raw_executor().calls] == [True, False]
+        assert [parse_json for _args, parse_json in executor.calls] == [True, False]
 
 
 class TestNoRequestCanMutate:
@@ -200,11 +201,17 @@ class TestProviderContract:
         }
         assert all(hasattr(provider(), name) for name in required)
 
-    def test_raw_executor_is_absent_from_the_protocol(self):
-        """The migration escape hatch must not become part of the contract.
+    def test_the_migration_escape_hatch_is_gone(self):
+        """M5's exit criterion, expressed as an assertion.
 
-        A remote provider cannot honour it, so anything depending on the
-        protocol must not be able to reach for it.
+        `raw_executor()` existed so collectors that still built kubectl argv
+        could keep working while the rest moved to `ResourceRequest`. Every one
+        of them has now moved, so the hatch is gone from the protocol *and*
+        from both implementations — which is what makes "the engine cannot tell
+        which provider it has" true rather than merely intended.
         """
+        from app.providers.remote_agent import RemoteAgentProvider
+
         assert not hasattr(ClusterProvider, "raw_executor")
-        assert hasattr(provider(), "raw_executor")
+        assert not hasattr(LocalKubectlProvider, "raw_executor")
+        assert not hasattr(RemoteAgentProvider, "raw_executor")

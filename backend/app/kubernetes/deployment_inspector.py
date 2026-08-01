@@ -1,38 +1,39 @@
+from collections.abc import Sequence
 from typing import Any
 
-from app.kubernetes.kubectl_executor import KubectlExecutor
+from app.evidence.models import EvidenceKind
+from app.kubernetes.inspector import failure, usable
+from app.providers.base import ProviderResult, ReadVerb, ResourceRequest
 
 
 class DeploymentInspector:
-    def __init__(self, kubectl: KubectlExecutor | None = None) -> None:
-        self.kubectl = kubectl or KubectlExecutor()
+    id = "k8s.deployments"
+    kind = EvidenceKind.DEPLOYMENTS
+    label = "Validated Deployments"
 
-    def inspect(
-        self,
-        namespace: str | None = None,
-        deployment_name: str | None = None,
-    ) -> dict[str, Any]:
-        args = ["get", "deployments"]
-        if deployment_name:
-            args = ["get", "deployment", deployment_name]
-        if namespace:
-            args.extend(["-n", namespace])
-        elif not deployment_name:
-            args.append("-A")
-        args.extend(["-o", "json"])
+    def requests(self, scope) -> list[ResourceRequest]:
+        name = scope.resource_name if scope.targets("deployment") else None
+        return [
+            ResourceRequest(
+                verb=ReadVerb.GET,
+                resource="deployment" if name else "deployments",
+                name=name,
+                namespace=scope.namespace,
+                all_namespaces=not scope.namespace and not name,
+            )
+        ]
 
-        result = self.kubectl.run(args, parse_json=True)
-        if not result.success or not isinstance(result.data, dict):
-            return {
-                "healthy": False,
-                "unhealthy_deployments": [],
-                "error": result.stderr,
-                "command": result.to_dict(),
-            }
+    def analyse(self, results: Sequence[ProviderResult], scope) -> dict[str, Any]:
+        result = results[0]
+        if not usable(result):
+            return failure(result, unhealthy_deployments=[])
+
+        data: dict[str, Any] = result.data  # type: ignore[assignment]
+        listed = data.get("items")
 
         unhealthy_deployments = []
 
-        deployment_items = result.data.get("items", [result.data] if deployment_name else [])
+        deployment_items = listed if isinstance(listed, list) else [data]
         for deployment in deployment_items:
             status = deployment.get("status", {})
             metadata = deployment.get("metadata", {})
@@ -59,7 +60,9 @@ class DeploymentInspector:
         return {
             "healthy": len(unhealthy_deployments) == 0,
             "unhealthy_deployments": unhealthy_deployments,
-            "total_deployments": len(result.data.get("items", [])),
+            # As with pods: counts the list, so a single-deployment read reports
+            # 0. Preserved rather than corrected, because parity is the point.
+            "total_deployments": len(listed) if isinstance(listed, list) else 0,
         }
 
     def _condition_findings(self, conditions: list[dict[str, Any]]) -> list[dict[str, str]]:

@@ -1,6 +1,9 @@
+from collections.abc import Sequence
 from typing import Any
 
-from app.kubernetes.kubectl_executor import KubectlExecutor
+from app.evidence.models import EvidenceKind
+from app.kubernetes.inspector import failure, items, usable
+from app.providers.base import ProviderResult, ReadVerb, ResourceRequest
 
 EVENT_REASONS = {
     "FailedScheduling",
@@ -13,28 +16,28 @@ EVENT_REASONS = {
 
 
 class EventsAnalyzer:
-    def __init__(self, kubectl: KubectlExecutor | None = None) -> None:
-        self.kubectl = kubectl or KubectlExecutor()
+    id = "k8s.events"
+    kind = EvidenceKind.EVENTS
+    label = "Retrieved Events"
 
-    def analyze(self, namespace: str | None = None) -> dict[str, Any]:
-        args = ["get", "events"]
-        if namespace:
-            args.extend(["-n", namespace])
-        else:
-            args.append("-A")
-        args.extend(["-o", "json"])
+    def requests(self, scope) -> list[ResourceRequest]:
+        return [
+            ResourceRequest(
+                verb=ReadVerb.GET,
+                resource="events",
+                namespace=scope.namespace,
+                all_namespaces=not scope.namespace,
+            )
+        ]
 
-        result = self.kubectl.run(args, parse_json=True)
-        if not result.success or not isinstance(result.data, dict):
-            return {
-                "healthy": False,
-                "findings": [],
-                "error": result.stderr,
-                "command": result.to_dict(),
-            }
+    def analyse(self, results: Sequence[ProviderResult], scope) -> dict[str, Any]:
+        result = results[0]
+        if not usable(result):
+            return failure(result, findings=[])
 
+        events = items(result)
         findings = []
-        for event in result.data.get("items", []):
+        for event in events:
             reason = event.get("reason", "")
             event_type = event.get("type", "")
 
@@ -54,5 +57,5 @@ class EventsAnalyzer:
         return {
             "healthy": len(findings) == 0,
             "findings": findings[:50],
-            "total_events": len(result.data.get("items", [])),
+            "total_events": len(events),
         }

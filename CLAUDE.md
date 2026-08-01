@@ -76,7 +76,7 @@ ruff format --check .   # CI enforces formatting
 
 ## Runtime requirements
 
-- `kubectl` must be on PATH of the backend process; every cluster read shells out to it.
+- `kubectl` must be on PATH of the backend process **when a cluster is read locally** — which is the default. A cluster reached through its agent needs no kubectl on the platform at all; `LocalKubectlProvider` is the only thing that shells out.
 - `OPENAI_API_KEY` (optional). Without it the LLM call fails cleanly and the deterministic fallback diagnosis is used — the app stays fully functional, just with `ai_generated: false`.
 - Config is `pydantic-settings` in `app/core/config.py`, read from env or `backend/.env`: `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4o-mini`), `KUBECONFIG_PATH`, `KUBECTL_TIMEOUT_SECONDS`, `LLM_TIMEOUT_SECONDS`.
 - `InvestigationHistoryService` renders reports and hands the bytes to a `ReportStore`. The default `FilesystemReportStore` writes to `Path("data")/"investigations"` — a **relative** path, so the backend must be started from `backend/` or history lands in the wrong directory. With `DATABASE_URL` set, reports are Postgres blobs and the working directory stops mattering.
@@ -149,7 +149,9 @@ Every collected fact is an `Evidence` record with a **deterministic id** (`kind:
 
 `ReadVerb` is a **closed enum** (`get`/`describe`/`logs`/`top`/`config`) and `ResourceRequest` has no field that can carry a command, a flag string, or a shell fragment. That is the security property, not a validation step: a hostile value lands as one argv element and can never become the verb. It is what makes it safe to send a request to a remote agent. `tests/test_providers.py` pins both the translation table and this property.
 
-`CollectionContext.kubectl` remains as a delegating property (`provider.raw_executor()`) for collectors not yet migrated — `LegacyInspectorCollector` and the nine inspectors still take a `KubectlExecutor`. **`raw_executor()` is deliberately absent from the `ClusterProvider` protocol**, so an unmigrated collector fails loudly against a remote cluster rather than appearing to work because development happens to run locally. All of `app/collectors/targeted.py`, `RawNodesCollector` and `ResourceMetricsCollector` are on the seam.
+**Every collector is on the seam, and `raw_executor()` no longer exists** (M5). It was the migration hatch for collectors that still built kubectl argv; with the inspectors migrated it is gone from the protocol and from both implementations, which is what makes "the engine cannot tell which provider it has" true rather than intended. `tests/test_providers.py::test_the_migration_escape_hatch_is_gone` pins it.
+
+`select_provider()` (`app/services/investigation_service.py`) makes the choice: an agent connected for this cluster wins, otherwise the local kubeconfig. The registry is per-process, so a cluster whose agent is connected to another worker falls back to local — correct, and *visible*, via `investigation["cluster_access"]`. Routing to the worker holding the stream is M8.
 
 ### The cluster agent (`/agent`, `app/gateway/`, `app/providers/remote_agent.py`)
 
@@ -221,15 +223,26 @@ Collectors declare `provides` / `requires` / `optional_requires`; `CollectorRegi
 - Every declared kind lands in the store, worst case as a non-usable record explaining the gap.
 - **Redaction happens here, at the collection boundary** — so reports on disk, the HTTP API, and the LLM all see the same scrubbed payload. Do not reintroduce redaction at the prompt boundary; that leaves the persistence and API paths uncovered.
 
-The nine existing inspectors are **adapted, not rewritten** (`app/collectors/kubernetes.py`). `LegacyInspectorCollector` runs each synchronous inspector via `asyncio.to_thread` and maps its established `{"error": ...}` contract onto evidence status through `app/kubernetes/errors.py`. Everything except pod logs is independent and runs as one concurrent wave; logs form a second wave because `PodLogsCollector` declares `requires={PODS}`.
+The inspectors are **adapted, not rewritten** (`app/collectors/kubernetes.py`). `InspectorCollector` runs one inspector — fetch what it declares, then let it analyse — and maps the established `{"error": ...}` contract onto evidence status through `app/kubernetes/errors.py`. Everything except pod logs is independent and runs as one concurrent wave; logs form a second wave because `PodLogsCollector` declares `requires={PODS}`.
+
+An inspector's reads now go out as a **batch** (`fetch_many`). `WorkloadInspector` made four sequential kubectl calls; it issues one round trip, which matters on a stream that may cross a continent.
 
 ### Inspector contract (`app/kubernetes/`)
 
-Constructor takes the shared `KubectlExecutor`; `inspect()` returns a plain dict, returning `{"error": <stderr>, ...}` on kubectl failure rather than raising. Findings-producing inspectors return a `findings` list; pods return `problematic_pods` + `pod_inventory`; deployments return `unhealthy_deployments`. Severity, health, and overview logic count exactly those keys, so **a new inspector still needs wiring into `_health_summary` and `_severity_summary`** or its findings are ignored. (Collapsing that into the evidence layer is the natural next refactor.)
+Since M5 an inspector **fetches nothing**. It declares `id` / `kind` / `label`, and two methods (`app/kubernetes/inspector.py`):
+
+- `requests(scope) -> [ResourceRequest]` — what to read. A provider decides how.
+- `analyse(results, scope) -> dict` — what it means. Pure: no I/O, no clock, no cluster. Results arrive positionally, in the order `requests()` asked for them.
+
+`analyse()` keeps the `{"error": ...}` contract on a failed read (build it with `inspector.failure()`), because severity, health and overview logic count exactly those keys — so **a new inspector still needs wiring into `_health_summary` and `_severity_summary`** or its findings are ignored. An inspector inventing its own failure shape gets recorded as healthy evidence for a cluster nobody could read, which `WorkloadInspector` shipped once already.
+
+`analyse` takes the scope as well as the results because some conclusions depend on what was *asked for*: "no cluster DNS service exists" is only sayable when the whole cluster was scanned. That check was previously unreachable — it read the same local the service loop assigned to — and M5 fixed it. See `tests/test_inspectors.py`.
 
 All cluster access is **read-only by construction**, now at two layers: `ReadVerb` cannot express a mutation, and `KubectlExecutor.run()` calls `assert_read_only()` from `app/kubernetes/command_policy.py`, which allowlists verbs and sub-verbs. A mutating command raises `UnsafeKubectlCommand`, which the scheduler's fault boundary records as failed evidence. `executed_commands` is guarded by a lock because collectors run in worker threads.
 
-`InvestigationService` derives the rest from the store: `metrics` (parses `kubectl top` lines), `security`, `topology`, `timeline`, plus the additive `evidence` (citation index) and `evidence_coverage` keys.
+`InvestigationService` derives the rest from the store: `metrics`, `security`, `topology`, `timeline`, `cluster_access`, plus the additive `evidence` (citation index) and `evidence_coverage` keys.
+
+**Resource usage is measured; the percentage is derived** (`app/kubernetes/metrics.py`). `kubectl top` prints a percentage it computed from node allocatable; metrics.k8s.io returns usage and nothing else. Rather than teach the Go agent to reproduce kubectl's column layout, `ResourceMetricsCollector` normalises both into one shape and computes the ratio on the platform from `NODES_RAW` evidence — for *both* providers, so they cannot disagree. kubectl's own percentage column is parsed and discarded. `tests/test_metrics_parity.py` pins it.
 
 Scoping: `resource_kind` + `resource_name` narrow the pod and deployment collectors only; the rest still run namespace- or cluster-wide.
 

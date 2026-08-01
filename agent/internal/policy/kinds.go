@@ -39,6 +39,10 @@ type resource struct {
 	kubectl string
 	// Cluster-scoped resources ignore a namespace.
 	clusterScoped bool
+	// kubectl sub-command in the equivalent-command record. Empty means "get";
+	// metrics are read from an API group but surfaced to humans as `top`,
+	// because that is the command they would run to reproduce it.
+	verb string
 }
 
 // The complete set of evidence kinds this agent will serve.
@@ -63,6 +67,17 @@ var kinds = map[string]resource{
 	"k8s.cronjobs":        {group: "apis/batch/v1", plural: "cronjobs", kubectl: "cronjobs"},
 	"k8s.ingress":         {group: "apis/networking.k8s.io/v1", plural: "ingresses", kubectl: "ingress"},
 	"k8s.networkpolicies": {group: "apis/networking.k8s.io/v1", plural: "networkpolicies", kubectl: "networkpolicies"},
+
+	// metrics-server. Frequently absent, which is a normal degradation: the
+	// read fails, the platform records unavailable evidence, and a diagnosis
+	// states that metrics were not consulted rather than assuming health.
+	"k8s.metrics.nodes": {
+		group: "apis/metrics.k8s.io/v1beta1", plural: "nodes", kubectl: "nodes",
+		clusterScoped: true, verb: "top",
+	},
+	"k8s.metrics.pods": {
+		group: "apis/metrics.k8s.io/v1beta1", plural: "pods", kubectl: "pods", verb: "top",
+	},
 }
 
 // SupportedKinds is what the agent advertises in its hello, so the platform can
@@ -130,7 +145,7 @@ func Resolve(kind, namespace, name string, parameters map[string]string) (Read, 
 	return Read{
 		Path:              path,
 		Query:             query,
-		EquivalentCommand: command(entry.kubectl, name, scope, query),
+		EquivalentCommand: command(entry, name, scope, query),
 	}, nil
 }
 
@@ -169,8 +184,13 @@ func resolveLogs(namespace, name string, parameters map[string]string) (Read, er
 	}, nil
 }
 
-func command(resource, name, scope string, query url.Values) string {
-	parts := []string{"kubectl", "get", resource}
+func command(entry resource, name, scope string, query url.Values) string {
+	verb := entry.verb
+	if verb == "" {
+		verb = "get"
+	}
+
+	parts := []string{"kubectl", verb, entry.kubectl}
 	if name != "" {
 		parts = append(parts, name)
 	}
@@ -183,6 +203,10 @@ func command(resource, name, scope string, query url.Values) string {
 	if selector := query.Get("fieldSelector"); selector != "" {
 		parts = append(parts, "--field-selector", selector)
 	}
-	parts = append(parts, "-o", "json")
+	if verb == "get" {
+		// `kubectl top` has no -o json; saying it did would make the audit
+		// trail a command that fails when a human runs it.
+		parts = append(parts, "-o", "json")
+	}
 	return strings.Join(parts, " ")
 }

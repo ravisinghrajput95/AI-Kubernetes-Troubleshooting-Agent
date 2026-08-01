@@ -1,6 +1,7 @@
+from collections.abc import Sequence
 from typing import Any
 
-from app.kubernetes.kubectl_executor import KubectlExecutor
+from app.providers.base import ProviderResult, ReadVerb, ResourceRequest
 
 LOG_FAILURE_KEYWORDS = (
     "exception",
@@ -17,33 +18,50 @@ LOG_FAILURE_KEYWORDS = (
     "startup",
 )
 
+# Reading every pod's logs on a large broken cluster is its own outage. The
+# limit predates M5 and is unchanged; it now bounds a batch rather than a loop.
+MAX_PODS = 10
+
 
 class LogsCollector:
-    def __init__(self, kubectl: KubectlExecutor | None = None) -> None:
-        self.kubectl = kubectl or KubectlExecutor()
+    """Log reads for the pods the pod inspector flagged.
 
-    def collect(self, problematic_pods: list[dict[str, Any]]) -> dict[str, Any]:
+    Unlike the inspectors this fans out over a variable number of targets, so
+    its `requests` takes the pods rather than the scope. The pairing is still
+    positional: request *i* is `pods[i]`.
+    """
+
+    def requests(self, problematic_pods: list[dict[str, Any]]) -> list[ResourceRequest]:
+        return [
+            ResourceRequest(
+                verb=ReadVerb.LOGS,
+                name=pod["name"],
+                namespace=pod.get("namespace", "default"),
+                options={"tail": 120, "all_containers": True},
+            )
+            for pod in self.targets(problematic_pods)
+        ]
+
+    def targets(self, problematic_pods: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The pods that will actually be read, in request order."""
+        return [pod for pod in problematic_pods[:MAX_PODS] if pod.get("name")]
+
+    def analyse(
+        self,
+        problematic_pods: list[dict[str, Any]],
+        results: Sequence[ProviderResult],
+    ) -> dict[str, Any]:
         pod_logs = []
 
-        for pod in problematic_pods[:10]:
-            namespace = pod.get("namespace", "default")
-            name = pod.get("name")
-
-            if not name:
-                continue
-
-            result = self.kubectl.run(
-                ["logs", name, "-n", namespace, "--tail=120", "--all-containers=true"],
-            )
-
+        for pod, result in zip(self.targets(problematic_pods), results, strict=True):
             pod_logs.append(
                 {
-                    "name": name,
-                    "namespace": namespace,
+                    "name": pod["name"],
+                    "namespace": pod.get("namespace", "default"),
                     "status": pod.get("status"),
                     "success": result.success,
-                    "relevant_lines": self._relevant_lines(result.stdout),
-                    "error": result.stderr if not result.success else "",
+                    "relevant_lines": self._relevant_lines(result.text),
+                    "error": result.error if not result.success else "",
                 }
             )
 

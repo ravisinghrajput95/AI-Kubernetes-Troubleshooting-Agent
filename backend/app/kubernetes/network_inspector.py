@@ -1,48 +1,48 @@
+from collections.abc import Sequence
 from typing import Any
 
-from app.kubernetes.kubectl_executor import KubectlExecutor
+from app.evidence.models import EvidenceKind
+from app.kubernetes.inspector import failure, items, usable
+from app.providers.base import ProviderResult, ReadVerb, ResourceRequest
 
 
 class NetworkInspector:
-    def __init__(self, kubectl: KubectlExecutor | None = None) -> None:
-        self.kubectl = kubectl or KubectlExecutor()
+    id = "k8s.network"
+    kind = EvidenceKind.NETWORK
+    label = "Checked Networking"
 
-    def inspect(self, namespace: str | None = None) -> dict[str, Any]:
-        service_args = ["get", "services"]
-        endpoint_args = ["get", "endpoints"]
-        if namespace:
-            service_args.extend(["-n", namespace])
-            endpoint_args.extend(["-n", namespace])
-        else:
-            service_args.append("-A")
-            endpoint_args.append("-A")
-        service_args.extend(["-o", "json"])
-        endpoint_args.extend(["-o", "json"])
+    def requests(self, scope) -> list[ResourceRequest]:
+        # Order matters: `analyse` reads these positionally.
+        cluster_wide = not scope.namespace
+        return [
+            ResourceRequest(
+                verb=ReadVerb.GET,
+                resource="services",
+                namespace=scope.namespace,
+                all_namespaces=cluster_wide,
+            ),
+            ResourceRequest(
+                verb=ReadVerb.GET,
+                resource="endpoints",
+                namespace=scope.namespace,
+                all_namespaces=cluster_wide,
+            ),
+        ]
 
-        services_result = self.kubectl.run(service_args, parse_json=True)
-        endpoints_result = self.kubectl.run(endpoint_args, parse_json=True)
+    def analyse(self, results: Sequence[ProviderResult], scope) -> dict[str, Any]:
+        services_result, endpoints_result = results[0], results[1]
 
-        if not services_result.success or not isinstance(services_result.data, dict):
-            return {
-                "healthy": False,
-                "findings": [],
-                "error": services_result.stderr,
-                "command": services_result.to_dict(),
-            }
+        if not usable(services_result):
+            return failure(services_result, findings=[])
+        if not usable(endpoints_result):
+            return failure(endpoints_result, findings=[])
 
-        if not endpoints_result.success or not isinstance(endpoints_result.data, dict):
-            return {
-                "healthy": False,
-                "findings": [],
-                "error": endpoints_result.stderr,
-                "command": endpoints_result.to_dict(),
-            }
-
-        endpoints_by_key = self._endpoints_by_key(endpoints_result.data.get("items", []))
+        services = items(services_result)
+        endpoints_by_key = self._endpoints_by_key(items(endpoints_result))
         findings = []
         has_dns_service = False
 
-        for service in services_result.data.get("items", []):
+        for service in services:
             metadata = service.get("metadata", {})
             spec = service.get("spec", {})
             namespace = metadata.get("namespace", "default")
@@ -75,7 +75,16 @@ class NetworkInspector:
                     }
                 )
 
-        if not namespace and not has_dns_service:
+        # Only sayable when the whole cluster was scanned: a namespaced
+        # investigation that cannot see kube-system has learned nothing about
+        # cluster DNS.
+        #
+        # This is a **fix, not a migration**. Before M5 the loop above assigned
+        # to the same `namespace` local the check read, so after any non-empty
+        # service list it held the last service's namespace — always truthy,
+        # and the check never fired. A cluster with no DNS service reported
+        # nothing wrong with its DNS. Keyed on the scope, it fires again.
+        if not scope.namespace and not has_dns_service:
             findings.append(
                 {
                     "namespace": "kube-system",
@@ -87,7 +96,7 @@ class NetworkInspector:
         return {
             "healthy": len(findings) == 0,
             "findings": findings,
-            "total_services": len(services_result.data.get("items", [])),
+            "total_services": len(services),
         }
 
     def _endpoints_by_key(self, endpoints: list[dict[str, Any]]) -> dict[tuple[str, str], int]:
