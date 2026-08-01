@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
     migrations and starts the queue, control and reaper loops.
     """
     state = build_state()
-    state.gateway = await start_agent_gateway()
+    state.gateway = await start_agent_gateway(state)
     app.state.backend = state
     logger.info("{service} started", service=settings.service_name)
     try:

@@ -3,31 +3,71 @@
 // It dials out and receives work on that connection. Nothing here listens, and
 // nothing here decides what to investigate — see the package README for why the
 // boundary is drawn where it is.
+//
+// Identity: the agent enrols once, exchanging a single-use bootstrap token for
+// a certificate whose private key it generates and never transmits. After that
+// it renews itself at two-thirds of certificate life, so nobody has to touch a
+// thousand clusters to keep them connected.
 package main
 
 import (
 	"context"
 	"flag"
 	"log/slog"
+	"math/rand"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/ravisinghrajput95/ai-kubernetes-agent/agent/internal/collectors"
+	"github.com/ravisinghrajput95/ai-kubernetes-agent/agent/internal/identity"
 	"github.com/ravisinghrajput95/ai-kubernetes-agent/agent/internal/transport"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-var version = "0.1.0-m4a"
+var version = "0.2.0-m4b"
+
+// How often to check whether the certificate has reached its renewal point.
+// Cheap enough to be irrelevant — the check is a clock comparison, not a
+// network call — and an hour is fine against a 90-day certificate.
+//
+// Exposed as a flag only so the integration suite can watch a real rotation
+// happen in seconds rather than assert the arithmetic and hope.
+const defaultRenewalCheck = time.Hour
+
+// Reconnection pacing.
+//
+// The backoff exists because M4b made permanent refusal possible: a revoked
+// certificate is rejected at every reconnect, and a flat three-second retry
+// turns one revocation into an indefinite request loop — multiplied by however
+// many clusters were revoked together. Found by revoking a running agent and
+// watching the gateway log rather than by a test.
+const (
+	baseReconnectDelay = 3 * time.Second
+	maxReconnectDelay  = time.Minute
+	// A stream that lasted this long counts as a working connection, so the
+	// next blip starts from the base delay rather than wherever the last
+	// outage ended up.
+	healthyStream = 30 * time.Second
+	// Fraction of the delay to randomise, either way.
+	reconnectJitter = 0.2
+)
 
 func main() {
-	endpoint := flag.String("gateway", envOr("AGENT_GATEWAY", "127.0.0.1:5051"), "platform gateway address")
+	endpoint := flag.String("gateway", envOr("AGENT_GATEWAY", "127.0.0.1:5051"), "platform gateway address (mTLS)")
+	enrolEndpoint := flag.String("enrol", envOr("AGENT_ENROLMENT", ""), "platform enrolment address; defaults to the gateway port plus one")
 	cluster := flag.String("cluster", envOr("AGENT_CLUSTER_ID", ""), "cluster identifier this agent reports as")
-	token := flag.String("token", envOr("AGENT_BOOTSTRAP_TOKEN", ""), "bootstrap token presented on connect")
+	token := flag.String("bootstrap-token", envOr("AGENT_BOOTSTRAP_TOKEN", ""), "single-use enrolment token from `agentctl issue-token`")
+	identityDir := flag.String("identity-dir", envOr("AGENT_IDENTITY_DIR", "/var/lib/k8s-agent"), "where this agent keeps its key and certificate")
+	caFile := flag.String("ca-file", envOr("AGENT_CA_FILE", ""), "platform CA bundle, for verifying the gateway during enrolment")
+	insecureMode := flag.Bool("insecure", envOr("AGENT_INSECURE", "") == "1", "plaintext, no certificate; local development only")
 	kubeconfig := flag.String("kubeconfig", envOr("KUBECONFIG", ""), "kubeconfig path; in-cluster config when empty")
+	renewalCheck := flag.Duration("renewal-check", defaultRenewalCheck, "how often to check whether the certificate has reached its renewal point")
 	once := flag.Bool("once", false, "exit when the stream closes instead of reconnecting")
 	flag.Parse()
 
@@ -36,6 +76,31 @@ func main() {
 	if *cluster == "" {
 		log.Error("a cluster id is required")
 		os.Exit(2)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Identity first: there is no point building a Kubernetes client for an
+	// agent that will not be allowed to connect.
+	var holder *identity.Holder
+	if *insecureMode {
+		log.Warn("running in insecure mode: plaintext, and this agent's cluster id is asserted rather than proved",
+			"note", "matches the platform's AGENT_GATEWAY_TLS=disabled; for local development only")
+	} else {
+		material, err := establishIdentity(ctx, *identityDir, *enrolEndpoint, *endpoint, *cluster, *token, *caFile, log)
+		if err != nil {
+			log.Error("could not establish this agent's identity", "error", err)
+			os.Exit(1)
+		}
+		holder = identity.NewHolder(material)
+
+		// Renewal runs alongside the stream and never interrupts it: a new
+		// certificate is written and swapped in, and the connection already
+		// open keeps using the old one, which stays valid for the remaining
+		// third of its life.
+		go transport.KeepFresh(ctx, identity.NewStore(*identityDir), holder,
+			*endpoint, *cluster, version, *renewalCheck, log)
 	}
 
 	config, err := loadConfig(*kubeconfig)
@@ -63,29 +128,117 @@ func main() {
 	client := transport.New(transport.Options{
 		Endpoint:       *endpoint,
 		ClusterID:      *cluster,
-		BootstrapToken: *token,
 		AgentVersion:   version,
 		KubeVersion:    kubeVersion,
+		Identity:       holder,
+		Insecure:       *insecureMode,
+		BootstrapToken: *token,
 	}, collector, log)
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
+	delay := baseReconnectDelay
 	for {
+		opened := time.Now()
 		if err := client.Run(ctx); err != nil {
-			log.Warn("disconnected", "error", err)
+			log.Warn("disconnected", "error", err, "retrying_in", delay)
 		}
 		if *once || ctx.Err() != nil {
 			return
 		}
+
 		// A gateway restart or a rolling deploy must not need the agent
-		// restarted across a thousand clusters.
+		// restarted across a thousand clusters — but nor should an agent the
+		// platform is permanently refusing hammer it every three seconds. A
+		// stream that lasted is treated as success and resets the backoff.
+		if time.Since(opened) >= healthyStream {
+			delay = baseReconnectDelay
+		}
+
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(3 * time.Second):
+		case <-time.After(jitter(delay)):
 		}
+		delay = min(delay*2, maxReconnectDelay)
 	}
+}
+
+// jitter spreads reconnects so a fleet that lost its gateway together does not
+// come back in lockstep. Deterministic pacing at a thousand clusters is a
+// thundering herd aimed at the component that just recovered.
+func jitter(delay time.Duration) time.Duration {
+	spread := float64(delay) * reconnectJitter
+	return delay - time.Duration(spread) + time.Duration(rand.Float64()*2*spread)
+}
+
+// establishIdentity loads this agent's certificate, enrolling if it has none.
+//
+// Enrolment happens once in an agent's life. A stored identity is reused on
+// every restart, which is what stops a rolling deploy from needing a fresh
+// bootstrap token per pod.
+func establishIdentity(
+	ctx context.Context,
+	identityDir string,
+	enrolEndpoint string,
+	gatewayEndpoint string,
+	cluster string,
+	token string,
+	caFile string,
+	log *slog.Logger,
+) (*identity.Material, error) {
+	store := identity.NewStore(identityDir)
+
+	if store.Exists() {
+		material, err := store.Load()
+		if err == nil {
+			log.Info("loaded stored identity",
+				"expires", material.Leaf.NotAfter.Format(time.RFC3339),
+				"renews", identity.RenewAt(material.Leaf).Format(time.RFC3339),
+			)
+			return material, nil
+		}
+		// Falling through to enrolment would need a token that is probably not
+		// present, so say what is actually wrong.
+		log.Error("the stored identity could not be loaded", "dir", identityDir, "error", err)
+		return nil, err
+	}
+
+	if token == "" {
+		return nil, errNoIdentity{dir: identityDir}
+	}
+
+	return transport.Enrol(ctx, store, transport.EnrolOptions{
+		Endpoint:     enrolmentAddress(enrolEndpoint, gatewayEndpoint),
+		Token:        token,
+		ClusterID:    cluster,
+		CAFile:       caFile,
+		AgentVersion: version,
+	}, log)
+}
+
+// enrolmentAddress defaults the enrolment port to one above the gateway's,
+// which is what the platform does when AGENT_ENROLMENT_PORT is unset.
+func enrolmentAddress(configured, gateway string) string {
+	if configured != "" {
+		return configured
+	}
+	host, port, err := net.SplitHostPort(gateway)
+	if err != nil {
+		return gateway
+	}
+	number, err := strconv.Atoi(port)
+	if err != nil {
+		return gateway
+	}
+	return net.JoinHostPort(host, strconv.Itoa(number+1))
+}
+
+type errNoIdentity struct{ dir string }
+
+func (e errNoIdentity) Error() string {
+	return "this agent has no certificate in " + e.dir +
+		" and no --bootstrap-token to obtain one. Issue a token on the platform with" +
+		" `python -m app.agentctl issue-token --cluster <id>`, or pass --insecure for" +
+		" local development."
 }
 
 func loadConfig(kubeconfig string) (*rest.Config, error) {

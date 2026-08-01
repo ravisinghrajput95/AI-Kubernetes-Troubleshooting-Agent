@@ -428,5 +428,12 @@ class TestMigrations:
         failures = [item for item in results if isinstance(item, BaseException)]
         assert not failures, f"concurrent migration raised: {failures}"
 
+        # Derived rather than listed: a new migration is a normal event, and a
+        # test that has to be edited for one would eventually be edited without
+        # being thought about.
+        from app.persistence.migrator import discover_migrations
+
+        expected = [version for version, _ in discover_migrations()]
+
         applied = [version for item in results for version in item]
-        assert applied == ["001_investigations"], f"applied more than once: {applied}"
+        assert applied == expected, f"applied more than once: {applied}"

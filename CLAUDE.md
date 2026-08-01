@@ -164,9 +164,36 @@ Four things here are load-bearing:
 - **Correlation is on the envelope, not the record.** `EvidenceEnvelope` carries `request_id`; `EvidenceRecord` stays the storage and audit format, which has no such thing.
 - **kubectl rewrites list envelopes.** `kubectl get pods -o json` returns `kind: List`; the API server returns `PodList`. Evidence is therefore compared on objects, never bytes — see `tests/test_agent_transport.py`.
 
-`K8S_AGENT_CLUSTER_INTEGRATION=1` runs the differential suite against a real cluster (`kind create cluster --name m4`); it skips otherwise, so `python -m pytest` still needs nothing.
+`K8S_AGENT_CLUSTER_INTEGRATION=1` runs the differential suite against a real cluster (`kind create cluster --name m4b`); it skips otherwise, so `python -m pytest` still needs nothing.
 
-**mTLS is not implemented (M4b).** The agent presents a bootstrap token on a plaintext stream; do not expose the gateway port outside a trusted network.
+### Agent identity (`app/security/`, `app/gateway/identity.py`, `agent/internal/identity/`)
+
+**The certificate is the identity.** An agent names itself exactly once — in `Register`, where a single-use token has already bound that name — and never again. Every `Connect` stream is placed by reading the peer certificate, carried as a URI SAN in SPIFFE form (`spiffe://<trust-domain>/cluster/<id>`; the CN is for humans and is never trusted).
+
+Five things here are load-bearing:
+
+- **`AgentHello.cluster_id` cannot override the certificate, and a contradiction aborts the stream** with `PERMISSION_DENIED` naming both values. Silently preferring the certificate is defensible against an attacker but not against a mistake: a wrong `--cluster` flag would file evidence under one name while the agent's own logs said another, forever. An *empty* hello is fine — the certificate supplies it.
+- **The CSR contributes a public key and nothing else.** Subject, SANs and extensions are discarded; the leaf is built from the token's cluster binding. Its self-signature is verified, because a CA that skips proof-of-possession is a signing oracle.
+- **Single-use is a conditional `UPDATE`** (`WHERE consumed_at IS NULL`) on Postgres — the same mutual exclusion as the job claim — or an in-process lock plus atomic replace on the file store. Tokens are stored SHA-256 hashed, never in the clear. Pinned by a *concurrent* test; a read-then-write passes every other assertion and fails that one.
+- **Renewal is authenticated by the current certificate**, at 2/3 of its life, and **never touches the running stream**. The new material is swapped into a `Holder` that Go's `GetClientCertificate` consults per handshake, so the *next* dial picks it up while the open connection keeps the old certificate — still valid for the remaining third. That overlap is why rotation drops no in-flight collection and needs no restart. Do not revoke on renewal; that would kill the stream this design exists to protect.
+- **Revocation is swept, not just checked at connect.** A transport built around a stream that stays open for weeks makes revocation-at-reconnect close to meaningless, so `AgentGateway._sweep_revocations()` ends live sessions whose serial was revoked. Both this and the connect-time check are pinned by tests.
+
+Two listeners, because gRPC's Python bindings offer only "never request a client certificate" or "require and verify one" — there is no request-but-don't-require mode. The **gateway** port requires a certificate and serves `Connect` plus renewals; the **enrolment** port (default: gateway + 1) requests none and serves only token bootstrap. A fleet that has finished enrolling can firewall the enrolment port off.
+
+`AGENT_GATEWAY_TLS=disabled` keeps the M4a plaintext path as an explicit, logged opt-in for local development — same discipline as the single-process job store. Sessions established that way report `identity_source: "declared"`, so a deployment that left it on cannot look like one that did not. An agent must pass `--insecure` to match, and an mTLS gateway refuses it outright rather than downgrading.
+
+Enrolment state follows the same decision as the job store: `FileEnrolmentStore` under `AGENT_IDENTITY_DIR` by default, `PostgresEnrolmentStore` when `DATABASE_URL` is set (migration `002_agent_identity.sql`). Both are held to `tests/test_enrolment_store_contract.py`. **The CA private key is a file, not a database row** — a dev CA is generated on first start and says so loudly; supply `AGENT_CA_CERT_FILE`/`AGENT_CA_KEY_FILE` for anything shared.
+
+Operator commands are a CLI, not an HTTP endpoint, because the platform still has no auth (F13) and a token-minting endpoint behind nothing would be worse than the problem it solves:
+
+```bash
+python -m app.agentctl issue-token --cluster prod-eu-1
+python -m app.agentctl list --cluster prod-eu-1
+python -m app.agentctl revoke --cluster prod-eu-1 --reason "node compromised"
+python -m app.agentctl ca --out ca.crt
+```
+
+**Known limitation:** an agent's *first* dial has nothing to verify the platform with. `--ca-file` (printed by `issue-token`) is the correct path; without it the bootstrap call is trust-on-first-use, logged as such, and the CA bundle returned by `Register` is pinned for every dial afterwards.
 
 ### Wire contract (`/proto`, `app/wire/`)
 

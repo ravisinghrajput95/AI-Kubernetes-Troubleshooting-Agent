@@ -598,7 +598,7 @@ supported default, not a dev-only fallback** — with neither `DATABASE_URL` nor
 --reload` still needs no infrastructure. Exactly one of the two set is refused
 at startup rather than silently half-configuring.
 
-**M4 — Agent MVP + gateway. ◐ Partially delivered (M4a).**
+**M4 — Agent MVP + gateway. ✅ Delivered (M4a transport, M4b identity).**
 Go agent implementing pods, events, deployments, logs. mTLS registration.
 `RemoteAgentProvider`. Runs beside the local provider, selected per cluster
 record. *Exit:* one cluster investigated end-to-end through an agent, producing
@@ -631,10 +631,75 @@ see. And correlation lives in an `EvidenceEnvelope` on the transport rather than
 on `EvidenceRecord`, because the record is also the storage and audit format and
 a stored record has no request id.
 
-*Not delivered (M4b):* mTLS registration. The agent presents a bootstrap token
-on a plaintext stream today, the gateway says so in its startup log, and
-ADR-005's certificate identity is the next step. The remaining collectors and
-`RemoteAgentProvider` selection per cluster record follow with M5.
+*Outcome (M4b — identity):* the agent generates a P-256 key, exchanges a
+single-use bootstrap token for a certificate through the `Register` RPC the
+schema already carried, and dials `Connect` over mTLS. The gateway resolves the
+peer certificate to a cluster instead of believing `AgentHello`. ADR-005's
+first half is now real; its second half (OIDC user identity and per-request
+impersonation) is deliberately not — `Impersonation` is on the wire and
+populated from the caller's `Principal`, but making the *cluster* enforce it is
+a separate change with a separate RBAC conversation, and claiming it here would
+be the kind of overreach §9 has avoided so far.
+
+Four decisions were forced by contact rather than chosen on paper.
+
+**Two listeners, not one.** gRPC's Python bindings offer only "never request a
+client certificate" or "require and verify one" — there is no
+request-but-do-not-require mode, so a single port cannot serve both an
+unauthenticated enrolment call and an mTLS stream. Measured before designing
+around it rather than assumed. The split turned out to describe the intent
+better than one port did: enrolment is the only surface an unauthenticated peer
+reaches, and a fleet that has finished enrolling can firewall it off entirely.
+`RegistrationResponse.gateway_endpoint` — a field written speculatively in M2 —
+is what tells a newly enrolled agent where to go next.
+
+**A contradiction between certificate and hello aborts the stream.** Preferring
+the certificate silently would be sound against an attacker and quietly wrong
+against a mistake: an agent redeployed with the wrong `--cluster` flag would
+have its evidence filed under one name while its own logs and configuration
+said another, permanently, with nothing to notice it by. The refusal names both
+values, and the fix is one flag.
+
+**Renewal must not be a reconnect.** Rotating at two-thirds of certificate life
+leaves a third as overlap, and the new certificate is swapped into a holder that
+Go consults per TLS handshake — so the *next* dial uses it and the open stream
+is never touched. Revoking the old certificate at renewal time would have
+undone the whole point. Verified by running it: a real agent on a short-lived
+certificate renews while the same session object keeps answering reads, and
+removing the renewal loop fails that test.
+
+**Revocation is swept, not merely checked at connect.** This transport's
+defining property is a connection that stays open for weeks, which makes
+revocation-at-reconnect close to no revocation at all. A gateway sweep ends live
+sessions whose serial was revoked; a test with the sweeper removed fails, which
+is the only thing that stops it being deleted as redundant later.
+
+The differential suite now runs **over mTLS** — every evidence comparison from
+M4a, unchanged, on a stream whose identity a certificate established — plus a
+hermetic Python-to-Python mTLS suite so the identity model is covered by
+`python -m pytest` with no cluster, no Go binary and no CA on disk. 634 hermetic
+tests, 24 opt-in cluster tests, 30 enrolment-store contract cases across both
+backends. Five platform invariants and one agent invariant were mutation-tested
+rather than assumed: removing the hello/certificate check, the sweeper, the
+single-use condition, the CSR's SAN construction, its signature verification,
+and the renewal loop each fail a specific test.
+
+Plaintext survives as `AGENT_GATEWAY_TLS=disabled` — an explicit, logged
+opt-in for local development, on the same reasoning as the single-process job
+store. Sessions established that way report `identity_source: "declared"`, so a
+deployment that left it on cannot be mistaken for one that did not, and an mTLS
+gateway refuses a plaintext agent rather than downgrading.
+
+*Known limitation, stated rather than buried:* an agent's first dial has nothing
+to verify the platform with. `--ca-file` is the correct path and
+`agentctl issue-token` prints it; without it, bootstrap is trust-on-first-use,
+logged as such, and the CA bundle returned by `Register` is pinned thereafter.
+The CA itself is a development CA generated on first start — appropriate for one
+deployment, not for a regulated customer, and the seam for an external issuer is
+a constructor.
+
+The remaining collectors and `RemoteAgentProvider` selection per cluster record
+follow with M5.
 
 **M5 — Collector parity.**
 Migrate the remaining collectors, including Prometheus and Loki, to the agent.
@@ -730,6 +795,17 @@ user. *Why:* authentication decides *whether* you get in; impersonation decides
 agent's ServiceAccount can. *Consequence:* customers must grant `impersonate`,
 which is a conversation to have during onboarding, and is easier to defend than
 blanket cluster read.
+
+*Status:* the agent half shipped with M4b — certificate identity resolved at the
+gateway, single-use enrolment, automatic rotation at 2/3 life with an overlap
+window, revocation swept against live streams. Two refinements the
+implementation forced, recorded because they are the parts a reader would
+otherwise assume: identity is carried as a **URI SAN in SPIFFE form** rather
+than a Common Name, so a customer already running SPIRE has somewhere to plug
+in, and the platform **discards everything in the CSR except the public key** —
+an agent that could name itself in its request could name another cluster, which
+would make certificate identity decorative. The OIDC and impersonation halves
+remain designed and unbuilt.
 
 **ADR-006 — Shared control plane with enforced tenant isolation, plus a
 single-tenant option.**

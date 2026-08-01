@@ -10,18 +10,28 @@ import (
 
 	agentv1 "github.com/ravisinghrajput95/ai-kubernetes-agent/agent/gen/agentv1"
 	"github.com/ravisinghrajput95/ai-kubernetes-agent/agent/internal/collectors"
+	"github.com/ravisinghrajput95/ai-kubernetes-agent/agent/internal/identity"
 	"github.com/ravisinghrajput95/ai-kubernetes-agent/agent/internal/policy"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 )
 
 type Options struct {
-	Endpoint       string
-	ClusterID      string
+	Endpoint     string
+	ClusterID    string
+	AgentVersion string
+	KubeVersion  string
+	// The agent's certificate, swappable while in use. When set the stream is
+	// mTLS and the platform reads this agent's identity off the certificate
+	// rather than off `hello`.
+	Identity *identity.Holder
+	// Plaintext development mode: no certificate, a shared token in metadata,
+	// and a cluster id this agent asserts about itself. Matches the platform's
+	// AGENT_GATEWAY_TLS=disabled and is refused by a gateway in mTLS mode.
+	Insecure       bool
 	BootstrapToken string
-	AgentVersion   string
-	KubeVersion    string
 	// Reads run concurrently, bounded so a large collection cannot flood the
 	// API server this agent is a guest on.
 	MaxConcurrent int
@@ -45,16 +55,18 @@ func New(options Options, collector *collectors.Collector, log *slog.Logger) *Cl
 // The agent dials out and never listens: no inbound port is opened into the
 // cluster, which is the constraint the entire transport is shaped around.
 func (c *Client) Run(ctx context.Context) error {
-	connection, err := grpc.NewClient(
-		c.options.Endpoint,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	transportCredentials, err := c.credentials()
+	if err != nil {
+		return err
+	}
+
+	connection, err := grpc.NewClient(c.options.Endpoint, grpc.WithTransportCredentials(transportCredentials))
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", c.options.Endpoint, err)
 	}
 	defer connection.Close()
 
-	if c.options.BootstrapToken != "" {
+	if c.options.Insecure && c.options.BootstrapToken != "" {
 		ctx = metadata.AppendToOutgoingContext(ctx, "x-agent-token", c.options.BootstrapToken)
 	}
 
@@ -73,7 +85,11 @@ func (c *Client) Run(ctx context.Context) error {
 	if err := stream.Send(hello); err != nil {
 		return fmt.Errorf("send hello: %w", err)
 	}
-	c.log.Info("connected", "endpoint", c.options.Endpoint, "cluster", c.options.ClusterID)
+	c.log.Info("connected",
+		"endpoint", c.options.Endpoint,
+		"cluster", c.options.ClusterID,
+		"identity", c.identityDescription(),
+	)
 
 	// One writer goroutine: gRPC streams are not safe for concurrent Send, and
 	// collection fans out.
@@ -96,13 +112,48 @@ func (c *Client) Run(ctx context.Context) error {
 		case *agentv1.PlatformMessage_Collect:
 			go c.serve(ctx, payload.Collect, send)
 		case *agentv1.PlatformMessage_Heartbeat:
-			send(&agentv1.AgentMessage{Payload: &agentv1.AgentMessage_Health{
-				Health: &agentv1.AgentHealth{},
-			}})
+			// An expiring certificate is reported here rather than only logged
+			// locally: the platform is the one that can act on it, and
+			// `AgentHealth.degradation` is the field the schema already
+			// reserved for a connected-but-troubled agent.
+			health := &agentv1.AgentHealth{}
+			if c.options.Identity != nil {
+				health.Degradation = c.options.Identity.Degradation(time.Now())
+			}
+			send(&agentv1.AgentMessage{Payload: &agentv1.AgentMessage_Health{Health: health}})
 		default:
 			c.log.Debug("ignoring message the platform sent", "type", fmt.Sprintf("%T", payload))
 		}
 	}
+}
+
+// credentials decides how this agent proves who it is.
+//
+// The mTLS path is the default and the only one in which the platform knows
+// the agent's identity rather than being told it. The insecure path exists for
+// local development, matches the platform's AGENT_GATEWAY_TLS=disabled, and is
+// refused outright by a gateway running in mTLS mode — so choosing it wrongly
+// fails to connect rather than silently downgrading.
+func (c *Client) credentials() (credentials.TransportCredentials, error) {
+	if c.options.Insecure {
+		return insecure.NewCredentials(), nil
+	}
+	if c.options.Identity == nil {
+		return nil, fmt.Errorf("no certificate: enrol first, or pass --insecure for local development")
+	}
+	config, err := c.options.Identity.ClientTLS(serverName(c.options.Endpoint))
+	if err != nil {
+		return nil, err
+	}
+	return credentials.NewTLS(config), nil
+}
+
+func (c *Client) identityDescription() string {
+	if c.options.Insecure {
+		return "declared (plaintext development mode)"
+	}
+	material := c.options.Identity.Material()
+	return fmt.Sprintf("certificate expiring %s", material.Leaf.NotAfter.Format(time.RFC3339))
 }
 
 // serve answers one collection request, streaming each record as it is

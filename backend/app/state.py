@@ -61,19 +61,46 @@ class StateBackend:
         set_job_store(None)
         set_report_store(None)
 
+        if self.gateway is not None:
+            from app.security.enrolment import set_enrolment_store
+
+            set_enrolment_store(None)
+
 
 def worker_identity() -> str:
     return settings.worker_id or f"{socket.gethostname()}:{os.getpid()}"
 
 
-async def start_agent_gateway():
+async def start_agent_gateway(state: "StateBackend | None" = None):
     """The gRPC endpoint cluster agents dial into, when one is configured.
 
     Off by default and imported lazily: a deployment reading a local kubeconfig
-    needs no agent, and should not load grpc to find that out.
+    needs no agent, and should not load grpc or the certificate machinery to
+    find that out.
     """
     if not settings.agent_gateway_enabled:
         return None
+
+    settings.validate_agent_gateway()
+
+    # Agent enrolment state follows the same decision the job store made: with
+    # Postgres it is a shared table whose conditional UPDATE is what makes a
+    # bootstrap token single-use across workers; without it, a file beside the
+    # reports. Installed here rather than in `build_state` so a deployment with
+    # no agents never imports any of it.
+    if state is not None and settings.distributed_state and state.database is not None:
+        from app.persistence.agent_identity import PostgresEnrolmentStore
+        from app.security.enrolment import set_enrolment_store
+
+        set_enrolment_store(PostgresEnrolmentStore(state.database))
+        logger.info("Agent enrolment state is in Postgres")
+    else:
+        logger.info(
+            "Agent enrolment state is a file under {path}. Single-use survives a "
+            "restart; it is not safe for two server processes, which is the "
+            "configuration DATABASE_URL/REDIS_URL already gate.",
+            path=settings.agent_identity_dir,
+        )
 
     from app.gateway.server import AgentGateway
 

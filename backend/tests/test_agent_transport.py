@@ -5,32 +5,45 @@ through an agent produces the same evidence as the same read performed locally.
 Anything less and the two paths have quietly diverged, which is the failure that
 would make a fleet diagnosis irreproducible.
 
+**Since M4b this runs over mTLS.** The agent enrols with a single-use bootstrap
+token, receives a certificate for a key it generated itself, and every
+assertion below is made against a stream whose identity was proved by that
+certificate rather than asserted in `hello`. Keeping the differential suite on
+the real path is the point: an identity model that only the unit tests exercise
+is one the evidence comparison would not notice breaking.
+
 Opt-in, because it needs a real cluster and a built agent binary:
 
-    kind create cluster --name m4
+    kind create cluster --name m4b
     (cd agent && go build -o /tmp/k8s-agent ./cmd/agent)
     K8S_AGENT_CLUSTER_INTEGRATION=1 AGENT_BINARY=/tmp/k8s-agent \\
-      AGENT_TEST_CONTEXT=kind-m4 python -m pytest tests/test_agent_transport.py
+      AGENT_TEST_CONTEXT=kind-m4b python -m pytest tests/test_agent_transport.py
 """
 
 import asyncio
 import json
 import os
 import subprocess
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
+from app.gateway.identity import AgentIdentityService
 from app.gateway.server import AgentGateway
 from app.gateway.session import AgentRegistry
 from app.providers.base import ReadVerb, ResourceRequest
 from app.providers.local_kubectl import LocalKubectlProvider
 from app.providers.remote_agent import RemoteAgentProvider
+from app.security.ca import CertificateAuthority
+from app.security.enrolment import FileEnrolmentStore
 
 ENABLED = os.environ.get("K8S_AGENT_CLUSTER_INTEGRATION") == "1"
 BINARY = os.environ.get("AGENT_BINARY", "/tmp/m3run/k8s-agent")
-CONTEXT = os.environ.get("AGENT_TEST_CONTEXT", "kind-m4")
+CONTEXT = os.environ.get("AGENT_TEST_CONTEXT", "kind-m4b")
 KUBECONFIG = os.environ.get("AGENT_TEST_KUBECONFIG", "")
+
+TRUST_DOMAIN = "integration.local"
 
 requires_cluster = pytest.mark.skipif(
     not ENABLED or not Path(BINARY).exists(),
@@ -40,38 +53,73 @@ requires_cluster = pytest.mark.skipif(
 pytestmark = requires_cluster
 
 
+async def wait_for_agent(registry: AgentRegistry, process, timeout: float = 20.0):
+    for _ in range(int(timeout * 10)):
+        session = registry.get(CONTEXT)
+        if session is not None:
+            return session
+        if process.poll() is not None:
+            break
+        await asyncio.sleep(0.1)
+
+    process.terminate()
+    _, stderr = process.communicate(timeout=5)
+    pytest.fail(f"The agent never connected: {stderr.decode()[-1500:]}")
+
+
 @pytest.fixture
-async def connected_agent():
-    """A gateway, and a real agent process dialled into it."""
+async def connected_agent(tmp_path, monkeypatch):
+    """A gateway, and a real agent process enrolled and dialled into it over mTLS."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "agent_gateway_dns_names", "localhost")
+    monkeypatch.setattr(settings, "agent_gateway_ip_addresses", "127.0.0.1")
+
+    authority = CertificateAuthority.create(TRUST_DOMAIN)
+    store = FileEnrolmentStore(tmp_path / "enrolment.json")
+    service = AgentIdentityService(authority, store, leaf_lifetime=timedelta(days=90))
+
     registry = AgentRegistry()
-    gateway = AgentGateway(port=0, registry=registry)
+    gateway = AgentGateway(
+        port=0, registry=registry, enrolment_port=0, identity_service=service, mtls=True
+    )
     port = await gateway.start()
 
-    environment = {**os.environ, "AGENT_GATEWAY": f"127.0.0.1:{port}"}
+    # The CA the agent verifies the gateway with, copied out of band exactly as
+    # an operator would.
+    ca_file = tmp_path / "ca.crt"
+    ca_file.write_bytes(service.ca_bundle_pem)
+
+    token = store.issue_token(CONTEXT)
+
+    environment = {**os.environ}
     if KUBECONFIG:
         environment["KUBECONFIG"] = KUBECONFIG
 
     process = subprocess.Popen(
-        [BINARY, "--cluster", CONTEXT, "--gateway", f"127.0.0.1:{port}", "--once"],
+        [
+            BINARY,
+            "--cluster",
+            CONTEXT,
+            "--gateway",
+            f"localhost:{port}",
+            "--enrol",
+            f"localhost:{gateway.enrolment_port}",
+            "--bootstrap-token",
+            token,
+            "--ca-file",
+            str(ca_file),
+            "--identity-dir",
+            str(tmp_path / "agent-identity"),
+            "--once",
+        ],
         env=environment,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
 
     try:
-        session = None
-        for _ in range(100):
-            session = registry.get(CONTEXT)
-            if session is not None:
-                break
-            await asyncio.sleep(0.1)
-
-        if session is None:
-            process.terminate()
-            _, stderr = process.communicate(timeout=5)
-            pytest.fail(f"The agent never connected: {stderr.decode()[:400]}")
-
-        yield session
+        yield await wait_for_agent(registry, process)
     finally:
         process.terminate()
         process.wait(timeout=5)
@@ -106,6 +154,41 @@ class TestTheAgentAnswers:
         assert result.success, result.error
         assert isinstance(result.data, dict)
         assert result.data.get("kind") == "PodList"
+
+
+class TestTheRealAgentProvesWhoItIs:
+    """M4b's exit criterion, against the actual binary rather than a stand-in.
+
+    The hermetic suite (`test_agent_mtls.py`) drives the gateway with a Python
+    client. That proves the platform's half. This proves the other half: that
+    the Go agent generates a key, enrols, and comes back on a stream whose
+    identity the certificate established.
+    """
+
+    async def test_the_session_identity_came_from_a_certificate(self, connected_agent):
+        assert connected_agent.identity.verified
+        assert connected_agent.identity.source == "certificate"
+        assert connected_agent.certificate_serial
+        assert connected_agent.cluster_id == CONTEXT
+
+    async def test_the_agents_private_key_never_reached_the_platform(
+        self, connected_agent, tmp_path
+    ):
+        """The key is on the agent's disk and nowhere else."""
+        key_file = tmp_path / "agent-identity" / "agent.key"
+        assert key_file.exists(), "the agent did not keep its key"
+        assert key_file.stat().st_mode & 0o077 == 0, "the agent's key is world-readable"
+
+        # And the platform holds a certificate for it, not the key itself.
+        certificates = [
+            record.serial
+            for record in FileEnrolmentStore(tmp_path / "enrolment.json").certificates(CONTEXT)
+        ]
+        assert connected_agent.certificate_serial in certificates
+
+    async def test_the_bootstrap_token_was_spent(self, connected_agent, tmp_path):
+        tokens = FileEnrolmentStore(tmp_path / "enrolment.json").tokens(CONTEXT)
+        assert tokens and all(token.spent for token in tokens)
 
 
 class TestBothPathsAgree:
@@ -279,3 +362,203 @@ class TestAnInvestigationRunsThroughTheAgent:
         # The agent never runs kubectl. It records what would have produced the
         # same bytes, so a human can reproduce a remote read by hand.
         assert any("kubectl get pods" in command for command in provider.executed_commands)
+
+
+class TestRotationDoesNotInterruptAnything:
+    """Rotation observed, not asserted.
+
+    The Go tests pin the arithmetic and the hermetic suite pins the renewal
+    RPC. Neither would notice the failure that actually matters at fleet scale:
+    a renewal that drops the stream, and with it every collection in flight
+    across a thousand clusters at the same moment. That is what this checks —
+    a real agent, a real renewal, and the *same session object* still serving
+    reads afterwards.
+
+    What it deliberately does **not** check is the two-thirds timing. The CA
+    backdates `NotBefore` by five minutes for clock skew, which against a
+    thirty-second certificate puts the renewal point already in the past, so
+    the agent renews on its first check. That is the right trade for a test of
+    the mechanism — it takes seconds instead of minutes — and the timing itself
+    is pinned by `TestRenewalHappensAtTwoThirdsOfLife` in the Go suite, where
+    it can be exercised against an arbitrary clock rather than a real one.
+    """
+
+    @pytest.fixture
+    async def rotating_agent(self, tmp_path, monkeypatch):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "agent_gateway_dns_names", "localhost")
+        monkeypatch.setattr(settings, "agent_gateway_ip_addresses", "127.0.0.1")
+
+        authority = CertificateAuthority.create(TRUST_DOMAIN)
+        store = FileEnrolmentStore(tmp_path / "enrolment.json")
+        service = AgentIdentityService(authority, store, leaf_lifetime=timedelta(seconds=30))
+
+        registry = AgentRegistry()
+        gateway = AgentGateway(
+            port=0, registry=registry, enrolment_port=0, identity_service=service, mtls=True
+        )
+        port = await gateway.start()
+
+        ca_file = tmp_path / "ca.crt"
+        ca_file.write_bytes(service.ca_bundle_pem)
+
+        process = subprocess.Popen(
+            [
+                BINARY,
+                "--cluster",
+                CONTEXT,
+                "--gateway",
+                f"localhost:{port}",
+                "--enrol",
+                f"localhost:{gateway.enrolment_port}",
+                "--bootstrap-token",
+                store.issue_token(CONTEXT),
+                "--ca-file",
+                str(ca_file),
+                "--identity-dir",
+                str(tmp_path / "agent-identity"),
+                "--renewal-check",
+                "1s",
+                "--once",
+            ],
+            env={**os.environ},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            session = await wait_for_agent(registry, process)
+            yield session, store, registry
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
+            await gateway.stop()
+
+    async def test_the_agent_renews_itself_without_dropping_the_stream(self, rotating_agent):
+        session, store, registry = rotating_agent
+        original_serial = session.certificate_serial
+
+        # Renewal is due at 20s of a 30s life; allow for the check interval.
+        for _ in range(300):
+            if len(store.certificates(CONTEXT)) > 1:
+                break
+            await asyncio.sleep(0.1)
+
+        serials = [record.serial for record in store.certificates(CONTEXT)]
+        assert len(serials) > 1, "the agent never renewed its certificate"
+        assert original_serial in serials
+
+        # The stream is the same one. Not "a stream exists" — the *same object*,
+        # which is what proves nothing reconnected.
+        assert registry.get(CONTEXT) is session
+        assert session.certificate_serial == original_serial
+
+        # And it still works, on the old certificate, after the new one exists.
+        result = await RemoteAgentProvider(session).fetch(REQUESTS[0])
+        assert result.success, result.error
+
+    async def test_the_old_certificate_is_not_revoked_by_renewing(self, rotating_agent):
+        """The overlap window is the whole reason renewal is safe."""
+        _, store, _ = rotating_agent
+
+        for _ in range(300):
+            if len(store.certificates(CONTEXT)) > 1:
+                break
+            await asyncio.sleep(0.1)
+
+        assert store.revoked_serials() == set()
+        assert not any(record.revoked for record in store.certificates(CONTEXT))
+
+
+class TestThePlaintextPathIsStillThere:
+    """The development opt-in, kept honest by being tested.
+
+    `AGENT_GATEWAY_TLS=disabled` is a supported mode, not a dead branch, and the
+    same discipline applies to it as to the single-process job store: it has to
+    keep working, and it has to keep being something you choose rather than
+    something you end up in.
+    """
+
+    @pytest.fixture
+    async def plaintext_agent(self, tmp_path):
+        registry = AgentRegistry()
+        gateway = AgentGateway(port=0, registry=registry, mtls=False)
+        port = await gateway.start()
+
+        environment = {**os.environ}
+        if KUBECONFIG:
+            environment["KUBECONFIG"] = KUBECONFIG
+
+        process = subprocess.Popen(
+            [
+                BINARY,
+                "--cluster",
+                CONTEXT,
+                "--gateway",
+                f"127.0.0.1:{port}",
+                "--insecure",
+                "--once",
+            ],
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            yield await wait_for_agent(registry, process)
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
+            await gateway.stop()
+
+    async def test_it_connects_and_collects(self, plaintext_agent):
+        result = await RemoteAgentProvider(plaintext_agent).fetch(REQUESTS[0])
+        assert result.success, result.error
+        assert result.data.get("kind") == "PodList"
+
+    async def test_its_identity_is_marked_unverified(self, plaintext_agent):
+        """The whole difference between the two modes, made visible.
+
+        The cluster id here came from `hello`. Nothing proved it, the session
+        says so, and `/clusters` reports it — so a deployment that left this
+        mode on cannot look like one that did not.
+        """
+        assert not plaintext_agent.identity.verified
+        assert plaintext_agent.identity.source == "declared"
+        assert plaintext_agent.certificate_serial == ""
+        assert plaintext_agent.describe()["identity_source"] == "declared"
+
+    async def test_an_mtls_gateway_refuses_a_plaintext_agent(self, tmp_path):
+        """Choosing the wrong mode fails to connect; it does not downgrade."""
+        authority = CertificateAuthority.create(TRUST_DOMAIN)
+        service = AgentIdentityService(
+            authority,
+            FileEnrolmentStore(tmp_path / "enrolment.json"),
+            leaf_lifetime=timedelta(days=90),
+        )
+        registry = AgentRegistry()
+        gateway = AgentGateway(
+            port=0, registry=registry, enrolment_port=0, identity_service=service, mtls=True
+        )
+        port = await gateway.start()
+
+        process = subprocess.Popen(
+            [
+                BINARY,
+                "--cluster",
+                CONTEXT,
+                "--gateway",
+                f"127.0.0.1:{port}",
+                "--insecure",
+                "--once",
+            ],
+            env={**os.environ},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            await asyncio.sleep(5)
+            assert registry.get(CONTEXT) is None, "a plaintext agent reached an mTLS gateway"
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
+            await gateway.stop()

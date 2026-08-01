@@ -17,6 +17,7 @@ from typing import Any
 
 from loguru import logger
 
+from app.security.identity import AgentIdentity
 from app.wire.gen.agent.v1 import agent_pb2, collection_pb2, evidence_pb2
 
 # How long a single collection may take before the platform stops waiting.
@@ -44,15 +45,46 @@ class PendingCollection:
 
 
 class AgentSession:
-    """The platform's handle on one connected agent."""
+    """The platform's handle on one connected agent.
 
-    def __init__(self, cluster_id: str, hello: agent_pb2.AgentHello) -> None:
-        self.cluster_id = cluster_id
+    Constructed from an `AgentIdentity`, not from anything the agent said about
+    itself. Under mTLS that identity was read out of the peer certificate
+    before the first message was accepted, which is what makes `cluster_id`
+    here a fact rather than a claim.
+    """
+
+    def __init__(
+        self,
+        identity: AgentIdentity,
+        hello: agent_pb2.AgentHello,
+        closed: asyncio.Event | None = None,
+    ) -> None:
+        self.identity = identity
         self.hello = hello
         self.outbound: asyncio.Queue[agent_pb2.PlatformMessage] = asyncio.Queue()
+        # Set when the stream must end for a reason the stream itself has not
+        # noticed — today, only revocation. Created by whoever owns the RPC so
+        # it can be waited on before the session exists.
+        self.closed = closed or asyncio.Event()
+        self.termination_reason = ""
         self._pending: dict[str, PendingCollection] = {}
         self._counter = 0
         self.connected_at = asyncio.get_event_loop().time()
+
+    @property
+    def cluster_id(self) -> str:
+        """The cluster this session speaks for.
+
+        A property rather than a field so the identity stays the single source
+        of it — the registry, the provider and the engine all read this and
+        none of them needs to know a certificate was involved.
+        """
+        return self.identity.cluster_id
+
+    @property
+    def certificate_serial(self) -> str:
+        """Empty on the plaintext development path, where there is no certificate."""
+        return self.identity.serial
 
     @property
     def supported_kinds(self) -> frozenset[str]:
@@ -127,9 +159,25 @@ class AgentSession:
             pending.finish(reason)
         self._pending.clear()
 
+    def terminate(self, reason: str) -> None:
+        """Ask the stream to end, from outside the stream.
+
+        Revocation is the reason this exists. The transport's defining property
+        is a connection that stays open for weeks, so a revocation that only
+        took effect at the next reconnect would be close to meaningless.
+        """
+        self.termination_reason = reason
+        self.cancel_all(reason)
+        self.closed.set()
+
     def describe(self) -> dict[str, Any]:
         return {
             "cluster_id": self.cluster_id,
+            "identity_source": self.identity.source,
+            "certificate_serial": self.identity.serial,
+            "certificate_expires_at": (
+                self.identity.expires_at.isoformat() if self.identity.expires_at else ""
+            ),
             "agent_version": self.hello.agent_version,
             "kubernetes_version": self.hello.kubernetes_version,
             "supported_kinds": sorted(self.supported_kinds),
@@ -165,6 +213,26 @@ class AgentRegistry:
 
     def get(self, cluster_id: str) -> AgentSession | None:
         return self._sessions.get(cluster_id)
+
+    def sessions(self) -> list[AgentSession]:
+        return list(self._sessions.values())
+
+    def terminate_revoked(self, revoked_serials: set[str], reason: str) -> list[AgentSession]:
+        """End every live session whose certificate has since been revoked.
+
+        Returns what it ended, so the caller can log it rather than this having
+        an opinion about logging.
+        """
+        if not revoked_serials:
+            return []
+        doomed = [
+            session
+            for session in self._sessions.values()
+            if session.certificate_serial and session.certificate_serial in revoked_serials
+        ]
+        for session in doomed:
+            session.terminate(reason)
+        return doomed
 
     def clusters(self) -> list[dict[str, Any]]:
         return [session.describe() for session in self._sessions.values()]

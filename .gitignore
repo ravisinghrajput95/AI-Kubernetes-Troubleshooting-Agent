@@ -125,3 +125,16 @@ node_modules/
 # Go build output
 agent/agent
 agent/bin/
+
+# =========================================================
+# AGENT IDENTITY
+# =========================================================
+# The gateway generates a development CA and agents store their own keys.
+# `backend/data/` already covers the defaults; these catch a configured
+# AGENT_IDENTITY_DIR pointed somewhere else in the tree. Committing a CA
+# private key is the one mistake in this milestone that cannot be undone by
+# a follow-up commit.
+agent_identity/
+enrolment.json
+*.key
+!**/testdata/**/*.key

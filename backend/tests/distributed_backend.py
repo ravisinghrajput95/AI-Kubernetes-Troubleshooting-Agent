@@ -38,15 +38,22 @@ def redis_url() -> str:
 class DistributedBackend:
     """A migrated database and an isolated Redis key space for one test."""
 
-    def __init__(self) -> None:
+    def __init__(self, with_bus: bool = True) -> None:
         from app.persistence.postgres import Database
-        from app.persistence.redis_bus import RedisBus
 
         self.database = Database(database_url(), min_size=1, max_size=4)
         self.database.migrate()
         self._truncate()
-        # A unique prefix per test: two tests must not see each other's queue.
-        self.bus = RedisBus(redis_url(), prefix=f"test-{uuid.uuid4().hex[:12]}")
+
+        # Agent enrolment is Postgres-only — single-use is a conditional UPDATE
+        # and there is no latency layer in front of it — so those tests ask for
+        # a backend without a bus rather than requiring a Redis they never use.
+        self.bus = None
+        if with_bus:
+            from app.persistence.redis_bus import RedisBus
+
+            # A unique prefix per test: two tests must not see each other's queue.
+            self.bus = RedisBus(redis_url(), prefix=f"test-{uuid.uuid4().hex[:12]}")
 
     def store(self):
         from app.jobs.distributed import PostgresRedisJobStore
@@ -58,21 +65,28 @@ class DistributedBackend:
 
         return PostgresReportStore(self.database)
 
+    def enrolment(self):
+        from app.persistence.agent_identity import PostgresEnrolmentStore
+
+        return PostgresEnrolmentStore(self.database)
+
     def drop_schema(self) -> None:
         """Return the database to empty, so a migration test starts from zero."""
         with self.database.cursor() as cursor:
             cursor.execute(
                 "DROP TABLE IF EXISTS investigation_events, investigation_reports, "
-                "investigations, schema_migrations CASCADE"
+                "investigations, agent_bootstrap_tokens, agent_certificates, "
+                "schema_migrations CASCADE"
             )
 
     def _truncate(self) -> None:
         with self.database.cursor() as cursor:
             cursor.execute(
-                "TRUNCATE investigations, investigation_events, investigation_reports "
-                "RESTART IDENTITY CASCADE"
+                "TRUNCATE investigations, investigation_events, investigation_reports, "
+                "agent_bootstrap_tokens, agent_certificates RESTART IDENTITY CASCADE"
             )
 
     async def close(self) -> None:
-        await self.bus.close()
+        if self.bus is not None:
+            await self.bus.close()
         self.database.close()
