@@ -1,0 +1,234 @@
+{
+  "id": "graph-storage-class-blocking",
+  "description": "Three volume claims on one StorageClass are unbound and three pods are Pending. Section by section this is six independent findings; only the traversal from pod to claim to class names a single cause. Unreachable without the graph.",
+  "investigation": {
+    "pods": {
+      "problematic_pods": [
+        {
+          "name": "db-0",
+          "namespace": "prod",
+          "status": "Pending"
+        },
+        {
+          "name": "db-1",
+          "namespace": "prod",
+          "status": "Pending"
+        },
+        {
+          "name": "db-2",
+          "namespace": "prod",
+          "status": "Pending"
+        }
+      ],
+      "pod_inventory": [
+        {
+          "name": "db-0",
+          "namespace": "prod",
+          "node": "node-a",
+          "phase": "Pending",
+          "labels": {}
+        },
+        {
+          "name": "db-1",
+          "namespace": "prod",
+          "node": "node-a",
+          "phase": "Pending",
+          "labels": {}
+        },
+        {
+          "name": "db-2",
+          "namespace": "prod",
+          "node": "node-a",
+          "phase": "Pending",
+          "labels": {}
+        }
+      ]
+    },
+    "storage": {
+      "claims": [
+        {
+          "name": "data-db-0",
+          "namespace": "prod",
+          "phase": "Pending",
+          "storage_class": "fast-ssd",
+          "volume": ""
+        },
+        {
+          "name": "data-db-1",
+          "namespace": "prod",
+          "phase": "Pending",
+          "storage_class": "fast-ssd",
+          "volume": ""
+        },
+        {
+          "name": "data-db-2",
+          "namespace": "prod",
+          "phase": "Pending",
+          "storage_class": "fast-ssd",
+          "volume": ""
+        }
+      ],
+      "findings": [
+        {
+          "name": "data-db-0",
+          "namespace": "prod",
+          "issue": "PersistentVolumeClaim is not bound"
+        },
+        {
+          "name": "data-db-1",
+          "namespace": "prod",
+          "issue": "PersistentVolumeClaim is not bound"
+        },
+        {
+          "name": "data-db-2",
+          "namespace": "prod",
+          "issue": "PersistentVolumeClaim is not bound"
+        }
+      ]
+    },
+    "graph": {
+      "nodes": [
+        {
+          "key": "pod/prod/db-0",
+          "kind": "Pod",
+          "name": "db-0",
+          "namespace": "prod"
+        },
+        {
+          "key": "pod/prod/db-1",
+          "kind": "Pod",
+          "name": "db-1",
+          "namespace": "prod"
+        },
+        {
+          "key": "pod/prod/db-2",
+          "kind": "Pod",
+          "name": "db-2",
+          "namespace": "prod"
+        },
+        {
+          "key": "persistentvolumeclaim/prod/data-db-0",
+          "kind": "PersistentVolumeClaim",
+          "name": "data-db-0",
+          "namespace": "prod"
+        },
+        {
+          "key": "persistentvolumeclaim/prod/data-db-1",
+          "kind": "PersistentVolumeClaim",
+          "name": "data-db-1",
+          "namespace": "prod"
+        },
+        {
+          "key": "persistentvolumeclaim/prod/data-db-2",
+          "kind": "PersistentVolumeClaim",
+          "name": "data-db-2",
+          "namespace": "prod"
+        },
+        {
+          "key": "storageclass/_cluster/fast-ssd",
+          "kind": "StorageClass",
+          "name": "fast-ssd",
+          "namespace": null
+        }
+      ],
+      "edges": [
+        {
+          "source": "pod/prod/db-0",
+          "relation": "mounts",
+          "target": "persistentvolumeclaim/prod/data-db-0",
+          "evidence_ids": [
+            "k8s.pod.spec:pod/prod/db-0"
+          ]
+        },
+        {
+          "source": "pod/prod/db-1",
+          "relation": "mounts",
+          "target": "persistentvolumeclaim/prod/data-db-1",
+          "evidence_ids": [
+            "k8s.pod.spec:pod/prod/db-0"
+          ]
+        },
+        {
+          "source": "pod/prod/db-2",
+          "relation": "mounts",
+          "target": "persistentvolumeclaim/prod/data-db-2",
+          "evidence_ids": [
+            "k8s.pod.spec:pod/prod/db-0"
+          ]
+        },
+        {
+          "source": "persistentvolumeclaim/prod/data-db-0",
+          "relation": "provisioned_by",
+          "target": "storageclass/_cluster/fast-ssd",
+          "evidence_ids": [
+            "k8s.storage:cluster/_cluster/prod-east"
+          ]
+        },
+        {
+          "source": "persistentvolumeclaim/prod/data-db-1",
+          "relation": "provisioned_by",
+          "target": "storageclass/_cluster/fast-ssd",
+          "evidence_ids": [
+            "k8s.storage:cluster/_cluster/prod-east"
+          ]
+        },
+        {
+          "source": "persistentvolumeclaim/prod/data-db-2",
+          "relation": "provisioned_by",
+          "target": "storageclass/_cluster/fast-ssd",
+          "evidence_ids": [
+            "k8s.storage:cluster/_cluster/prod-east"
+          ]
+        }
+      ]
+    },
+    "context": "prod-east",
+    "evidence": [
+      {
+        "id": "k8s.pods:cluster/_cluster/prod-east",
+        "kind": "k8s.pods"
+      },
+      {
+        "id": "k8s.events:cluster/_cluster/prod-east",
+        "kind": "k8s.events"
+      },
+      {
+        "id": "k8s.deployments:cluster/_cluster/prod-east",
+        "kind": "k8s.deployments"
+      },
+      {
+        "id": "k8s.network:cluster/_cluster/prod-east",
+        "kind": "k8s.network"
+      },
+      {
+        "id": "k8s.nodes:cluster/_cluster/prod-east",
+        "kind": "k8s.nodes"
+      },
+      {
+        "id": "k8s.storage:cluster/_cluster/prod-east",
+        "kind": "k8s.storage"
+      }
+    ],
+    "evidence_coverage": {
+      "completeness": 100,
+      "degraded": []
+    },
+    "health": {
+      "status": "issues_found"
+    },
+    "severity": {
+      "severity": "Critical"
+    }
+  },
+  "expect": {
+    "top_hypothesis": "storage.class_blocking_workloads",
+    "hypotheses_present": [
+      "storage.claim_blocking_pod"
+    ],
+    "signals_present": [
+      "graph.storage_class_blocking:storageclass/_cluster/fast-ssd",
+      "graph.pod_blocked_by_storage:pod/prod/db-0"
+    ],
+    "min_confidence": 75
+  }
+}

@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from loguru import logger
 
 from app.analysis.deep_signal_rules import DEEP_SIGNAL_RULES
+from app.analysis.graph_signal_rules import GRAPH_SIGNAL_RULES
 from app.analysis.hypothesis_rules import DEFAULT_HYPOTHESIS_RULES, HypothesisRule, rank
 from app.analysis.models import AnalysisResult, Signal
 from app.analysis.observability_signal_rules import OBSERVABILITY_SIGNAL_RULES
@@ -24,7 +25,12 @@ class AnalysisEngine:
         self.signal_rules = tuple(
             signal_rules
             if signal_rules is not None
-            else (*DEFAULT_SIGNAL_RULES, *DEEP_SIGNAL_RULES, *OBSERVABILITY_SIGNAL_RULES)
+            else (
+                *DEFAULT_SIGNAL_RULES,
+                *DEEP_SIGNAL_RULES,
+                *OBSERVABILITY_SIGNAL_RULES,
+                *GRAPH_SIGNAL_RULES,
+            )
         )
         self.hypothesis_rules = tuple(hypothesis_rules or DEFAULT_HYPOTHESIS_RULES)
 

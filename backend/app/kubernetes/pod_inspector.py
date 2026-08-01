@@ -97,6 +97,9 @@ class PodInspector:
             "namespace": metadata.get("namespace", "default"),
             "node": spec.get("nodeName", "Pending"),
             "phase": status.get("phase", "Unknown"),
+            # Carried so a Service's selector can be matched against the pods
+            # this investigation already collected, rather than re-queried.
+            "labels": metadata.get("labels", {}) or {},
             "containers": containers,
         }
 

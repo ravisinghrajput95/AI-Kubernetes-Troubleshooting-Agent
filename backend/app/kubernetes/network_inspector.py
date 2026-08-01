@@ -41,6 +41,10 @@ class NetworkInspector:
         endpoints_by_key = self._endpoints_by_key(items(endpoints_result))
         findings = []
         has_dns_service = False
+        # `namespace/name` -> selector, for the dependency graph. Reported
+        # rather than re-derived so the graph and these findings can never
+        # disagree about which pods a service was matched against.
+        selectors: dict[str, dict[str, str]] = {}
 
         for service in services:
             metadata = service.get("metadata", {})
@@ -51,6 +55,9 @@ class NetworkInspector:
 
             if namespace == "kube-system" and name in {"kube-dns", "coredns"}:
                 has_dns_service = True
+
+            if spec.get("selector"):
+                selectors[f"{namespace}/{name}"] = dict(spec["selector"])
 
             if service_type == "ExternalName":
                 continue
@@ -97,6 +104,7 @@ class NetworkInspector:
             "healthy": len(findings) == 0,
             "findings": findings,
             "total_services": len(services),
+            "selectors": selectors,
         }
 
     def _endpoints_by_key(self, endpoints: list[dict[str, Any]]) -> dict[tuple[str, str], int]:

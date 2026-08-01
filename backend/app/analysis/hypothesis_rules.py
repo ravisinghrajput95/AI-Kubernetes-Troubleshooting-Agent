@@ -234,6 +234,13 @@ DEFAULT_HYPOTHESIS_RULES: tuple[HypothesisRule, ...] = (
                 SignalType.DEPLOYMENT_UNAVAILABLE,
             }
         ),
+        # Refuted by the graph having answered the question. This rule offers
+        # two causes — a selector that matches nothing, or pods that are not
+        # ready — and `service_backends_failing` rules the first one out by
+        # showing the selector matches pods that exist. Leaving both at full
+        # confidence would present a symptom and its explanation as competing
+        # theories.
+        refuting=frozenset({SignalType.SERVICE_BACKENDS_FAILING}),
         missing_evidence=(
             "Service selector versus actual pod labels",
             "EndpointSlice contents for the service",
@@ -413,6 +420,95 @@ DEFAULT_HYPOTHESIS_RULES: tuple[HypothesisRule, ...] = (
         ),
         remediation_hint="Correct the probe configuration or fix the unhealthy endpoint.",
         base_confidence=45,
+    ),
+    # --- graph-aware (M7) ---------------------------------------------------
+    #
+    # These outrank their single-section equivalents on purpose. "A pod is
+    # Pending" and "a claim is unbound" are both true and neither is the root
+    # cause; the traversal that joins them is. High base confidence is
+    # defensible precisely because a path was walked rather than a coincidence
+    # observed — the signal cannot exist unless every edge on it was read from
+    # evidence.
+    SignalPatternRule(
+        id="storage.class_blocking_workloads",
+        title="A storage class is blocking several workloads",
+        category="storage",
+        rationale=(
+            "More than one volume claim on the same StorageClass is unbound. The "
+            "common factor is the class rather than any single workload, so the "
+            "provisioner for that class is the thing to look at."
+        ),
+        triggers=frozenset({SignalType.STORAGE_CLASS_BLOCKING}),
+        supporting=frozenset(
+            {
+                SignalType.POD_BLOCKED_BY_STORAGE,
+                SignalType.STORAGE_PVC_UNBOUND,
+                SignalType.POD_PENDING,
+            }
+        ),
+        missing_evidence=("k8s.storageclasses", "k8s.volumeattachments"),
+        remediation_hint=(
+            "Check the provisioner for that StorageClass, and whether its backing "
+            "storage has capacity in the zone the claims are requesting."
+        ),
+        base_confidence=75,
+    ),
+    SignalPatternRule(
+        id="storage.claim_blocking_pod",
+        title="A pod cannot start because the volume it mounts is unbound",
+        category="storage",
+        rationale=(
+            "The pod is Pending and the claim it mounts has not bound. This is one "
+            "incident rather than two findings: nothing about the workload needs "
+            "changing, and the pod will start when the volume does."
+        ),
+        triggers=frozenset({SignalType.POD_BLOCKED_BY_STORAGE}),
+        supporting=frozenset({SignalType.STORAGE_PVC_UNBOUND, SignalType.POD_PENDING}),
+        refuting=frozenset({SignalType.EVENT_SCHEDULING_FAILURE}),
+        missing_evidence=("k8s.storageclasses", "k8s.resource.events"),
+        remediation_hint=("Bind or reprovision the claim. The workload needs no change."),
+        base_confidence=70,
+    ),
+    SignalPatternRule(
+        id="node.hosting_failures",
+        title="Failures are concentrated on one node",
+        category="infrastructure",
+        rationale=(
+            "Several failing pods share a node while others elsewhere are healthy. "
+            "That points at the node — kubelet, disk, network or an image cache — "
+            "rather than at each workload independently."
+        ),
+        triggers=frozenset({SignalType.NODE_CARRYING_FAILURES}),
+        supporting=frozenset(
+            {SignalType.NODE_NOT_READY, SignalType.NODE_PRESSURE, SignalType.POD_PENDING}
+        ),
+        missing_evidence=("k8s.nodes", "k8s.resource.events"),
+        remediation_hint=(
+            "Inspect that node before the workloads: cordon and drain it if its "
+            "conditions confirm the fault."
+        ),
+        base_confidence=60,
+    ),
+    SignalPatternRule(
+        id="network.backends_all_failing",
+        title="A service has no healthy backend",
+        category="network",
+        rationale=(
+            "Every pod the service selects is failing, so the missing endpoints are "
+            "a consequence rather than a cause. The service and its selector are "
+            "correct; the workload behind it is not."
+        ),
+        triggers=frozenset({SignalType.SERVICE_BACKENDS_FAILING}),
+        supporting=frozenset(
+            {
+                SignalType.NETWORK_NO_ENDPOINTS,
+                SignalType.POD_CRASH_LOOP,
+                SignalType.POD_IMAGE_PULL_FAILURE,
+            }
+        ),
+        missing_evidence=("k8s.endpointslices", "k8s.pod.spec"),
+        remediation_hint=("Fix the pods the service selects. The service itself needs no change."),
+        base_confidence=65,
     ),
 )
 

@@ -1,0 +1,141 @@
+{
+  "id": "graph-service-backends-failing",
+  "description": "A service reports no ready endpoints and every pod its selector matches is crash-looping. The network finding alone reads as a service misconfiguration; the graph shows the selector is correct and the workload is not.",
+  "investigation": {
+    "pods": {
+      "problematic_pods": [
+        {
+          "name": "checkout-0",
+          "namespace": "shop",
+          "status": "CrashLoopBackOff"
+        },
+        {
+          "name": "checkout-1",
+          "namespace": "shop",
+          "status": "CrashLoopBackOff"
+        }
+      ],
+      "pod_inventory": [
+        {
+          "name": "checkout-0",
+          "namespace": "shop",
+          "node": "node-a",
+          "phase": "Running",
+          "labels": {
+            "app": "checkout"
+          }
+        },
+        {
+          "name": "checkout-1",
+          "namespace": "shop",
+          "node": "node-a",
+          "phase": "Running",
+          "labels": {
+            "app": "checkout"
+          }
+        }
+      ]
+    },
+    "storage": {
+      "claims": []
+    },
+    "network": {
+      "findings": [
+        {
+          "namespace": "shop",
+          "service": "checkout",
+          "issue": "Service has no ready endpoints; selector may not match any pods"
+        }
+      ],
+      "selectors": {
+        "shop/checkout": {
+          "app": "checkout"
+        }
+      }
+    },
+    "graph": {
+      "nodes": [
+        {
+          "key": "service/shop/checkout",
+          "kind": "Service",
+          "name": "checkout",
+          "namespace": "shop"
+        },
+        {
+          "key": "pod/shop/checkout-0",
+          "kind": "Pod",
+          "name": "checkout-0",
+          "namespace": "shop"
+        },
+        {
+          "key": "pod/shop/checkout-1",
+          "kind": "Pod",
+          "name": "checkout-1",
+          "namespace": "shop"
+        }
+      ],
+      "edges": [
+        {
+          "source": "service/shop/checkout",
+          "relation": "selects",
+          "target": "pod/shop/checkout-0",
+          "evidence_ids": [
+            "k8s.network:cluster/_cluster/prod-east"
+          ]
+        },
+        {
+          "source": "service/shop/checkout",
+          "relation": "selects",
+          "target": "pod/shop/checkout-1",
+          "evidence_ids": [
+            "k8s.network:cluster/_cluster/prod-east"
+          ]
+        }
+      ]
+    },
+    "context": "prod-east",
+    "evidence": [
+      {
+        "id": "k8s.pods:cluster/_cluster/prod-east",
+        "kind": "k8s.pods"
+      },
+      {
+        "id": "k8s.events:cluster/_cluster/prod-east",
+        "kind": "k8s.events"
+      },
+      {
+        "id": "k8s.deployments:cluster/_cluster/prod-east",
+        "kind": "k8s.deployments"
+      },
+      {
+        "id": "k8s.network:cluster/_cluster/prod-east",
+        "kind": "k8s.network"
+      },
+      {
+        "id": "k8s.nodes:cluster/_cluster/prod-east",
+        "kind": "k8s.nodes"
+      },
+      {
+        "id": "k8s.storage:cluster/_cluster/prod-east",
+        "kind": "k8s.storage"
+      }
+    ],
+    "evidence_coverage": {
+      "completeness": 100,
+      "degraded": []
+    },
+    "health": {
+      "status": "issues_found"
+    },
+    "severity": {
+      "severity": "Critical"
+    }
+  },
+  "expect": {
+    "top_hypothesis": "network.backends_all_failing",
+    "signals_present": [
+      "graph.service_backends_failing:service/shop/checkout"
+    ],
+    "min_confidence": 60
+  }
+}

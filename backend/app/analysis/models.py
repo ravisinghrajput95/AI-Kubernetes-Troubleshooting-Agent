@@ -63,6 +63,13 @@ class SignalType:
 
     CONTAINER_MISSING_LIMITS = "container.missing_limits"
 
+    # Graph signals (M7). These are not observations of one section — each is
+    # a path through the dependency graph, and none is reachable without it.
+    POD_BLOCKED_BY_STORAGE = "graph.pod_blocked_by_storage"
+    STORAGE_CLASS_BLOCKING = "graph.storage_class_blocking"
+    NODE_CARRYING_FAILURES = "graph.node_carrying_failures"
+    SERVICE_BACKENDS_FAILING = "graph.service_backends_failing"
+
     # Signals that only become available once a playbook has collected
     # targeted evidence.
     CONTAINER_OOM_EXIT = "container.oom_exit_code"

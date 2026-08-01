@@ -1,0 +1,179 @@
+{
+  "id": "graph-node-carrying-failures",
+  "description": "Three failing pods share node-b while a healthy pod runs on node-a. Each pod's node is in the pod section, but 'the broken ones share a node' is a join no single-section rule performs \u2014 the signal and the hypothesis exist only because of the graph. Deliberately NOT expected to outrank the crash-loop reading: three pods across two nodes is weak evidence for a node fault, and raising its severity to win this ranking would be inflating a rule to satisfy its own test. Co-location informs the operator; it does not override a critical workload signal.",
+  "investigation": {
+    "pods": {
+      "problematic_pods": [
+        {
+          "name": "api-0",
+          "namespace": "prod",
+          "status": "CrashLoopBackOff"
+        },
+        {
+          "name": "api-1",
+          "namespace": "prod",
+          "status": "CrashLoopBackOff"
+        },
+        {
+          "name": "api-2",
+          "namespace": "prod",
+          "status": "CrashLoopBackOff"
+        }
+      ],
+      "pod_inventory": [
+        {
+          "name": "api-0",
+          "namespace": "prod",
+          "node": "node-b",
+          "phase": "Running",
+          "labels": {}
+        },
+        {
+          "name": "api-1",
+          "namespace": "prod",
+          "node": "node-b",
+          "phase": "Running",
+          "labels": {}
+        },
+        {
+          "name": "api-2",
+          "namespace": "prod",
+          "node": "node-b",
+          "phase": "Running",
+          "labels": {}
+        },
+        {
+          "name": "web-0",
+          "namespace": "prod",
+          "node": "node-a",
+          "phase": "Running",
+          "labels": {}
+        }
+      ]
+    },
+    "storage": {
+      "claims": []
+    },
+    "graph": {
+      "nodes": [
+        {
+          "key": "pod/prod/api-0",
+          "kind": "Pod",
+          "name": "api-0",
+          "namespace": "prod"
+        },
+        {
+          "key": "pod/prod/api-1",
+          "kind": "Pod",
+          "name": "api-1",
+          "namespace": "prod"
+        },
+        {
+          "key": "pod/prod/api-2",
+          "kind": "Pod",
+          "name": "api-2",
+          "namespace": "prod"
+        },
+        {
+          "key": "pod/prod/web-0",
+          "kind": "Pod",
+          "name": "web-0",
+          "namespace": "prod"
+        },
+        {
+          "key": "node/_cluster/node-a",
+          "kind": "Node",
+          "name": "node-a",
+          "namespace": null
+        },
+        {
+          "key": "node/_cluster/node-b",
+          "kind": "Node",
+          "name": "node-b",
+          "namespace": null
+        }
+      ],
+      "edges": [
+        {
+          "source": "pod/prod/api-0",
+          "relation": "scheduled_on",
+          "target": "node/_cluster/node-b",
+          "evidence_ids": [
+            "k8s.pods:cluster/_cluster/prod-east"
+          ]
+        },
+        {
+          "source": "pod/prod/api-1",
+          "relation": "scheduled_on",
+          "target": "node/_cluster/node-b",
+          "evidence_ids": [
+            "k8s.pods:cluster/_cluster/prod-east"
+          ]
+        },
+        {
+          "source": "pod/prod/api-2",
+          "relation": "scheduled_on",
+          "target": "node/_cluster/node-b",
+          "evidence_ids": [
+            "k8s.pods:cluster/_cluster/prod-east"
+          ]
+        },
+        {
+          "source": "pod/prod/web-0",
+          "relation": "scheduled_on",
+          "target": "node/_cluster/node-a",
+          "evidence_ids": [
+            "k8s.pods:cluster/_cluster/prod-east"
+          ]
+        }
+      ]
+    },
+    "context": "prod-east",
+    "evidence": [
+      {
+        "id": "k8s.pods:cluster/_cluster/prod-east",
+        "kind": "k8s.pods"
+      },
+      {
+        "id": "k8s.events:cluster/_cluster/prod-east",
+        "kind": "k8s.events"
+      },
+      {
+        "id": "k8s.deployments:cluster/_cluster/prod-east",
+        "kind": "k8s.deployments"
+      },
+      {
+        "id": "k8s.network:cluster/_cluster/prod-east",
+        "kind": "k8s.network"
+      },
+      {
+        "id": "k8s.nodes:cluster/_cluster/prod-east",
+        "kind": "k8s.nodes"
+      },
+      {
+        "id": "k8s.storage:cluster/_cluster/prod-east",
+        "kind": "k8s.storage"
+      }
+    ],
+    "evidence_coverage": {
+      "completeness": 100,
+      "degraded": []
+    },
+    "health": {
+      "status": "issues_found"
+    },
+    "severity": {
+      "severity": "Critical"
+    }
+  },
+  "expect": {
+    "top_hypothesis": "workload.application_startup_failure",
+    "hypotheses_present": [
+      "node.hosting_failures"
+    ],
+    "signals_present": [
+      "graph.node_carrying_failures:node/_cluster/node-b"
+    ],
+    "min_confidence": 50
+  }
+}

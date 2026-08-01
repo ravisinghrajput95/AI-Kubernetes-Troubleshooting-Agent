@@ -815,10 +815,52 @@ time removing. The isolation that stops one tenant reading another is built and
 proved; encryption at rest against a compromised *operator* is a separate
 control and deserves the KMS conversation it implies.
 
-**M7 — Knowledge graph.**
+**M7 — Knowledge graph. ✅ Delivered.**
 Emit edges during collection; persist; expose traversal; add graph-aware
 hypothesis rules ("this pod's PVC is on a failed StorageClass"). *Exit:* the eval
 corpus gains cases only answerable by traversal.
+
+*Outcome:* the exit criterion is met and measured. Three new corpus cases pass
+at 13/13; removing the graph rules drops the corpus to 10/13, so the cases are
+demonstrably unreachable without traversal rather than merely new.
+
+**One deliberate departure from the brief.** "Emit edges during collection"
+would mean every collector producing edges alongside evidence — a second
+thing to keep correct in a layer that is already the widest in the system. The
+graph is instead *derived* from evidence, exactly as signals are. That buys
+reproducibility (a graph rebuilt from a stored report is identical to the one
+the diagnosis was made against), redaction and fault isolation for free, and
+no new collection path for the local and agent routes to diverge on. The edges
+were always in the store; collectors already fetch `ownerReferences`,
+`nodeName`, volume claims and selectors.
+
+Postgres with recursive CTEs stays the right answer for cross-investigation
+traversal and is **not** built here: the graph an investigation reasons over is
+its own, in memory, and persisted with its report. A shared edge table earns
+its place when fleet-wide "what else is on this storage class" becomes a
+question the product answers, which is M8's territory.
+
+The rule that shaped the edge extractors: **no rule invents a node.** An edge
+exists only when both ends were observed, so "depends on a ConfigMap we could
+not see" and "depends on nothing" cannot look the same to a traversal. Two
+placeholders had to be refused explicitly — a pod whose node reads `Pending`
+is not on a node called Pending, and a claim whose class reads `none` is not
+on a class called none — both of which would have produced confident nonsense.
+
+Verified against a live cluster, not only fixtures: two pods Pending on two
+unbound claims sharing one storage class produced "A storage class is blocking
+several workloads" as the top root cause, with every graph signal citing the
+edges it walked. Section by section that cluster shows two Pending pods and two
+unbound claims and no connection between them.
+
+Two findings worth recording. The traversal silently returned direct
+neighbours only, because the direction was decided by `step is self.out_edges`
+— always False, since attribute access builds a new bound method each time.
+Depth was configurable, honoured nowhere, and the results looked plausible. And
+one new eval case failed honestly: co-located failures do not outrank a
+crash-loop, and raising the rule's severity to make its own test pass would
+have been inflating a control to satisfy the thing measuring it. The case now
+asserts the graph hypothesis is *present* and says why it should not win.
 
 **M8 — Scale hardening.**
 Evidence payloads to object storage; streaming ingest; partitioned queues; load

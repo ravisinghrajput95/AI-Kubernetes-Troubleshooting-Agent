@@ -155,6 +155,17 @@ class InvestigationService:
         investigation["cluster_access"] = self._cluster_access()
         return investigation
 
+    def _graph(self, investigation: dict[str, Any]) -> dict[str, Any]:
+        """The cluster dependency graph, derived from the evidence just built.
+
+        Part of the payload rather than a side channel, so it is persisted with
+        the report and rebuilt identically from it — the graph an operator sees
+        six weeks later is the graph the diagnosis was made against.
+        """
+        from app.graph import build_graph
+
+        return build_graph(investigation).to_dict()
+
     def _cluster_access(self) -> dict[str, Any]:
         """How this cluster was actually reached.
 
@@ -208,7 +219,7 @@ class InvestigationService:
             pods, events, deployments, network, nodes, storage, workloads
         )
 
-        return {
+        view = {
             "context": self.context,
             "scope": self._scope(),
             "health": health,
@@ -229,6 +240,12 @@ class InvestigationService:
             "storage": storage,
             "workloads": workloads,
         }
+
+        # Derived last, because it reads the sections above. Rebuilt on every
+        # round, so a playbook that collected a pod's spec adds that pod's
+        # volumes and owner to the graph the next analysis pass reasons over.
+        view["graph"] = self._graph(view)
+        return view
 
     async def _collect(self) -> tuple[EvidenceStore, list[dict[str, Any]]]:
         context = CollectionContext(

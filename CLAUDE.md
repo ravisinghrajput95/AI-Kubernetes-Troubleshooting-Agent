@@ -284,6 +284,18 @@ Deep payloads land in `investigation["deep_evidence"]` keyed by kind (baseline k
 
 `CollectorRegistry.resolve(available)` is what lets round 2 depend on baseline evidence without re-registering the collectors that produced it.
 
+### Dependency graph (`app/graph/`, M7)
+
+**Derived from evidence, not emitted by collectors.** §3.6 calls the graph "a byproduct of collection"; taken literally that means every collector emitting edges and a second thing to keep correct. Deriving it instead — the way signals are — means it is reproducible from a stored report, inherits redaction and fault isolation, and adds no collection path that the local and agent routes could diverge on.
+
+Edge rules live in `edge_rules.py` and are declarative. **No rule invents a node**: an edge is emitted only when both ends were observed, so "depends on a ConfigMap we could not see" and "depends on nothing" cannot look alike to a traversal. Placeholders are refused explicitly — a pod whose node reads `Pending` is not placed on a node called Pending, a claim whose class reads `none` is not linked to a class called none.
+
+`ClusterGraph.depends_on()` / `dependents()` are breadth-first, depth-limited (5) and cycle-safe. The direction is a flag, not the identity of the step function: `step is self.out_edges` is always False because attribute access builds a new bound method, which made every forward traversal stop after one hop while still returning plausible results.
+
+`graph_signal_rules.py` holds the signals a single section cannot reach. The test for belonging there is that the finding is a *path*: `storage.pvc_unbound` needs no graph, but "this Pending pod is blocked by that claim, and that claim's class is blocking others too" is three sections that mean nothing apart. Graph signals cite every edge walked, not just the destination.
+
+`evals/cases/investigations/graph-*.json` are the exit criterion — removing `GRAPH_SIGNAL_RULES` drops the corpus from 13/13 to 10/13.
+
 ### Analysis layer (`app/analysis/`)
 
 Evidence → **signals** → **hypotheses**, all deterministic, all before any model call.
