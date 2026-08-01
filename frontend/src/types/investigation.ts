@@ -359,10 +359,37 @@ export interface InvestigationReport {
   investigation: InvestigationResponse["investigation"];
 }
 
+/** How a cluster is reached. An agent is preferred when one is connected. */
+export type ClusterConnection = "agent" | "kubeconfig";
+
+/**
+ * A connected agent, as the gateway sees it.
+ *
+ * `online` is derived from the last message received, not from the socket
+ * being open — a half-open stream is indistinguishable from an idle one, so
+ * the platform heartbeats and this reflects the reply.
+ */
+export interface AgentStatus {
+  cluster_id: string;
+  online: boolean;
+  connected_at: string;
+  last_seen: string;
+  seconds_since_seen: number;
+  degradation: string;
+  agent_version: string;
+  kubernetes_version: string;
+  supported_kinds: string[];
+  identity_source: string;
+  certificate_serial: string;
+  certificate_expires_at: string;
+}
+
 export interface KubernetesContext {
   name: string;
   cluster: string;
   current: boolean;
+  connection?: ClusterConnection;
+  agent?: AgentStatus | null;
 }
 
 export interface KubernetesContextResponse {

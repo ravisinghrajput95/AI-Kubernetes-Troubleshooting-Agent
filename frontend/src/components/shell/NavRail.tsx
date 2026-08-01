@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { NavLink } from "react-router";
-import { FileText, LayoutGrid, PanelLeft, Search, Settings, Siren, Sparkles } from "lucide-react";
+import {
+  FileText,
+  LayoutGrid,
+  PanelLeft,
+  Plug,
+  Search,
+  Settings,
+  Siren,
+  Sparkles,
+} from "lucide-react";
 
 /**
  * Primary navigation.
@@ -39,6 +48,10 @@ export const DESTINATIONS: NavDestination[] = [
   // reasoning about one investigation stays on that investigation.
   { to: "/ask", label: "Ask", icon: Sparkles, chord: "a" },
   { to: "/reports", label: "Reports", icon: FileText, chord: "r" },
+  // Onboarding earns a destination because it has something of its own behind
+  // it — a credential to mint and an install to hand over — and because a
+  // fleet product with no visible way to add a cluster reads as a demo.
+  { to: "/connect", label: "Connect", icon: Plug, chord: "c" },
   { to: "/settings", label: "Settings", icon: Settings, chord: "s" },
 ];
 

@@ -2,6 +2,7 @@ import { apiBaseUrl, get, post } from "./http";
 
 import type { HealthResponse } from "../types/health";
 import type {
+  AgentStatus,
   InvestigationHistoryItem,
   InvestigationJobAccepted,
   InvestigationJobState,
@@ -31,6 +32,40 @@ export function investigateCluster(
 
 export function getKubernetesContexts(): Promise<KubernetesContextResponse> {
   return get<KubernetesContextResponse>("/clusters");
+}
+
+export interface AgentFleet {
+  items: AgentStatus[];
+  gateway_enabled: boolean;
+  trust_domain: string;
+  /** "worker": agents attached to the worker that answered, not the fleet. */
+  scope: string;
+}
+
+export function getAgents(): Promise<AgentFleet> {
+  return get<AgentFleet>("/agents");
+}
+
+export interface Enrolment {
+  cluster_id: string;
+  /** Returned exactly once. The platform stores only its digest. */
+  token: string;
+  expires_in_minutes: number;
+  ca_bundle: string;
+  gateway_endpoint: string;
+  enrolment_endpoint: string;
+  manifest: string;
+  docker_command: string;
+}
+
+export function createEnrolment(
+  clusterId: string,
+  ttlMinutes = 60,
+): Promise<Enrolment> {
+  return post<Enrolment>("/agents/enrolment", {
+    cluster_id: clusterId,
+    ttl_minutes: ttlMinutes,
+  });
 }
 
 export async function getInvestigationHistory(): Promise<InvestigationHistoryItem[]> {

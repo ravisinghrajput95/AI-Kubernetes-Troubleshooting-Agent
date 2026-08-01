@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 
+import { AgentDot } from "./AgentDot";
 import { SeverityDot } from "../report/SeverityDot";
 import { relativeAge, type ClusterState, type FleetState } from "../../lib/fleet";
 import type { SeverityTone } from "../../lib/report";
@@ -46,7 +47,12 @@ export function ClusterCard({
   const body = (
     <div className="flex min-w-0 flex-1 items-start justify-between gap-4">
       <div className="min-w-0">
-        <p className="truncate font-semibold text-ink">{row.name}</p>
+        <p className="flex min-w-0 items-center gap-2">
+          <span className="truncate font-semibold text-ink">{row.name}</span>
+          {/* Reachability, not health. A connected agent says nothing about
+              whether the cluster is well — the severity dot below does. */}
+          <AgentDot agent={row.agent} label={false} />
+        </p>
         <p className="mt-1 truncate text-sm text-ink-2">
           {/* The state chip already says "Not investigated"; repeating it here
               wastes the line. Name the cluster behind the context instead. */}

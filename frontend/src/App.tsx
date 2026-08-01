@@ -35,8 +35,10 @@ import { useScope } from "./hooks/useScope";
 import { useDocumentTitle } from "./hooks/useDocumentTitle";
 import { AppShell } from "./components/shell/AppShell";
 import { AskPage } from "./routes/AskPage";
+import { ConnectClusterPage } from "./routes/ConnectClusterPage";
 import { ClusterPage } from "./routes/ClusterPage";
 import { FleetPage } from "./routes/FleetPage";
+import { InvestigatePage } from "./routes/InvestigatePage";
 import { ReportsPage } from "./routes/ReportsPage";
 import { SettingsPage } from "./routes/SettingsPage";
 import { useInvestigationJob } from "./hooks/useInvestigationJob";
@@ -769,182 +771,6 @@ export function HistoryTable() {
   );
 }
 
-export function InvestigatePage() {
-  useDocumentTitle("Investigations");
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  // Scope lives in the URL so it is shareable and survives a reload.
-  const { cluster: selectedContext, setCluster: setSelectedContext } = useScope();
-  const [scopeNamespace, setScopeNamespace] = useState("");
-  const [scopeKind, setScopeKind] = useState("");
-  const [scopeName, setScopeName] = useState("");
-  const [starting, setStarting] = useState(false);
-  const [startError, setStartError] = useState("");
-
-  const { data: contexts } = useQuery({
-    queryKey: ["kubernetes-contexts"],
-    queryFn: getKubernetesContexts,
-  });
-
-  /**
-   * Submitting is navigation.
-   *
-   * The run gets an address the moment the backend accepts it, so it can be
-   * shared while it is still collecting — which is the whole point of the
-   * split. Progress and results both render at that address.
-   */
-  async function startInvestigation(context?: string) {
-    const target = context ?? selectedContext;
-    if (!target || starting) {
-      return;
-    }
-    setStarting(true);
-    setStartError("");
-    try {
-      const accepted = await startInvestigationJob(target, {
-        namespace: scopeNamespace.trim() || undefined,
-        resource_kind: scopeKind || undefined,
-        resource_name: scopeName.trim() || undefined,
-      });
-      queryClient.invalidateQueries({ queryKey: ["investigation-history"] });
-      navigate(`/investigations/${accepted.id}`);
-    } catch {
-      setStartError("Unable to start the investigation. Confirm the backend API is reachable.");
-    } finally {
-      setStarting(false);
-    }
-  }
-
-  /**
-   * Queue one investigation per cluster.
-   *
-   * The predecessor looped over the *synchronous* endpoint on the client,
-   * one cluster at a time, which blocked for the length of the whole fleet and
-   * bypassed the job queue entirely. These are submitted to the queue and each
-   * gets its own address.
-   */
-  async function investigateAllClusters(names: string[]) {
-    if (names.length === 0 || starting) {
-      return;
-    }
-    setStarting(true);
-    setStartError("");
-    try {
-      await Promise.all(names.map((name) => startInvestigationJob(name)));
-      queryClient.invalidateQueries({ queryKey: ["investigation-history"] });
-      navigate("/reports");
-    } catch {
-      setStartError("Some investigations could not be queued.");
-    } finally {
-      setStarting(false);
-    }
-  }
-
-  return (
-    <div className="grid gap-5 p-5">
-        <section className="rounded-lg border border-slate-800 bg-[#0d131c] p-5 shadow-sm shadow-black/20">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-fuchsia-300">
-                Incident Response
-              </p>
-              <h1 className="mt-2 text-2xl font-semibold text-slate-100">
-                Investigate Kubernetes Cluster
-              </h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
-                Collect pod, log, event, deployment, and networking evidence,
-                then generate a root cause and a PDF investigation report.
-              </p>
-            </div>
-            <div className="grid w-full gap-3 lg:w-auto lg:min-w-[520px]">
-              <div className="grid gap-3 md:grid-cols-3">
-                <input
-                  value={scopeNamespace}
-                  onChange={(event) => setScopeNamespace(event.target.value)}
-                  placeholder="Namespace"
-                  className="rounded-md border border-slate-700 bg-[#111823] px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-400"
-                />
-                <select
-                  value={scopeKind}
-                  onChange={(event) => setScopeKind(event.target.value)}
-                  className="rounded-md border border-slate-700 bg-[#111823] px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
-                >
-                  <option value="">Cluster</option>
-                  <option value="pod">Pod</option>
-                  <option value="deployment">Deployment</option>
-                </select>
-                <input
-                  value={scopeName}
-                  onChange={(event) => setScopeName(event.target.value)}
-                  placeholder="Resource name"
-                  disabled={!scopeKind}
-                  className="rounded-md border border-slate-700 bg-[#111823] px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-600"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => startInvestigation()}
-                disabled={starting || !selectedContext}
-                className="rounded-md bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
-              >
-                {starting ? "Starting…" : "Investigate Cluster"}
-              </button>
-            </div>
-          </div>
-        </section>
-
-      {startError ? (
-        <p role="alert" className="rounded-md border border-critical/40 bg-critical/5 px-4 py-3 text-sm text-critical">
-          {startError}
-        </p>
-      ) : null}
-
-      <MultiClusterPanel
-        selectedContext={selectedContext}
-        clusterStatuses={{}}
-        onSelectContext={setSelectedContext}
-        onInvestigateAll={investigateAllClusters}
-        isInvestigating={starting}
-      />
-
-      <RecentInvestigations />
-    </div>
-  );
-}
-
-/** Recent runs, as links. The full table lives on /reports. */
-function RecentInvestigations() {
-  const { data = [] } = useQuery({
-    queryKey: ["investigation-history"],
-    queryFn: getInvestigationHistory,
-  });
-
-  if (data.length === 0) {
-    return null;
-  }
-
-  return (
-    <section className="rounded-lg border border-line bg-surface p-5">
-      <h2 className="text-h2">Recent investigations</h2>
-      <ul className="mt-4 grid gap-1">
-        {data.slice(0, 5).map((item) => (
-          <li key={item.id}>
-            <Link
-              to={`/investigations/${item.id}`}
-              className="flex items-baseline justify-between gap-4 rounded-md px-2 py-2 text-sm transition-colors duration-fast hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info"
-            >
-              <span className="min-w-0 flex-1 truncate text-ink">{item.root_cause}</span>
-              <span className="shrink-0 font-mono text-sm text-ink-3">
-                {item.namespace} · {item.confidence}%
-              </span>
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
 /**
  * One investigation, at its own address.
  *
@@ -1207,6 +1033,7 @@ function AuthenticatedApp() {
         <Route path="/" element={<FleetPage />} />
         <Route path="/clusters/:context" element={<ClusterPage />} />
         <Route path="/investigations" element={<InvestigatePage />} />
+        <Route path="/connect" element={<ConnectClusterPage />} />
         <Route path="/investigations/:id" element={<InvestigationPage />} />
         <Route path="/ask" element={<AskPage />} />
         <Route path="/reports" element={<ReportsPage />} />

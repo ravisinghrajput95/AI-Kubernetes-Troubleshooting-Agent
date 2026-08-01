@@ -73,7 +73,68 @@ describe("settings", () => {
     });
     renderPage(<SettingsPage />);
 
-    expect(await screen.findByText(/this backend is unauthenticated/i)).toBeInTheDocument();
+    expect(await screen.findByText(/authentication is turned off/i)).toBeInTheDocument();
+    // The warning has to say what to do about it. A security notice with no
+    // next step trains operators to scroll past security notices.
+    expect(screen.getByText(/AUTH_MODE=token/)).toBeInTheDocument();
+  });
+
+  it("shows whether any cluster agent is answering", async () => {
+    vi.spyOn(api, "getAgents").mockResolvedValue({
+      items: [
+        {
+          cluster_id: "prod-eu-1",
+          online: true,
+          connected_at: new Date().toISOString(),
+          last_seen: new Date().toISOString(),
+          seconds_since_seen: 2,
+          degradation: "",
+          agent_version: "0.2.0-m4b",
+          kubernetes_version: "v1.31.0",
+          supported_kinds: ["k8s.pods"],
+          identity_source: "certificate",
+          certificate_serial: "aa11",
+          certificate_expires_at: "",
+        },
+      ],
+      gateway_enabled: true,
+      trust_domain: "test.local",
+      scope: "worker",
+    });
+    renderPage(<SettingsPage />);
+
+    expect(await screen.findByText("prod-eu-1")).toBeInTheDocument();
+    expect(screen.getByText(/agent online/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 of 1 online/i)).toBeInTheDocument();
+  });
+
+  it("says so when an agent has stopped answering", async () => {
+    // A silent agent must not read as a connected one.
+    vi.spyOn(api, "getAgents").mockResolvedValue({
+      items: [
+        {
+          cluster_id: "prod-eu-1",
+          online: false,
+          connected_at: new Date().toISOString(),
+          last_seen: new Date().toISOString(),
+          seconds_since_seen: 120,
+          degradation: "",
+          agent_version: "0.2.0-m4b",
+          kubernetes_version: "v1.31.0",
+          supported_kinds: [],
+          identity_source: "certificate",
+          certificate_serial: "aa11",
+          certificate_expires_at: "",
+        },
+      ],
+      gateway_enabled: true,
+      trust_domain: "test.local",
+      scope: "worker",
+    });
+    renderPage(<SettingsPage />);
+
+    expect(await screen.findByText(/agent silent for 120s/i)).toBeInTheDocument();
+    expect(screen.getByText(/0 of 1 online/i)).toBeInTheDocument();
   });
 });
 

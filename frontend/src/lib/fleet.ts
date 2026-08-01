@@ -7,7 +7,12 @@
  * refreshes would be worse than showing nothing.
  */
 
-import type { InvestigationHistoryItem, KubernetesContext } from "../types/investigation";
+import type {
+  AgentStatus,
+  ClusterConnection,
+  InvestigationHistoryItem,
+  KubernetesContext,
+} from "../types/investigation";
 import { severityTone, type SeverityTone } from "./report";
 
 /** Beyond this, a cluster's last investigation is too old to speak for it. */
@@ -33,6 +38,10 @@ export interface ClusterState {
   investigationId: string;
   at: string;
   ageMs: number | null;
+  /** How the cluster is reached. Independent of its investigation state. */
+  connection: ClusterConnection;
+  /** Present only when an agent is connected for this cluster. */
+  agent: AgentStatus | null;
 }
 
 const ORDER: Record<FleetState, number> = {
@@ -83,7 +92,13 @@ export function fleetState(
   const rows: ClusterState[] = [];
   for (const name of names) {
     const item = newest.get(name);
-    const cluster = contexts.find((context) => context.name === name)?.cluster ?? "";
+    const context = contexts.find((entry) => entry.name === name);
+    const cluster = context?.cluster ?? "";
+    // Connection is *not* a fleet state: an agent-connected cluster can be
+    // critical, and a healthy one can be reached by kubeconfig. Keeping them
+    // separate is what stops "connected" from reading as "fine".
+    const connection: ClusterConnection = context?.connection ?? "kubeconfig";
+    const agent = context?.agent ?? null;
 
     if (!item) {
       rows.push({
@@ -97,6 +112,8 @@ export function fleetState(
         investigationId: "",
         at: "",
         ageMs: null,
+        connection,
+        agent,
       });
       continue;
     }
@@ -113,6 +130,8 @@ export function fleetState(
     rows.push({
       name,
       cluster,
+      connection,
+      agent,
       // Staleness outranks a healthy verdict: a cluster investigated six days
       // ago is unknown, not healthy, and rendering unknown as green is lying
       // by omission.

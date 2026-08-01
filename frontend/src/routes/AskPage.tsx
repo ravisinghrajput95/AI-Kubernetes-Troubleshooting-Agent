@@ -13,7 +13,11 @@ import {
   type CorpusEntry,
   type Finding,
 } from "../lib/ask";
-import { getInvestigationHistory, getInvestigationReport } from "../services/api";
+import {
+  getInvestigationHistory,
+  getInvestigationReport,
+  getKubernetesContexts,
+} from "../services/api";
 
 /** One report fetch per investigation, so the corpus is bounded on purpose. */
 const CORPUS_LIMIT = 20;
@@ -38,6 +42,14 @@ export function AskPage() {
   const history = useQuery({
     queryKey: ["investigation-history"],
     queryFn: getInvestigationHistory,
+  });
+  // The same source the fleet page uses, so "clusters" means the same thing on
+  // both. Ask previously counted only clusters that appeared in history, which
+  // silently excluded every cluster that exists and has never been
+  // investigated — the ones an operator most needs to be told about.
+  const contexts = useQuery({
+    queryKey: ["kubernetes-contexts"],
+    queryFn: getKubernetesContexts,
   });
 
   const recent = (history.data ?? []).slice(0, CORPUS_LIMIT);
@@ -75,6 +87,13 @@ export function AskPage() {
     [reports.map((report) => report.data?.incident_id ?? "").join("|"), recent.length],
   );
 
+  const fleet = contexts.data?.items ?? [];
+  const covered = useMemo(
+    () => new Set(corpus.map((entry) => entry.cluster).filter(Boolean)),
+    [corpus],
+  );
+  const uncovered = fleet.filter((cluster) => !covered.has(cluster.name));
+
   const findings = useMemo(() => recurringFindings(corpus), [corpus]);
   const matches = useMemo(() => search(findings, query), [findings, query]);
   const shared = useMemo(() => sharedAcrossClusters(matches), [matches]);
@@ -90,10 +109,34 @@ export function AskPage() {
           cluster nobody looked at. */}
       <p className="mt-1 max-w-measure text-sm leading-6 text-ink-2">
         Answers come from {corpus.length} stored{" "}
-        {corpus.length === 1 ? "investigation" : "investigations"}. No cluster is
-        queried, and nothing here is generated — every claim is a count of runs
-        you can open.
+        {corpus.length === 1 ? "investigation" : "investigations"} across{" "}
+        {covered.size} of {fleet.length}{" "}
+        {fleet.length === 1 ? "cluster" : "clusters"}. No cluster is queried, and
+        nothing here is generated — every claim is a count of runs you can open.
       </p>
+
+      {/* Coverage is stated, not implied. A pattern absent from this page may
+          be absent from the fleet, or may simply be on a cluster nobody has
+          investigated — and those are very different things to conclude. */}
+      {uncovered.length > 0 ? (
+        <p className="mt-2 max-w-measure text-sm leading-6 text-ink-3">
+          Not represented here:{" "}
+          {uncovered.slice(0, 6).map((cluster, index) => (
+            <span key={cluster.name}>
+              {index > 0 ? ", " : ""}
+              <Link
+                to="/investigations"
+                className="font-mono underline-offset-4 hover:text-ink-2 hover:underline"
+              >
+                {cluster.name}
+              </Link>
+            </span>
+          ))}
+          {uncovered.length > 6 ? ` and ${uncovered.length - 6} more` : ""} — never
+          investigated, so nothing about {uncovered.length === 1 ? "it" : "them"}{" "}
+          can be counted.
+        </p>
+      ) : null}
 
       <label htmlFor="ask" className="sr-only">
         Filter findings
@@ -102,7 +145,11 @@ export function AskPage() {
         id="ask"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
-        placeholder="Filter by finding or cluster — for example, image or prod-eu-west"
+        placeholder={
+          fleet.length > 0
+            ? `Filter by finding or cluster — for example, image or ${fleet[0].name}`
+            : "Filter by finding or cluster"
+        }
         className="mt-6 w-full rounded-md border border-line bg-raised px-3 py-2 text-body text-ink outline-none transition-colors duration-fast placeholder:text-ink-3 focus:border-info focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info"
       />
 

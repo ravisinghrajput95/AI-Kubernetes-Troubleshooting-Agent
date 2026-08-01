@@ -345,9 +345,23 @@ Sections with nothing behind them are **omitted, not padded** — same rule as t
 
 `history_service.py` renders the three formats and hands the **bytes** to a `ReportStore` (`app/services/report_store.py`) — filesystem or Postgres. It returns bytes rather than a path because `/investigations/{id}/pdf` may be served by a worker that never rendered the file; that is also the seam M8 swaps for object storage, changing one method and no endpoint. The PDF is hand-rolled object emission (`_pdf_bytes`, base-14 fonts, no PDF dependency), so section bodies are flattened via `ReportSection.as_lines()` and text must be pre-wrapped and non-ASCII escaped. On the filesystem backend `history.json` is capped at 25 entries; on Postgres the 25 is a query limit and nothing is discarded. `POST /investigations/{id}/regenerate` re-renders all three from stored JSON without re-querying the cluster — so improving the composer improves historical reports too.
 
+### Onboarding and the fleet API (`app/api/agents.py`)
+
+`/clusters` merges kubeconfig contexts with agents connected to this worker; each entry carries `connection` (`agent`/`kubeconfig`) and, when present, an `agent` block. A cluster reached only by an agent has no kubeconfig entry and would otherwise be invisible.
+
+`POST /agents/enrolment` mints a single-use token and returns an apply-able manifest (namespace, ServiceAccount, a ClusterRole granting `get`/`list`/`watch` only, Deployment). **It refuses outright when `AUTH_MODE=disabled`** — an unauthenticated endpoint that enrols clusters is worse than the problem it solves — and points at `agentctl` instead. `agent/Dockerfile` builds the image the manifest references (distroless, non-root, no shell).
+
+**"Online" is heartbeat-derived, not socket-derived.** An idle stream and a half-open one look identical from the platform's side, so the gateway pings every 15s and the agent's `AgentHealth` reply refreshes `last_seen`; `AGENT_STALE_SECONDS` (45) decides staleness. Do not replace this with "the stream is open".
+
+### Report retention
+
+`ReportStore.prune()` deletes rendered artefacts older than `REPORT_RETENTION_DAYS` (14), swept every `REPORT_RETENTION_SWEEP_HOURS` (6) by a task started in `app/state.py`. **The history entry survives and is marked `expired`** — deleting it too would make an investigation that happened look like one that never did. 0 disables pruning.
+
 ### Frontend
 
-`src/App.tsx` still holds the original panels plus the `Dashboard` composition. **New work goes in `src/components/`, `src/hooks/`, and `src/lib/`** — do not grow `App.tsx` further.
+`src/App.tsx` still holds the original panels plus the `Dashboard` composition. **New work goes in `src/routes/`, `src/components/`, `src/hooks/`, and `src/lib/`** — do not grow `App.tsx` further. `InvestigatePage` was the last pre-redesign page living there and has moved to `src/routes/`; what remains is `InvestigationPage`, `ReportsPage`'s `HistoryTable`, and the old `Dashboard`.
+
+`/connect` (`ConnectClusterPage`) is the onboarding flow: name a cluster, mint an enrolment, copy the manifest, watch for the agent to check in. `AgentDot` renders agent reachability in three states — online, degraded, silent — and never in colour alone.
 
 Investigations run through `useInvestigationJob` (`src/hooks/`), not a React Query mutation. It posts to `/investigations`, streams progress over SSE, and **falls back to polling** when `EventSource` fails — corporate proxies commonly block it, and a stalled screen during an incident is worse than a slower one. Both paths converge on one terminal `GET /investigations/{id}` for the full result. `transport` is surfaced in the UI so a degraded path is visible.
 
