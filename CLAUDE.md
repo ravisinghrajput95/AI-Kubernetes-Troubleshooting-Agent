@@ -320,6 +320,27 @@ small — switching the endpoint back to `store.get()` would still produce a
 small response while the megabytes had already left Postgres. The test asserts
 the store call.
 
+**Concurrency, not memory, was the ceiling.** `JobConsumer.max_concurrent` was
+a constructor default of 4 that `app/state.py` never passed, so every
+deployment ran four investigations per worker with no way to change it —
+reaching 5,000 concurrent would have needed 1,250 workers. It is now
+`JOB_MAX_CONCURRENT`. Peak heap per investigation is about **5× the stored
+result**, measured flat across cluster sizes: 13.4 MB at the `MAX_LIST_ITEMS`
+ceiling, roughly **76 investigations per GB**
+(`python scripts/payload_bench.py --pods 2000 --memory`).
+
+The default stays 4 on purpose. Memory is not the only cost — collection and
+analysis occupy worker threads and anyio's pool defaults to 40 — so raising it
+is an operator's decision against their own cluster sizes rather than one
+inherited from a changed default.
+
+**Streaming ingest was not built, and the measurement is why.** §10 lists
+"budgets at source, streaming ingest, object storage, per-tenant quotas" against
+"evidence volume overwhelms the platform". The first of those is built
+(`MAX_LIST_ITEMS`) and, with bounded worker concurrency, already caps a worker
+at tens of megabytes. Streaming ingest would shave a 5× multiple off a 13 MB
+base — real, and not the constraint.
+
 ### Routing an investigation to the right worker (M8a)
 
 A gRPC stream belongs to whichever worker holds the socket, so a cluster

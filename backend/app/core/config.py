@@ -178,6 +178,23 @@ class Settings(BaseSettings):
     # Identifies this worker in leases. Defaults to host:pid at startup.
     worker_id: str = Field(default="", validation_alias="WORKER_ID")
 
+    # How many investigations one worker runs at once.
+    #
+    # This was a hardcoded 4 with no way to change it, which made it — not
+    # memory — the platform's concurrency ceiling: reaching the roadmap's 5,000
+    # concurrent investigations would have needed 1,250 workers.
+    #
+    # Measured cost per concurrent investigation (`scripts/payload_bench.py`,
+    # `--memory`): peak heap is about 5x the stored result, so 13.4 MB at the
+    # `MAX_LIST_ITEMS` ceiling of 2,000 pods and under 4 MB on a small cluster.
+    # A worker with 2 GB to spare can hold roughly 100.
+    #
+    # The default stays 4 deliberately. Memory is not the only cost — collection
+    # and analysis both occupy worker threads, and anyio's default thread pool
+    # is 40 — so raising this is an operator's decision made against their own
+    # cluster sizes, not one to inherit from a changed default.
+    job_max_concurrent: int = Field(default=4, ge=1, validation_alias="JOB_MAX_CONCURRENT")
+
     # --- Cluster agents -----------------------------------------------------
     # 0 disables the gateway entirely, which is the default: an agent is opt-in
     # and the local kubeconfig path needs none of this.

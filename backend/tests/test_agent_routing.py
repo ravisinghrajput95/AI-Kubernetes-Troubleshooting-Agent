@@ -429,3 +429,54 @@ class TestAStaleRecordNamingThisWorker:
         presence("worker-a")
 
         assert agent_affinity(InvestigationRequest(context="prod-eu")) == "worker-b"
+
+
+class TestWorkerConcurrencyIsConfigurable:
+    """The platform's real concurrency ceiling, and why it moved.
+
+    `max_concurrent` was a constructor default of 4 that `state.py` never
+    passed, so every deployment ran four investigations per worker with no way
+    to change it. Reaching the roadmap's 5,000 concurrent would have needed
+    1,250 workers — and not because of memory: peak heap is about 5x the stored
+    result, so 13.4 MB at the `MAX_LIST_ITEMS` ceiling, or roughly 76
+    investigations per GB (`scripts/payload_bench.py --memory`).
+
+    The default stays 4. Memory is not the only cost — collection and analysis
+    occupy worker threads and anyio's pool defaults to 40 — so raising it is an
+    operator's decision against their own cluster sizes, not one to inherit.
+    """
+
+    def _consumer(self, **kwargs):
+        from app.jobs.consumer import JobConsumer
+
+        return JobConsumer(store=None, runner=None, bus=None, worker_id="w", **kwargs)
+
+    def test_the_default_is_unchanged(self, monkeypatch):
+        """An existing deployment must not silently start running more work."""
+        assert settings.job_max_concurrent == 4
+        assert self._consumer()._max_concurrent == 4
+
+    def test_configuration_raises_the_ceiling(self, monkeypatch):
+        monkeypatch.setattr(settings, "job_max_concurrent", 64)
+        assert self._consumer()._max_concurrent == 64
+
+    def test_an_explicit_argument_still_wins(self, monkeypatch):
+        """Tests construct consumers directly and must stay able to pin it."""
+        monkeypatch.setattr(settings, "job_max_concurrent", 64)
+        assert self._consumer(max_concurrent=1)._max_concurrent == 1
+
+    def test_the_setting_is_reachable_from_the_environment(self):
+        """Catches: adding the field without its validation alias, which reads
+        as configurable and is not."""
+        from app.core.config import Settings
+
+        assert Settings(JOB_MAX_CONCURRENT=32).job_max_concurrent == 32
+
+    def test_zero_concurrency_is_refused(self):
+        """A worker that runs nothing looks healthy and drains no queue."""
+        import pydantic
+
+        from app.core.config import Settings
+
+        with pytest.raises(pydantic.ValidationError):
+            Settings(JOB_MAX_CONCURRENT=0)

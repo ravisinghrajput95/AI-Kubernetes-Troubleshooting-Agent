@@ -131,6 +131,7 @@ Read from the environment or `backend/.env`.
 | `KUBECONFIG_PATH` | — | Defaults to the standard kubeconfig |
 | `PROMETHEUS_URL` / `LOKI_URL` | — | Optional; absent is recorded, not fatal |
 | `MAX_LIST_ITEMS` | `2000` | Cap on objects retained per list read |
+| `JOB_MAX_CONCURRENT` | `4` | Investigations one worker runs at once (~13 MB each at the cap) |
 | `AUDIT_LOG_PATH` | — | Append-only audit trail; falls back to stdout |
 
 **Impersonation matters.** With it on, every cluster read runs as the calling

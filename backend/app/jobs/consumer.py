@@ -45,13 +45,19 @@ class JobConsumer:
         runner: InvestigationJobRunner,
         bus: RedisBus,
         worker_id: str,
-        max_concurrent: int = 4,
+        max_concurrent: int | None = None,
     ) -> None:
         self._store = store
         self._runner = runner
         self._bus = bus
         self._worker = worker_id
-        self._max_concurrent = max_concurrent
+        # `None` means "whatever this deployment is configured for", so the
+        # value lives in one place instead of being a constructor default that
+        # nothing overrides — which is how it stayed at 4 and became the
+        # platform's concurrency ceiling.
+        self._max_concurrent = (
+            max_concurrent if max_concurrent is not None else settings.job_max_concurrent
+        )
         self._tasks: list[asyncio.Task] = []
 
     def start(self) -> None:
@@ -60,7 +66,11 @@ class JobConsumer:
             asyncio.create_task(self._forever("control", self._consume_control)),
             asyncio.create_task(self._forever("reaper", self._reap)),
         ]
-        logger.info("Job consumer started as worker {worker}", worker=self._worker)
+        logger.info(
+            "Job consumer started as worker {worker}, running up to {limit} investigations at once",
+            worker=self._worker,
+            limit=self._max_concurrent,
+        )
 
     async def stop(self) -> None:
         for task in self._tasks:

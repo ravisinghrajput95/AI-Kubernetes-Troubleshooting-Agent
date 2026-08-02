@@ -964,9 +964,23 @@ rather than by this document's guess. Split accordingly:
   read would make an archived report reflect today's rules rather than the ones
   that produced it. Six mutations applied, all six caught.
 
+  **Streaming ingest was measured and not built.** Peak heap for one
+  investigation is about 5x the stored result and flat across cluster sizes —
+  13.4 MB at the `MAX_LIST_ITEMS` ceiling, roughly 76 per GB. §10 lists
+  "budgets at source, streaming ingest, object storage, per-tenant quotas"
+  against "evidence volume overwhelms the platform"; the first is built and,
+  with bounded worker concurrency, already caps a worker at tens of megabytes.
+  Streaming ingest would shave a 5x multiple off a 13 MB base.
+
+  **The ceiling was somewhere else entirely.** `JobConsumer.max_concurrent` was
+  a constructor default of 4 that startup never passed, so every deployment ran
+  four investigations per worker and could not be told otherwise — 5,000
+  concurrent would have needed 1,250 workers, for want of a setting rather than
+  for want of memory. Now `JOB_MAX_CONCURRENT`, default unchanged at 4 because
+  memory is not the only cost per slot.
+
   Still open, to be decided against a re-measurement: whether the payload
-  leaves the row at all, and streaming ingest so `fetch_many` stops buffering a
-  whole batch.
+  leaves the row at all.
 - **M8c — the envelope**: 1,000 clusters and 5,000 concurrent, documented.
   Not started.
 

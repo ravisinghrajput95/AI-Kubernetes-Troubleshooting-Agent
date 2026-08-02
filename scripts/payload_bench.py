@@ -24,6 +24,7 @@ import copy
 import json
 import os
 import sys
+import tracemalloc
 from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parents[1] / "backend"
@@ -126,12 +127,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pods", type=int, default=200)
     parser.add_argument("--log-lines", type=int, default=200)
     parser.add_argument("--list-size", type=int, default=25, help="Rows a listing returns.")
+    parser.add_argument(
+        "--memory",
+        action="store_true",
+        help="Also report peak heap held during the run, which sizes JOB_MAX_CONCURRENT.",
+    )
     parser.add_argument("--json", action="store_true")
     arguments = parser.parse_args(argv)
 
     os.environ.setdefault("OPENAI_API_KEY", "")
 
+    peak_bytes = 0
+    if arguments.memory:
+        # A throwaway run first: the first investigation in a process pays for
+        # every module import, and tracing that would report the interpreter
+        # rather than the investigation.
+        asyncio.run(run_investigation(20, 20))
+        tracemalloc.start()
+
     result = asyncio.run(run_investigation(arguments.pods, arguments.log_lines))
+
+    if arguments.memory:
+        _, peak_bytes = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
 
     total = kilobytes(result)
     sections = breakdown(result)
@@ -152,6 +170,20 @@ def main(argv: list[str] | None = None) -> int:
             "status_projection_kb": round(status_only, 1),
             "ratio": round(full / status_only, 1) if status_only else 0,
         },
+        "concurrency": (
+            {
+                # Peak heap for one investigation. Roughly 5x the stored result,
+                # measured flat across cluster sizes — so this is what one slot
+                # of JOB_MAX_CONCURRENT costs a worker.
+                "peak_heap_mb": round(peak_bytes / 1024 / 1024, 1),
+                "peak_over_stored": round(peak_bytes / 1024 / total, 1) if total else 0,
+                "investigations_per_gb": int(1024 / (peak_bytes / 1024 / 1024))
+                if peak_bytes
+                else 0,
+            }
+            if arguments.memory
+            else {}
+        ),
         "listing": {
             "rows": arguments.list_size,
             # `list()` SELECTs `result` for every row and the API then calls
@@ -179,6 +211,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  ratio                             {read['ratio']:>9.1f}x")
     print("  (legitimate once, when the console renders the report; waste on")
     print("   every read after that, and on any client still polling the id)")
+
+    if arguments.memory:
+        memory = report["concurrency"]
+        print(f"\n  peak heap for one run             {memory['peak_heap_mb']:>9.1f} MB")
+        print(f"  as a multiple of the result       {memory['peak_over_stored']:>9.1f}x")
+        print(
+            f"  fits per GB of worker memory      {memory['investigations_per_gb']:>9}"
+            "   (sizes JOB_MAX_CONCURRENT)"
+        )
 
     listing = report["listing"]
     print(
