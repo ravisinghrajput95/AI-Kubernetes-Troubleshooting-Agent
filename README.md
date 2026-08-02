@@ -134,6 +134,8 @@ Read from the environment or `backend/.env`.
 | `JOB_MAX_CONCURRENT` | `4` | Investigations one worker runs at once (~13 MB each at the cap) |
 | `AUDIT_LOG_PATH` | — | Append-only audit trail; falls back to stdout |
 | `METRICS_ENABLED` | `true` | Serve `/metrics`; no cluster, tenant or user is ever a label |
+| `RATE_LIMIT_PER_MINUTE` | `60` | Investigations one caller may start per minute |
+| `RATE_LIMIT_TENANT_PER_MINUTE` | `0` | Per-tenant quota; 0 is unlimited, set it on `shared` |
 
 **Impersonation matters.** With it on, every cluster read runs as the calling
 user, so the cluster applies *their* RBAC rather than the service account's. The

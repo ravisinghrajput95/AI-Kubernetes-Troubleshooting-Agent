@@ -101,6 +101,21 @@ class RedisBus:
     def delete(self, key: str) -> None:
         self._sync.delete(key)
 
+    def increment_in_window(self, key: str, ttl_seconds: int) -> int:
+        """Count one use, and return the running total for this window.
+
+        `INCR` returns the post-increment value, so the caller that gets 1 is
+        the one that created the key and is therefore the one that sets its
+        expiry. That ordering is what makes this safe without a read-then-write:
+        two workers cannot both believe they are first, and a key can never be
+        left without a TTL.
+        """
+        pipeline = self._sync.pipeline()
+        pipeline.incr(key)
+        pipeline.expire(key, ttl_seconds, nx=True)
+        used, _ = pipeline.execute()
+        return int(used)
+
     def scan_values(self, pattern: str) -> list[str]:
         """Values of every key matching `pattern`.
 

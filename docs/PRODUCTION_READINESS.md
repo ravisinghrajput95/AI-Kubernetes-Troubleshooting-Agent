@@ -45,9 +45,16 @@ ambient tenant never survived into the request — every tenant's rows were
 written into `default` and readable by every other tenant, with row-level
 security enabled, forced and correct.
 
-**Remaining (P1):** no rate limiting; `disabled` mode still ships as the
-default, so a careless deployment that sets `ALLOW_INSECURE_NO_AUTH` is
-unprotected.
+**Rate limiting followed**: the operations that cost a customer's cluster and a
+model call — exactly those needing `investigation.run` — are capped per caller
+and, optionally, per tenant. The counter is shared across workers when
+`REDIS_URL` is set, because a per-process limit on three replicas is three
+times the configured rate. It fails *open* by design, unlike authorisation:
+availability protection against a noisy caller, not a control against a hostile
+one.
+
+**Remaining (P1):** `disabled` mode still ships as the default, so a careless
+deployment that sets `ALLOW_INSECURE_NO_AUTH` is unprotected.
 
 ### F14 · Prompt injection reached operator-facing commands · **FIXED**
 

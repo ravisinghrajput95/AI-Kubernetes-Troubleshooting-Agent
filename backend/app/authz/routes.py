@@ -78,6 +78,20 @@ ROUTE_PERMISSIONS: dict[tuple[str, str], Permission | str] = {
 }
 
 
+# Permissions whose routes cost a customer's cluster and a model call.
+#
+# Rate limiting keys off this rather than off a second list of paths, because a
+# second list is a second thing to forget — the same reasoning that put the
+# permission check in one router-level dependency. An endpoint that runs an
+# investigation already has to declare `investigation.run` to work at all, and
+# declaring it is what makes it rate limited.
+COSTED_PERMISSIONS: frozenset[Permission] = frozenset({Permission.INVESTIGATION_RUN})
+
+
+def is_costed(permission: Permission | str | None) -> bool:
+    return permission in COSTED_PERMISSIONS
+
+
 def required_permission(method: str, path: str) -> Permission | str | None:
     """What this route needs, or `None` when it is not in the table.
 

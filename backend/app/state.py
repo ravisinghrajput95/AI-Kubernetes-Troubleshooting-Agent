@@ -108,6 +108,10 @@ class StateBackend:
         set_member_store(None)
         reset_resolver()
 
+        from app.ratelimit import set_rate_limiter
+
+        set_rate_limiter(None)
+
         if self.gateway is not None:
             from app.gateway.presence import set_agent_presence
             from app.security.enrolment import set_enrolment_store
@@ -173,6 +177,7 @@ def build_state() -> StateBackend:
     # malformed group mapping anywhere. Both are the kind of misconfiguration
     # whose only symptom is people holding the wrong authority.
     settings.validate_authz()
+    settings.validate_rate_limits()
 
     from app.authz.resolver import reset_resolver
 
@@ -222,8 +227,13 @@ def build_state() -> StateBackend:
     # assigned roles by hand must not lose them to a restart.
     from app.authz.store import set_member_store
     from app.persistence.members import PostgresMemberStore
+    from app.ratelimit import RedisRateLimiter, set_rate_limiter
 
     set_member_store(PostgresMemberStore(database))
+    # One counter for the fleet. A per-process limiter on three replicas is
+    # three times the configured limit, and changes when an operator scales —
+    # which is not a quota.
+    set_rate_limiter(RedisRateLimiter(bus))
 
     logger.info("State is distributed; this worker is {worker}", worker=worker)
     return StateBackend(

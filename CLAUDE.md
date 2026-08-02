@@ -269,6 +269,54 @@ Every collected fact is an `Evidence` record with a **deterministic id** (`kind:
 
 `select_provider()` (`app/services/investigation_service.py`) makes the choice: an agent connected for this cluster wins, otherwise the local kubeconfig. The registry is per-process, so a cluster whose agent is connected to another worker falls back to local — correct, and *visible*, via `investigation["cluster_access"]`. Routing to the worker holding the stream is M8.
 
+### Rate limiting (`app/ratelimit/`)
+
+**What is limited is deliberately narrow.** An investigation is the platform's
+only outbound action — it reads a customer's production cluster under the
+caller's impersonated identity and spends a model call. Reads of what was
+already collected cost neither and are already owner-scoped.
+
+**Keyed off the permission, not off a list of paths.** `COSTED_PERMISSIONS` is
+`{investigation.run}`, and `require_permission` — the router-level dependency
+that already runs on every route — applies the limit when the matched route
+needs one. A new endpoint that runs an investigation is limited by virtue of
+declaring the permission it needs anyway; there is no second table to forget.
+Same reasoning that put the permission check in one place.
+
+**Checked *after* the permission**, so a viewer is told they may not run
+investigations at all rather than handed a 429 implying they would be allowed
+if they waited.
+
+**A per-worker limit is not a limit.** On three replicas a process-local
+counter enforces three times the configured rate, and the effective limit
+changes when an operator scales. Same seam as everything else: no `REDIS_URL`
+→ `InMemoryRateLimiter` (one process *is* the fleet); `REDIS_URL` →
+`RedisRateLimiter` sharing one counter. They are two classes rather than one
+with a flag precisely because only the second is observable in a test.
+
+**It fails open, and authorisation fails closed.** A rate limiter is
+availability protection against a noisy caller, not a security control against
+a hostile one — refusing every investigation because Redis blinked turns a
+degraded dependency into an outage. `app/authz` denies on a store failure;
+this allows. `tests/test_rate_limiting.py` asserts both, next to each other.
+
+Fixed window (`INCR` + `EXPIRE`, one round trip), so a caller can spend a
+window's budget at the end of one and again at the start of the next — a true
+short-term ceiling of 2×. Stated rather than hidden: at these defaults that is
+far below capacity, and it is the assumption to revisit first if the limits are
+ever tightened toward the measured ~600/min per worker.
+
+| setting | default | job |
+|---|---|---|
+| `RATE_LIMIT_PER_MINUTE` | 60 | runaway-caller protection; above any human, below capacity |
+| `RATE_LIMIT_TENANT_PER_MINUTE` | 0 (off) | fairness between customers; **`shared` warns when unset** |
+
+The tenant quota defaults off because in `single` mode it would cap the whole
+platform — a different decision, and the operator's to make. `shared` without
+one **warns rather than refuses**: it is a fairness gap, not an unsafe
+configuration, unlike the M6 refusals where the alternative was two customers
+in one unprotected table.
+
 ### Self-observability (`app/observability/`)
 
 `/metrics` in Prometheus exposition format, on the unauthenticated health

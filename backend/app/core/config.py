@@ -114,6 +114,41 @@ class Settings(BaseSettings):
 
     audit_log_path: str = Field(default="", validation_alias="AUDIT_LOG_PATH")
 
+    # --- Rate limiting ------------------------------------------------------
+    # Applies only to operations that cost a customer's cluster and a model
+    # call — since M6.5 that is exactly the set requiring `investigation.run`.
+    #
+    # 60/minute per caller is far above what a person submits and far below the
+    # ~600/minute a worker sustains (`docs/PERFORMANCE_ENVELOPE.md`), so it
+    # catches a runaway client without being reachable by hand.
+    rate_limit_per_minute: int = Field(default=60, ge=0, validation_alias="RATE_LIMIT_PER_MINUTE")
+    # Fairness between customers, which only means something when there is more
+    # than one. 0 (unlimited) is the default because in `single` mode a tenant
+    # quota is a cap on the whole platform, which is a different decision an
+    # operator should make deliberately. `validate_rate_limits()` warns when a
+    # `shared` deployment leaves it unset.
+    rate_limit_tenant_per_minute: int = Field(
+        default=0, ge=0, validation_alias="RATE_LIMIT_TENANT_PER_MINUTE"
+    )
+
+    def validate_rate_limits(self) -> None:
+        """Warn, never refuse.
+
+        A missing tenant quota is a fairness gap, not an unsafe configuration —
+        unlike the M6 refusals, where the alternative was serving two customers
+        out of one unprotected table. Refusing to start over it would be
+        disproportionate; saying nothing would let a multi-tenant deployment
+        discover it when one customer's burst starved another.
+        """
+        from loguru import logger
+
+        if self.multi_tenant and self.rate_limit_tenant_per_minute <= 0:
+            logger.warning(
+                "TENANCY_MODE=shared with no RATE_LIMIT_TENANT_PER_MINUTE: one "
+                "tenant can consume the whole platform's investigation capacity. "
+                "Set a per-tenant quota."
+            )
+
     # --- Self-observability -------------------------------------------------
     # `/metrics` in Prometheus exposition format. On by default: a fleet
     # platform that cannot be scraped cannot be operated, and the series carry

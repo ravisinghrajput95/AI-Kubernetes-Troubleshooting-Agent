@@ -135,6 +135,13 @@ diagnoses_total = Counter(
     registry=REGISTRY,
 )
 
+rate_limited_total = Counter(
+    "k8sagent_rate_limited_total",
+    "Investigation submissions refused by a rate limit, by which bucket refused.",
+    ["scope"],
+    registry=REGISTRY,
+)
+
 grounding_rejections_total = Counter(
     "k8sagent_grounding_rejections_total",
     "Model responses discarded by grounding, by reason.",
@@ -158,6 +165,7 @@ _KNOWN_LABELS: tuple[tuple[Counter, str, tuple[str, ...]], ...] = (
         ("succeeded", "failed", "cancelled", "worker_lost", "unreachable", "no_evidence"),
     ),
     (cluster_access_total, "provider", ("agent", "kubeconfig")),
+    (rate_limited_total, "scope", ("subject", "tenant")),
     (llm_calls_total, "outcome", ("succeeded", "failed")),
     (diagnoses_total, "path", ("grounded", "fallback")),
     (
@@ -269,6 +277,11 @@ def grounding_rejected(reason: str) -> None:
     injection surface `app/ai` closes at the prompt boundary.
     """
     _safe(lambda: grounding_rejections_total.labels(reason=reason).inc())
+
+
+def rate_limited(scope: str) -> None:
+    """`scope` is `subject` or `tenant` — never the caller's identity."""
+    _safe(lambda: rate_limited_total.labels(scope=scope).inc())
 
 
 def render() -> tuple[bytes, str]:

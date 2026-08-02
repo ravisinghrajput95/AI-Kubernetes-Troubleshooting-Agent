@@ -30,7 +30,8 @@ from app.auth.dependencies import require_principal
 from app.auth.models import Principal
 from app.authz.models import Grant, Permission
 from app.authz.resolver import get_resolver
-from app.authz.routes import AUTHENTICATED, required_permission
+from app.authz.routes import AUTHENTICATED, is_costed, required_permission
+from app.observability import metrics
 
 _DENIAL_HINT = {
     Permission.CLUSTER_ENROL: "Enrolling a cluster requires the admin role.",
@@ -94,7 +95,43 @@ def require_permission(
     if not grant.permits(needed):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_denial(grant, needed))
 
+    _enforce_rate_limit(needed, principal)
     return principal
+
+
+def _enforce_rate_limit(needed: Permission, principal: Principal) -> None:
+    """Cap the operations that cost a cluster and a model call.
+
+    Keyed off the permission the route already declares rather than off a list
+    of paths, so a new endpoint that runs an investigation is limited by virtue
+    of needing `investigation.run` — there is no second table to keep in step.
+
+    **After the permission check, deliberately.** A caller who may not run
+    investigations at all should be told that, not handed a 429 that implies
+    they would be allowed if only they waited.
+    """
+    if not is_costed(needed):
+        return
+
+    from app.core.config import settings
+    from app.ratelimit import evaluate, get_rate_limiter
+
+    decision = evaluate(
+        get_rate_limiter(),
+        subject=principal.subject,
+        tenant=principal.tenant,
+        subject_limit=settings.rate_limit_per_minute,
+        tenant_limit=settings.rate_limit_tenant_per_minute,
+    )
+    if decision.allowed:
+        return
+
+    metrics.rate_limited(decision.scope)
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=decision.detail,
+        headers={"Retry-After": str(decision.retry_after_seconds)},
+    )
 
 
 def _denial(grant: Grant, needed: Permission) -> str:
