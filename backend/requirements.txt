@@ -34,3 +34,10 @@ redis==8.1.0
 # unconditionally so the generated service stubs import and `pip install -r
 # requirements.txt` stays the one instruction.
 grpcio==1.83.0
+
+# Self-observability. The exposition format is trivial; correct histogram
+# bucketing and a thread-safe registry are not, and a dashboard built on a
+# quietly-wrong histogram is worse than no dashboard. `app/observability/`
+# owns its own registry rather than the process-global default, so nothing
+# else that imports this library can add series to /metrics.
+prometheus-client==0.23.1

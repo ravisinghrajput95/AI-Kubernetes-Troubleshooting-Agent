@@ -25,7 +25,7 @@ from app.authz.models import Permission
 # Reachable with no credential at all. `/health` is hit by container probes
 # before one exists; the rest are FastAPI's own and carry no data.
 PUBLIC: frozenset[str] = frozenset(
-    {"/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
+    {"/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect", "/metrics"}
 )
 
 # Authenticated, but requiring no permission. There is one, and it has to

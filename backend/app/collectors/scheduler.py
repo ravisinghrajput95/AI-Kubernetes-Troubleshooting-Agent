@@ -9,6 +9,7 @@ from app.collectors.base import CollectionContext, Collector
 from app.collectors.registry import CollectorRegistry
 from app.evidence.models import Evidence, EvidenceSource, EvidenceStatus
 from app.evidence.store import EvidenceStore
+from app.observability import metrics
 
 
 class CollectionScheduler:
@@ -33,6 +34,7 @@ class CollectionScheduler:
         self.redactor = redactor or EvidenceRedactor()
 
     async def run(self, context: CollectionContext) -> EvidenceStore:
+        started = time.perf_counter()
         # Evidence from earlier rounds already satisfies dependencies.
         waves = self.registry.resolve(available=frozenset(context.store.statuses()))
         semaphore = asyncio.Semaphore(context.budget.max_concurrency)
@@ -67,10 +69,17 @@ class CollectionScheduler:
             for evidence_items in results:
                 context.store.extend(evidence_items)
 
+        coverage = context.store.coverage()
+        # By status, never by kind or target: status is a closed enum, while
+        # kinds grow with every collector and targets are cluster objects.
+        metrics.collection_finished(
+            time.perf_counter() - started,
+            {str(status): count for status, count in (coverage.get("by_status") or {}).items()},
+        )
         logger.info(
             "Collection complete: {count} evidence records, {completeness}% usable",
             count=len(context.store),
-            completeness=context.store.coverage()["completeness"],
+            completeness=coverage["completeness"],
         )
         return context.store
 

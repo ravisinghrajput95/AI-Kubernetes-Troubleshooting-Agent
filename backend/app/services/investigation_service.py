@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.evidence.models import EvidenceKind
 from app.evidence.store import EvidenceStore
 from app.kubernetes.errors import friendly_error
+from app.observability import metrics
 from app.playbooks.kubernetes import DEFAULT_PLAYBOOKS
 from app.playbooks.orchestrator import DEFAULT_MAX_ROUNDS, InvestigationOrchestrator
 from app.playbooks.registry import PlaybookRegistry
@@ -223,6 +224,11 @@ class InvestigationService:
         agent was read locally because the agent was connected elsewhere.
         """
         remote = type(self.provider).__name__ == "RemoteAgentProvider"
+        # M8a made this worth counting: before routing, an agent cluster was
+        # often collected through a kubeconfig, and nothing said so in
+        # aggregate. A rising `kubeconfig` rate on an agent fleet is the shape
+        # of that regression returning.
+        metrics.cluster_access("agent" if remote else "kubeconfig")
         return {
             "provider": "agent" if remote else "kubeconfig",
             "cluster_id": self.provider.cluster_id,

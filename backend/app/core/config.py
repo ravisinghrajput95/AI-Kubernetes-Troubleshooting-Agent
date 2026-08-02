@@ -114,6 +114,14 @@ class Settings(BaseSettings):
 
     audit_log_path: str = Field(default="", validation_alias="AUDIT_LOG_PATH")
 
+    # --- Self-observability -------------------------------------------------
+    # `/metrics` in Prometheus exposition format. On by default: a fleet
+    # platform that cannot be scraped cannot be operated, and the series carry
+    # no cluster, tenant, namespace or user (see `app/observability/metrics.py`),
+    # so the endpoint discloses aggregate platform volume and nothing about who
+    # the platform serves. Set false to remove the route entirely.
+    metrics_enabled: bool = Field(default=True, validation_alias="METRICS_ENABLED")
+
     # How long rendered reports are kept. Investigations accumulate faster than
     # anyone reads them; the record that one happened is cheap and stays, the
     # PDF/JSON/Markdown are pruned. 0 disables pruning entirely.

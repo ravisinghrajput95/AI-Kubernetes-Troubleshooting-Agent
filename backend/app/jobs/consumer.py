@@ -21,6 +21,7 @@ from app.core.config import settings
 from app.jobs.distributed import PostgresRedisJobStore
 from app.jobs.runner import WORKER_LOST, InvestigationJobRunner
 from app.models.investigation import InvestigationRequest
+from app.observability import metrics
 from app.persistence.redis_bus import RedisBus
 from app.tenancy import DEFAULT_TENANT, system_scope, tenant_scope
 
@@ -66,6 +67,7 @@ class JobConsumer:
             asyncio.create_task(self._forever("control", self._consume_control)),
             asyncio.create_task(self._forever("reaper", self._reap)),
         ]
+        metrics.capacity(self._max_concurrent)
         logger.info(
             "Job consumer started as worker {worker}, running up to {limit} investigations at once",
             worker=self._worker,
@@ -166,6 +168,14 @@ class JobConsumer:
             # worker this is a no-op here and takes effect there.
             self._store.notify_cancel(job_id)
 
+    def _sample_queues(self) -> None:
+        """Publish queue depth by role. Never fails the reaper."""
+        try:
+            metrics.queue("shared", self._bus.queue_depth())
+            metrics.queue("worker", self._bus.queue_depth(self._worker))
+        except Exception as exc:  # pragma: no cover - a gauge must not kill the loop
+            logger.debug("Could not sample queue depth: {error}", error=exc)
+
     # --- reaper -------------------------------------------------------------
 
     async def _reap(self) -> None:
@@ -176,3 +186,7 @@ class JobConsumer:
             with system_scope():
                 await asyncio.to_thread(self._store.reap_expired, WORKER_LOST)
                 await asyncio.to_thread(self._store.requeue_unclaimed, UNCLAIMED_GRACE_SECONDS)
+            # Sampled on the reaper's tick rather than polled on its own timer:
+            # queue depth is the envelope's alarm signal, and this loop already
+            # runs at a cadence an operator would want to alarm at.
+            await asyncio.to_thread(self._sample_queues)

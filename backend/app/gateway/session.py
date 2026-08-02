@@ -18,6 +18,7 @@ from typing import Any
 
 from loguru import logger
 
+from app.observability import metrics
 from app.security.identity import AgentIdentity
 from app.wire.gen.agent.v1 import agent_pb2, collection_pb2, evidence_pb2
 
@@ -250,6 +251,7 @@ class AgentRegistry:
         if existing is not None:
             existing.cancel_all("The agent reconnected.")
         self._sessions[session.key] = session
+        metrics.agents(len(self._sessions))
         self._announce(session)
         logger.info(
             "Agent connected for cluster {cluster} (tenant {tenant})",
@@ -260,6 +262,7 @@ class AgentRegistry:
     def unregister(self, session: AgentSession) -> None:
         if self._sessions.get(session.key) is session:
             del self._sessions[session.key]
+            metrics.agents(len(self._sessions))
         session.cancel_all("The agent disconnected.")
         self._withdraw(session)
         logger.info(

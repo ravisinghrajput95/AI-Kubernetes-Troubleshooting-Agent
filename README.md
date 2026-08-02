@@ -133,6 +133,7 @@ Read from the environment or `backend/.env`.
 | `MAX_LIST_ITEMS` | `2000` | Cap on objects retained per list read |
 | `JOB_MAX_CONCURRENT` | `4` | Investigations one worker runs at once (~13 MB each at the cap) |
 | `AUDIT_LOG_PATH` | — | Append-only audit trail; falls back to stdout |
+| `METRICS_ENABLED` | `true` | Serve `/metrics`; no cluster, tenant or user is ever a label |
 
 **Impersonation matters.** With it on, every cluster read runs as the calling
 user, so the cluster applies *their* RBAC rather than the service account's. The

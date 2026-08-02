@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import time
 
 from loguru import logger
 
@@ -7,6 +8,7 @@ from app.auth.models import Principal
 from app.core.config import settings
 from app.jobs.models import InvestigationJob, JobEvent, JobEventType
 from app.models.investigation import InvestigationRequest
+from app.observability import metrics
 from app.providers.base import ClusterUnreachable
 from app.services.investigation_runner import (
     FAILURE_DETAIL,
@@ -105,6 +107,7 @@ class InvestigationJobRunner:
             principal=principal.to_dict() if principal else None,
         )
 
+        metrics.investigation_submitted()
         if self.store.distributed:
             self.store.enqueue(job.id, agent_affinity(request))
         else:
@@ -122,6 +125,7 @@ class InvestigationJobRunner:
         """Run this job in this process. Requires the event loop thread."""
         task = asyncio.create_task(self._execute(job_id, request, principal, already_running))
         self._tasks[job_id] = task
+        metrics.running(len(self._tasks))
         task.add_done_callback(lambda finished: self._finished(job_id, finished))
         return task
 
@@ -157,6 +161,7 @@ class InvestigationJobRunner:
 
     def _finished(self, job_id: str, task: asyncio.Task) -> None:
         self._tasks.pop(job_id, None)
+        metrics.running(len(self._tasks))
         # A task cancelled before its coroutine ever started has no chance to
         # record the outcome itself, and the job would sit pending forever.
         if task.cancelled():
@@ -179,6 +184,10 @@ class InvestigationJobRunner:
             self.store.mark_running(job_id)
         reporter = JobProgressReporter(self.store, job_id)
         watchdog = self._start_watchdog(job_id)
+        # Timed here rather than from the stored row: this is the process that
+        # actually ran it, and the row's timestamps are the database's clock on
+        # a worker that may not be this one.
+        started = time.perf_counter()
 
         try:
             result = await run_investigation(
@@ -193,9 +202,11 @@ class InvestigationJobRunner:
             if self._stopping:
                 logger.info("Investigation job {id} stopped by shutdown", id=job_id)
                 self.store.mark_failed(job_id, WORKER_LOST)
+                metrics.investigation_finished("worker_lost", time.perf_counter() - started)
             else:
                 logger.info("Investigation job {id} cancelled", id=job_id)
                 self.store.mark_cancelled(job_id)
+                metrics.investigation_finished("cancelled", time.perf_counter() - started)
             raise
         except ClusterUnreachable as exc:
             # Surfaced verbatim. The generic detail tells an operator to check
@@ -203,10 +214,12 @@ class InvestigationJobRunner:
             # cluster is reachable and simply attached to another worker.
             logger.warning("Investigation job {id} refused: {reason}", id=job_id, reason=str(exc))
             self.store.mark_failed(job_id, str(exc))
+            metrics.investigation_finished("unreachable", time.perf_counter() - started)
             return
         except Exception as exc:
             logger.opt(exception=exc).error("Investigation job {id} failed", id=job_id)
             self.store.mark_failed(job_id, FAILURE_DETAIL)
+            metrics.investigation_finished("failed", time.perf_counter() - started)
             return
         finally:
             # Cancelled, not awaited: this block also runs while a cancellation
@@ -223,11 +236,13 @@ class InvestigationJobRunner:
             # fallback already returns, so the same id cannot answer with two
             # different shapes depending on whether the job is still in memory.
             await asyncio.to_thread(self.store.mark_failed, job_id, failure, result)
+            metrics.investigation_finished("no_evidence", time.perf_counter() - started)
             return
 
         # The result carries the whole investigation; writing it can be slow
         # enough to matter, so keep it off the event loop.
         await asyncio.to_thread(self.store.mark_succeeded, job_id, result)
+        metrics.investigation_finished("succeeded", time.perf_counter() - started)
 
     def _start_watchdog(self, job_id: str) -> asyncio.Task | None:
         """Poll for a cancellation whose message never arrived, and hold the lease.

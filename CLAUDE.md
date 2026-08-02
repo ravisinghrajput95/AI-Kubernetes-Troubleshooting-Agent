@@ -269,6 +269,46 @@ Every collected fact is an `Evidence` record with a **deterministic id** (`kind:
 
 `select_provider()` (`app/services/investigation_service.py`) makes the choice: an agent connected for this cluster wins, otherwise the local kubeconfig. The registry is per-process, so a cluster whose agent is connected to another worker falls back to local — correct, and *visible*, via `investigation["cluster_access"]`. Routing to the worker holding the stream is M8.
 
+### Self-observability (`app/observability/`)
+
+`/metrics` in Prometheus exposition format, on the unauthenticated health
+router, switchable off with `METRICS_ENABLED=false`. The metric set is chosen
+from `docs/PERFORMANCE_ENVELOPE.md` rather than from what is easy to
+instrument: every number that document tells an operator to act on has a series
+— throughput, queue depth, running-versus-capacity, agent count, collection
+duration, evidence status, LLM and grounding outcomes.
+
+**The load-bearing rule is what is never a label: no cluster, tenant,
+namespace, user or investigation id.** Two arguments point the same way, which
+is why it holds. *Cardinality* — one series per cluster across a 1,000-cluster
+fleet is how a Prometheus falls over, and this platform is built for exactly
+that size. *Disclosure* — a scraper is infrastructure and carries no tenant, so
+labelling by cluster would publish the customer list to anyone who can reach
+the port, undoing M6 in one label. When someone wants per-cluster rates, the
+answer is the audit log, not a label here.
+
+That rule is also what makes the endpoint safe to leave unauthenticated, and
+`tests/test_metrics.py` asserts it end to end — an investigation runs against a
+named cluster and the name must appear nowhere in the exposition.
+
+**Grounding rejection reasons are mapped to a closed category set**
+(`_rejection_category`). The raw reason quotes the model, which quotes cluster
+text, which is attacker-influenced; using it as a label would reopen at the
+metrics boundary the injection surface `app/ai` closes at the prompt boundary.
+
+**Every label set is closed, so every series is seeded to zero at import.**
+Prometheus does not create a labelled series until first use, so an alert on
+`investigations_total{outcome="failed"}` reads "no data" while the platform is
+healthy and fires on the *second* failure. Seeding is what makes an alert
+correct from a cold start — and it is only possible because no label is
+unbounded.
+
+`app/observability/` owns its own `CollectorRegistry` rather than the
+process-global default, which auto-registers process and GC collectors and is
+shared with anything else importing the library. Recording is total: `_safe()`
+swallows, because instrumentation that can fail the thing it measures turns an
+observability bug into an outage.
+
 ### The performance envelope (M8c)
 
 `docs/PERFORMANCE_ENVELOPE.md` is the published one, with the command beside

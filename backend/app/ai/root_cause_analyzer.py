@@ -12,7 +12,30 @@ from app.analysis.engine import AnalysisEngine
 from app.analysis.grounding import GroundingResult, GroundingValidator
 from app.analysis.models import AnalysisResult
 from app.kubernetes.command_policy import CommandClass, classify_command
+from app.observability import metrics
 from app.remediation.planner import RemediationPlanner
+
+# Grounding messages quote the response they rejected, and that quotes cluster
+# text. Mapping them onto a closed set is what keeps a metric label bounded and
+# free of attacker-controlled content; an unrecognised message is `other`, not
+# the message.
+_REJECTION_CATEGORIES: tuple[tuple[str, str], ...] = (
+    ("no root cause", "empty_root_cause"),
+    ("unknown hypothesis", "fabricated_hypothesis"),
+    ("citation", "bad_citations"),
+    ("cited signal", "irrelevant_citations"),
+    ("appears in no collected evidence", "invented_resource"),
+    ("no action needed", "contradiction"),
+    ("severe signal", "contradiction"),
+)
+
+
+def _rejection_category(reason: str) -> str:
+    lowered = (reason or "").lower()
+    for needle, category in _REJECTION_CATEGORIES:
+        if needle in lowered:
+            return category
+    return "other"
 
 
 class RootCauseAnalyzer:
@@ -41,17 +64,28 @@ class RootCauseAnalyzer:
         messages = self.prompt_builder.build_messages(investigation, analysis)
         llm_result = self.llm_client.complete(messages)
 
+        metrics.llm_call("succeeded" if llm_result["success"] else "failed")
+
         if llm_result["success"]:
             parsed = self._parse_llm_json(llm_result["content"])
-            if parsed is not None:
+            if parsed is None:
+                metrics.grounding_rejected("unparseable")
+            else:
                 grounding = self.validator.validate(parsed, analysis)
                 if grounding.valid:
+                    metrics.diagnosis("grounded")
                     return self._normalize(parsed, investigation, analysis, grounding)
+                # A fixed category, never `grounding.reason` — that quotes the
+                # model's prose, which quotes cluster text, which is
+                # attacker-influenced. An unbounded hostile string must not
+                # become a label. See `app/observability/metrics.py`.
+                metrics.grounding_rejected(_rejection_category(grounding.reason))
                 logger.warning(
                     "Rejecting ungrounded model diagnosis: {reason}",
                     reason=grounding.reason,
                 )
 
+        metrics.diagnosis("fallback")
         logger.warning("Using deterministic diagnosis fallback")
         return self._fallback(investigation, analysis, llm_result.get("error", ""))
 
