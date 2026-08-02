@@ -197,6 +197,34 @@ async def attach_fleet(gateway: str, clusters: int, kinds: list[str], batch: int
     return agents, channels, time.perf_counter() - started
 
 
+async def platform_counters(client) -> dict[str, float]:
+    """The platform's own view, so a client-side number can be checked.
+
+    Added after the first published envelope reported a throughput ceiling that
+    was this harness saturating rather than the platform. Two offered-load
+    levels could not tell the difference — both were bounded by the same single
+    asyncio process — and only the server's own counters can.
+    """
+    import re
+
+    try:
+        payload = (await client.get("/metrics")).text
+    except Exception:
+        return {}
+
+    counters: dict[str, float] = {}
+    for phase in ("collect", "analyse", "report", "persist"):
+        found = re.search(
+            rf'k8sagent_investigation_phase_seconds_sum\{{phase="{phase}"\}} ([0-9.e+-]+)', payload
+        )
+        counters[phase] = float(found.group(1)) if found else 0.0
+    finished = re.findall(
+        r"k8sagent_investigations_total\{outcome=\"[a-z_]+\"\} ([0-9.e+-]+)", payload
+    )
+    counters["finished"] = sum(float(value) for value in finished)
+    return counters
+
+
 async def main_async(arguments) -> int:
     import httpx
 
@@ -229,10 +257,13 @@ async def main_async(arguments) -> int:
 
         latencies: list[float] = []
         drive_seconds = 0.0
+        before = after = {}
         if arguments.investigations:
+            before = await platform_counters(client)
             drive_started = time.perf_counter()
             latencies = await drive_investigations(client, agents, arguments)
             drive_seconds = time.perf_counter() - drive_started
+            after = await platform_counters(client)
 
     failures = [agent for agent in agents if agent.failure is not None]
     report = {
@@ -268,6 +299,23 @@ async def main_async(arguments) -> int:
             "wall_seconds": round(drive_seconds, 2),
             "per_second": round(len(ordered) / drive_seconds, 1) if drive_seconds else 0,
         }
+        # The check that would have caught the first envelope's mistake. If the
+        # platform was busy for far less time than the run took, the ceiling
+        # being measured is the harness's, not the platform's.
+        busy = sum(
+            after.get(phase, 0) - before.get(phase, 0)
+            for phase in ("collect", "analyse", "report", "persist")
+        )
+        if drive_seconds:
+            report["platform_side"] = {
+                "busy_seconds": round(busy, 2),
+                "utilisation": round(busy / drive_seconds, 3),
+                "verdict": (
+                    "platform-bound"
+                    if busy / drive_seconds > 0.5
+                    else "HARNESS-BOUND — the platform was mostly idle; this is not its ceiling"
+                ),
+            }
 
     for agent in agents:
         await agent.stop()

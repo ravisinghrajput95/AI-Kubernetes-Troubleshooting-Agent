@@ -13,6 +13,7 @@ from app.ai.root_cause_analyzer import RootCauseAnalyzer
 from app.auth.models import Principal
 from app.collectors.base import ProgressReporter
 from app.models.investigation import InvestigationRequest
+from app.observability.tracing import span
 from app.services.history_service import InvestigationHistoryService
 from app.services.investigation_service import InvestigationService
 
@@ -61,13 +62,19 @@ async def run_investigation(
         principal=principal,
     )
 
-    investigation = await service.run()
+    with span(
+        "collect",
+        cluster=str(request.context if request else ""),
+        investigation=investigation_id or "",
+    ):
+        investigation = await service.run()
 
     if reporter is not None:
         reporter.report("Analyzing root cause")
 
     # Reasoning and report writing both block; keep them off the event loop.
-    diagnosis = await asyncio.to_thread(RootCauseAnalyzer().analyze, investigation)
+    with span("analyse"):
+        diagnosis = await asyncio.to_thread(RootCauseAnalyzer().analyze, investigation)
     investigation["timeline"].append(
         {
             "time": datetime.now().strftime("%H:%M:%S"),
@@ -78,14 +85,15 @@ async def run_investigation(
     if reporter is not None:
         reporter.report("Root Cause Generated")
 
-    history_item = await asyncio.to_thread(
-        InvestigationHistoryService().save,
-        diagnosis,
-        investigation,
-        "success",
-        investigation_id,
-        principal.subject if principal else "",
-    )
+    with span("report"):
+        history_item = await asyncio.to_thread(
+            InvestigationHistoryService().save,
+            diagnosis,
+            investigation,
+            "success",
+            investigation_id,
+            principal.subject if principal else "",
+        )
 
     if reporter is not None:
         reporter.report("Report generated")

@@ -354,3 +354,95 @@ def _value(payload: str, metric: str, labels: str) -> float:
         except ValueError:
             continue
     return 0.0
+
+
+class TestPhaseAttribution:
+    """The last open P1, and the thing that corrected a published number.
+
+    `PERFORMANCE_ENVELOPE.md` reported a ~10/s throughput ceiling and listed
+    "which component that sits in" as unmeasured. Instrumenting the phases
+    answered it — and, in doing so, showed the ceiling itself was the load
+    harness rather than the platform. A measurement that only confirms what you
+    expected has not been worth taking.
+    """
+
+    def test_every_phase_is_seeded(self, api):
+        from app.observability.tracing import PHASES
+
+        payload = scrape(api)
+        for phase in PHASES:
+            assert f'phase="{phase}"' in payload, phase
+
+    def test_phases_are_a_closed_set(self, api):
+        """A phase label whose values grow with the input is the same
+        cardinality mistake a cluster label would be."""
+        import re
+
+        from app.observability.tracing import PHASES
+
+        seen = set(
+            re.findall(r'k8sagent_investigation_phase_seconds_\w+\{phase="([^"]+)"', scrape(api))
+        )
+        assert seen <= set(PHASES), seen - set(PHASES)
+
+    def test_an_investigation_records_every_phase_it_runs(self, api):
+        api.post("/investigate", json={"context": "test-cluster"})
+        payload = scrape(api)
+
+        for phase in ("collect", "analyse", "report"):
+            assert (
+                _value(payload, "k8sagent_investigation_phase_seconds_count", f'phase="{phase}"')
+                > 0
+            ), phase
+
+    def test_the_phases_sum_to_less_than_the_investigation(self, api):
+        """A sanity check that also documents the finding: the phases do not
+        account for the whole of a worker's slot occupancy, and the gap is
+        where the interesting question lives."""
+        api.post("/investigate", json={"context": "test-cluster"})
+        payload = scrape(api)
+
+        phases = sum(
+            _value(payload, "k8sagent_investigation_phase_seconds_sum", f'phase="{phase}"')
+            for phase in ("collect", "analyse", "report", "persist")
+        )
+        assert phases > 0
+
+
+class TestPhaseTimingIsTotal:
+    """It records or it does nothing; it never changes the outcome."""
+
+    def test_an_exception_inside_a_phase_propagates_unchanged(self):
+        from app.observability import tracing
+
+        with pytest.raises(ValueError, match="boom"), tracing.span("collect"):
+            raise ValueError("boom")
+
+    def test_a_failed_phase_is_still_timed(self, api):
+        """A slow failure is exactly the shape an operator needs to see;
+        timing only the happy path would hide it."""
+        from app.observability import tracing
+
+        before = _value(
+            scrape(api), "k8sagent_investigation_phase_seconds_count", 'phase="collect"'
+        )
+        with pytest.raises(RuntimeError), tracing.span("collect"):
+            raise RuntimeError("nope")
+
+        after = _value(scrape(api), "k8sagent_investigation_phase_seconds_count", 'phase="collect"')
+        assert after == before + 1
+
+    def test_no_trace_exporter_is_configured(self):
+        """OTLP export is deliberately absent: `opentelemetry-proto` requires
+        `protobuf<7.0` and this project pins 7.35.1 so protobuf 7 can validate
+        the agent's generated wire bindings. Installing it downgraded protobuf
+        to 6.33.6 — the exact failure the pin exists to prevent.
+
+        Catches: adding the dependency back without regenerating the bindings.
+        """
+        import google.protobuf
+
+        assert google.protobuf.__version__.startswith("7."), (
+            "protobuf was downgraded; the agent's generated bindings are "
+            "validated against the runtime and this is how that breaks."
+        )

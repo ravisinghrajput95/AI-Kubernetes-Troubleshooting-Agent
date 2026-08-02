@@ -148,6 +148,14 @@ events_rejected_total = Counter(
     registry=REGISTRY,
 )
 
+investigation_phase_seconds = Histogram(
+    "k8sagent_investigation_phase_seconds",
+    "Wall time inside one phase of the pipeline. Attributes the throughput ceiling.",
+    ["phase"],
+    buckets=COLLECTION_BUCKETS,
+    registry=REGISTRY,
+)
+
 notifications_total = Counter(
     "k8sagent_notifications_total",
     "Outbound announcements, by outcome. `failed` means retries were exhausted.",
@@ -217,6 +225,11 @@ _KNOWN_LABELS: tuple[tuple[Counter, str, tuple[str, ...]], ...] = (
 
 
 def _seed() -> None:
+    from app.observability.tracing import PHASES
+
+    for phase in PHASES:
+        investigation_phase_seconds.labels(phase=phase)
+
     for metric, label, values in _KNOWN_LABELS:
         for value in values:
             metric.labels(**{label: value}).inc(0)
@@ -312,6 +325,11 @@ def event_triggered() -> None:
 def event_rejected(reason: str) -> None:
     """`reason` is a fixed category, never anything from the payload."""
     _safe(lambda: events_rejected_total.labels(reason=reason).inc())
+
+
+def phase_finished(phase: str, seconds: float) -> None:
+    """`phase` is one of `tracing.PHASES` — a closed set, like every label here."""
+    _safe(lambda: investigation_phase_seconds.labels(phase=phase).observe(seconds))
 
 
 def notification(outcome: str) -> None:

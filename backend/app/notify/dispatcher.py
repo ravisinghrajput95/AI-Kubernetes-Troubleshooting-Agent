@@ -130,7 +130,16 @@ def _announce(
         if not destination.accepts(outcome, severity):
             continue
 
-        _spawn(deliver(destination, summary))
+        _spawn(_timed(destination, summary))
+
+
+async def _timed(destination, summary) -> bool:
+    """Delivery is a phase too: a slow receiver is a plausible answer to
+    "where did the time go", and one nobody would think to look for."""
+    from app.observability.tracing import span
+
+    with span("notify", destination=destination.name):
+        return await deliver(destination, summary)
 
 
 def _spawn(coroutine) -> None:

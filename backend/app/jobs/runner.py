@@ -10,6 +10,7 @@ from app.jobs.models import InvestigationJob, JobEvent, JobEventType
 from app.models.investigation import InvestigationRequest
 from app.notify import announce
 from app.observability import metrics
+from app.observability.tracing import span
 from app.providers.base import ClusterUnreachable
 from app.services.investigation_runner import (
     FAILURE_DETAIL,
@@ -243,7 +244,8 @@ class InvestigationJobRunner:
 
         # The result carries the whole investigation; writing it can be slow
         # enough to matter, so keep it off the event loop.
-        await asyncio.to_thread(self.store.mark_succeeded, job_id, result)
+        with span("persist"):
+            await asyncio.to_thread(self.store.mark_succeeded, job_id, result)
         metrics.investigation_finished("succeeded", time.perf_counter() - started)
         # After the result is durable, never before: an announcement describes
         # something that happened, and firing it first would let a receiver

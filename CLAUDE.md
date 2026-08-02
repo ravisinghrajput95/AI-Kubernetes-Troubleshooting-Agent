@@ -492,6 +492,32 @@ shared with anything else importing the library. Recording is total: `_safe()`
 swallows, because instrumentation that can fail the thing it measures turns an
 observability bug into an outage.
 
+### Phase timing (`app/observability/tracing.py`)
+
+`k8sagent_investigation_phase_seconds{phase}` — `collect`, `analyse`, `report`,
+`persist`, `notify`. Closed set, like every label here. Measured at 500 pods on
+the distributed deployment: **collect 65%, report 13%, analyse 11%, persist
+10%**, totalling ~0.21 s of platform work per investigation.
+
+That measurement is what corrected the published throughput number — see the
+envelope section below. A phase attribution that only confirms what you
+expected has not been worth taking.
+
+**OTLP trace export is deliberately not built, for a hard reason.**
+`opentelemetry-proto` requires `protobuf<7.0`; this project pins
+`protobuf==7.35.1` because protobuf 7 validates generated code against the
+runtime and the agent's wire bindings depend on it. Installing the exporter in
+a scratch environment silently downgraded protobuf to 6.33.6 — the exact
+failure the pin exists to prevent. What that costs is cross-worker correlation
+(an investigation submitted on one worker and run on another cannot be one
+trace); what it does not cost is the question traces were wanted for. A test
+asserts protobuf stays on 7.x so the dependency cannot come back without the
+bindings being regenerated deliberately.
+
+`span()` records in a `finally`, so a phase that raised is still timed — a slow
+failure is exactly the shape an operator needs, and timing only the happy path
+would hide it.
+
 ### The performance envelope (M8c)
 
 `docs/PERFORMANCE_ENVELOPE.md` is the published one, with the command beside
@@ -501,19 +527,22 @@ with its own gRPC channel and its own `Connect` stream, answering real
 anything in `agent/`, so a change that breaks real agents breaks it too.
 
 Measured: **1,000 clusters attached in 1.04 s** on one gateway, all visible,
-159 MB platform RSS; **~10 investigations/s per worker** at
-`JOB_MAX_CONCURRENT=32`, with throughput flat under 4x more offered load while
-latency grows linearly. That flatness is the point — a single load level cannot
-tell a platform ceiling from a harness artefact, which is why two are run.
+159 MB platform RSS; a single investigation completing **end to end in
+0.223 s**, of which `collect` is 65%.
 
-**On a saturated platform, latency is backlog.** A 25 s p50 at 250 in flight is
-a queue absorbing four times the work a worker can do, not a slow
-investigation. Size on throughput; alarm on queue depth.
+**The throughput figure this document first carried was wrong, and the mistake
+is the useful part.** ~10/s was reported as a platform ceiling because
+throughput stayed flat while offered load rose 4× and latency grew linearly —
+but a saturated *client* produces that signature identically, and both runs
+came from one Python event loop. Two load levels from one process cannot tell
+the two apart; only the server's own counters can. `fleet_bench.py` now reports
+`platform_side.utilisation` and says `HARNESS-BOUND` when the server was idle,
+so a throughput number without a `platform-bound` verdict is a statement about
+the harness.
 
-**5,000 concurrent is not measured**, and the envelope says so — along with the
-Go agent, mTLS at fleet scale, real networks, sustained operation, and which
-component the ~10/s ceiling sits in. Do not move §12's scalability score to 9
-on the strength of that document.
+**5,000 concurrent is not measured, and neither is the real ceiling** — finding
+it needs a load generator that can be shown not to be the bottleneck. Do not
+move §12's scalability score to 9 on the strength of that document.
 
 `fleet_bench.py` reports `stream_failures` and exits non-zero if any stream
 died. Its first run printed "5 collections, 0 records" — a plausible-looking

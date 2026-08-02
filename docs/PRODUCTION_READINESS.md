@@ -60,9 +60,16 @@ through the same builder the dependency uses. And `docker-compose.yml` no
 longer sets `ALLOW_INSECURE_NO_AUTH` for the operator — pre-setting it was the
 careless deployment this finding describes, shipped in the repository.
 
-**Remaining (P1):** no traces. `disabled` remains the *default mode*, but it
-now costs a deliberate acknowledgement that nothing in this repository supplies
-and that refuses the boot until given.
+**Remaining (P1):** none. `disabled` remains the *default mode*, but it now
+costs a deliberate acknowledgement that nothing in this repository supplies and
+that refuses the boot until given.
+
+Phase timing closed the traces item, though not in the shape the finding
+assumed: `k8sagent_investigation_phase_seconds` answers "where did the time go"
+from a scrape, and OTLP export is blocked by `opentelemetry-proto` requiring
+`protobuf<7.0` against this project's load-bearing 7.x pin. Cross-worker trace
+correlation is the stated casualty. Taking the phase measurement immediately
+corrected a published throughput figure, which is the return on it.
 
 ### F14 · Prompt injection reached operator-facing commands · **FIXED**
 

@@ -988,10 +988,13 @@ rather than by this document's guess. Split accordingly:
 
   - **1,000 clusters attached to one gateway in 1.04 s**, all 1,000 visible to
     the API, 159 MB platform RSS, zero stream failures.
-  - **~10 investigations/s per worker** at `JOB_MAX_CONCURRENT=32`, flat under
-    4x more offered load while latency grows linearly — saturation, which is
-    what makes it a platform ceiling rather than a harness artefact. 11,500
-    collections answered through real streams during that run.
+  - Investigation throughput: **the figure first published here was wrong and
+    has been withdrawn.** ~10/s was this harness's ceiling, not the platform's;
+    "throughput flat under 4x offered load" is produced identically by a
+    saturated client, and both runs shared one Python event loop. Phase
+    instrumentation later showed a single investigation completing in **0.223 s**
+    end to end, implying ~143/s at 32 slots. See `docs/PERFORMANCE_ENVELOPE.md`.
+    11,500 collections were answered through real streams during that run.
   - 13.4 MB peak heap per investigation; 100% routing hit rate; the payload
     read reductions from M8b.
 
