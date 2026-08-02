@@ -136,6 +136,8 @@ Read from the environment or `backend/.env`.
 | `METRICS_ENABLED` | `true` | Serve `/metrics`; no cluster, tenant or user is ever a label |
 | `RATE_LIMIT_PER_MINUTE` | `60` | Investigations one caller may start per minute |
 | `RATE_LIMIT_TENANT_PER_MINUTE` | `0` | Per-tenant quota; 0 is unlimited, set it on `shared` |
+| `EVENT_SOURCES` | — | `name:secret:subject[:groups][:tenant]`; the subject is impersonated |
+| `EVENT_COOLDOWN_SECONDS` | `1800` | How long a repeated alert fingerprint is ignored |
 
 **Impersonation matters.** With it on, every cluster read runs as the calling
 user, so the cluster applies *their* RBAC rather than the service account's. The

@@ -114,6 +114,34 @@ class Settings(BaseSettings):
 
     audit_log_path: str = Field(default="", validation_alias="AUDIT_LOG_PATH")
 
+    # --- Event ingress ------------------------------------------------------
+    # `name:secret:subject[:groups][:tenant]`, comma separated. Empty means no
+    # webhook can trigger anything, which is the default: a platform that reads
+    # production clusters should not gain an inbound trigger by accident.
+    #
+    # The subject is required and is impersonated exactly as a person's would
+    # be. See `app/events/sources.py` — without it an alert-triggered
+    # investigation reads as the platform's service account.
+    event_sources: str = Field(default="", validation_alias="EVENT_SOURCES")
+
+    # How long the same alert fingerprint is ignored after triggering.
+    # Alertmanager re-sends on its `repeat_interval`; investigating every
+    # delivery would turn one flapping alert into an unbounded series of
+    # cluster reads.
+    event_cooldown_seconds: int = Field(
+        default=1800, ge=0, validation_alias="EVENT_COOLDOWN_SECONDS"
+    )
+
+    def validate_event_sources(self) -> None:
+        """Refuse a malformed source at startup rather than at 3am.
+
+        A webhook that silently failed to load returns 404 to a monitoring
+        system that will log it once and never mention it again.
+        """
+        from app.events.sources import parse_sources
+
+        parse_sources(self.event_sources)
+
     # --- Rate limiting ------------------------------------------------------
     # Applies only to operations that cost a customer's cluster and a model
     # call — since M6.5 that is exactly the set requiring `investigation.run`.

@@ -108,9 +108,12 @@ class StateBackend:
         set_member_store(None)
         reset_resolver()
 
+        from app.events import reset_sources, set_trigger_ledger
         from app.ratelimit import set_rate_limiter
 
         set_rate_limiter(None)
+        set_trigger_ledger(None)
+        reset_sources()
 
         if self.gateway is not None:
             from app.gateway.presence import set_agent_presence
@@ -178,6 +181,7 @@ def build_state() -> StateBackend:
     # whose only symptom is people holding the wrong authority.
     settings.validate_authz()
     settings.validate_rate_limits()
+    settings.validate_event_sources()
 
     from app.authz.resolver import reset_resolver
 
@@ -234,6 +238,11 @@ def build_state() -> StateBackend:
     # three times the configured limit, and changes when an operator scales —
     # which is not a quota.
     set_rate_limiter(RedisRateLimiter(bus))
+    # Deduplication that is per worker is not deduplication: three replicas
+    # behind a load balancer would each investigate the same alert.
+    from app.events import RedisTriggerLedger, set_trigger_ledger
+
+    set_trigger_ledger(RedisTriggerLedger(bus))
 
     logger.info("State is distributed; this worker is {worker}", worker=worker)
     return StateBackend(

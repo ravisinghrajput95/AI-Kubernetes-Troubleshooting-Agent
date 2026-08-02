@@ -193,7 +193,24 @@ BOB_AUTH = {"Authorization": "Bearer bob-tok"}
 #
 # `/health` is reached by container probes before any credential exists; the
 # docs routes are FastAPI's own and carry no data.
-PUBLIC = {"/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
+PUBLIC = {
+    "/health",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/docs/oauth2-redirect",
+    # Scraped by infrastructure, which holds no user credential. Safe only
+    # because no series identifies a cluster, tenant or user — asserted in
+    # `test_metrics.py`, not assumed here.
+    "/metrics",
+    # Not unauthenticated: authenticated by an HMAC signature over the body and
+    # a timestamp, and authorised as the source's *configured* identity, which
+    # the investigation is then impersonated as. It rejects an unsigned caller
+    # with 401 like everything else — it simply does not offer a Bearer
+    # challenge, because a bearer token is not what it accepts.
+    # `test_event_ingress.py` covers it.
+    "/events/{source_name}",
+}
 
 
 def _protected_routes() -> list[tuple[str, str]]:

@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from app.api.agents import router as agents_router
+from app.api.events import router as events_router
 from app.api.health import router as health_router
 from app.api.investigate import router as investigate_router
 from app.api.members import router as members_router
@@ -57,6 +58,9 @@ def create_app() -> FastAPI:
     app.include_router(agents_router)
     app.include_router(session_router)
     app.include_router(members_router)
+    # No permission dependency: an alert carries no principal, and the
+    # signature is the authorisation. See app/api/events.py.
+    app.include_router(events_router)
 
     return app
 

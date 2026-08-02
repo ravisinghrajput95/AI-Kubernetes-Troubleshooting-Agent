@@ -135,6 +135,19 @@ diagnoses_total = Counter(
     registry=REGISTRY,
 )
 
+events_triggered_total = Counter(
+    "k8sagent_events_triggered_total",
+    "Investigations started by an inbound event.",
+    registry=REGISTRY,
+)
+
+events_rejected_total = Counter(
+    "k8sagent_events_rejected_total",
+    "Inbound events not acted on, by reason. `duplicate` is the normal case.",
+    ["reason"],
+    registry=REGISTRY,
+)
+
 rate_limited_total = Counter(
     "k8sagent_rate_limited_total",
     "Investigation submissions refused by a rate limit, by which bucket refused.",
@@ -166,6 +179,11 @@ _KNOWN_LABELS: tuple[tuple[Counter, str, tuple[str, ...]], ...] = (
     ),
     (cluster_access_total, "provider", ("agent", "kubeconfig")),
     (rate_limited_total, "scope", ("subject", "tenant")),
+    (
+        events_rejected_total,
+        "reason",
+        ("signature", "malformed", "duplicate", "submit_failed"),
+    ),
     (llm_calls_total, "outcome", ("succeeded", "failed")),
     (diagnoses_total, "path", ("grounded", "fallback")),
     (
@@ -277,6 +295,15 @@ def grounding_rejected(reason: str) -> None:
     injection surface `app/ai` closes at the prompt boundary.
     """
     _safe(lambda: grounding_rejections_total.labels(reason=reason).inc())
+
+
+def event_triggered() -> None:
+    _safe(events_triggered_total.inc)
+
+
+def event_rejected(reason: str) -> None:
+    """`reason` is a fixed category, never anything from the payload."""
+    _safe(lambda: events_rejected_total.labels(reason=reason).inc())
 
 
 def rate_limited(scope: str) -> None:

@@ -1065,9 +1065,38 @@ re-offering a stranded job back to the worker that dropped it.
 It needs Postgres and Redis and nothing else — standing up a thousand real agent
 streams measures a different thing and belongs to M8c.
 
-**M9 — Integration surfaces.**
+**M9 — Integration surfaces.** ⏳ In progress.
 Event ingress, action egress, MCP server. *Exit:* an alert triggers an
 investigation that opens a ticket with no human involved.
+
+**Event ingress delivered.** A signed `POST /events/{source}` turns an
+Alertmanager notification into an investigation. The first half of the exit
+criterion; action egress and MCP remain.
+
+*Outcome:* the signature was the easy part. The finding was that **an alert has
+no human, and impersonation is what makes "the platform cannot see more than
+you can" true** — `_impersonation_args` returns nothing for an absent or
+anonymous principal, so a trigger without a configured identity would have read
+as the platform's own service account, obtaining access no authenticated user
+could ask for through the one door with no user behind it. A source is
+therefore an *identity*, not a secret: `name:secret:subject[:groups][:tenant]`,
+subject required, refused at startup without one, and the investigation is
+impersonated as it exactly as a person's would be.
+
+Two further properties, both of which survived a first mutation pass and
+needed better tests rather than better code: the tenant is fixed by
+configuration and cannot be chosen by a payload (asserting the parser proved
+nothing about which tenant the handler enters), and the signature comparison is
+constant time (not observable functionally, so guarded by source inspection —
+a control with no guard at all is worse than a white-box one).
+
+Deduplication is load-bearing rather than an optimisation: Alertmanager
+re-sends, and investigating each delivery would turn one flapping alert into an
+unbounded series of production cluster reads. The ledger fails **closed**,
+deliberately opposite to the rate limiter, because the expensive mistake is the
+one to avoid.
+
+Twelve mutations applied one at a time; all twelve failed a test.
 
 Sequencing note: M1–M3 deliver most of the enterprise value (HA, scale-out,
 durable state) without any agent work, and M3 alone closes the largest gap in

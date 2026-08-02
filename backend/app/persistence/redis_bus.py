@@ -101,6 +101,16 @@ class RedisBus:
     def delete(self, key: str) -> None:
         self._sync.delete(key)
 
+    def set_if_absent(self, key: str, ttl_seconds: int) -> bool:
+        """Claim a key, or report that someone already holds it.
+
+        `SET NX EX` in one command: exactly one caller creates it, and it
+        expires on its own, so no cleanup path has to be correct on the unhappy
+        path. Used for alert deduplication, where two workers receiving the
+        same webhook must not both start an investigation.
+        """
+        return bool(self._sync.set(key, "1", nx=True, ex=ttl_seconds))
+
     def increment_in_window(self, key: str, ttl_seconds: int) -> int:
         """Count one use, and return the running total for this window.
 

@@ -269,6 +269,50 @@ Every collected fact is an `Evidence` record with a **deterministic id** (`kind:
 
 `select_provider()` (`app/services/investigation_service.py`) makes the choice: an agent connected for this cluster wins, otherwise the local kubeconfig. The registry is per-process, so a cluster whose agent is connected to another worker falls back to local — correct, and *visible*, via `investigation["cluster_access"]`. Routing to the worker holding the stream is M8.
 
+### Event ingress (`app/events/`, `app/api/events.py`, M9)
+
+A signed webhook that *triggers* investigations — §3.7's "what turns the
+product from human-invoked to autonomous". `POST /events/{source}`, disabled
+until `EVENT_SOURCES` names one.
+
+**A source is an identity, not a secret, and that is the whole design.**
+`_impersonation_args` returns nothing for an absent or anonymous principal, so
+an alert-triggered investigation with no identity reads as the platform's
+*service account* — obtaining access no authenticated user could ask for,
+through the one door with no user behind it. Impersonation is what makes "the
+platform cannot see more than you can" true, and automation must not be the
+exception. So `EVENT_SOURCES` is `name:secret:subject[:groups][:tenant]`, the
+subject is **required**, and the investigation is impersonated as it exactly as
+a person's would be. A source without one is refused at startup.
+
+**The tenant comes from configuration, never the payload.** Anything that can
+write an alert rule can influence its labels, so a payload-chosen tenant would
+be a cross-tenant trigger. Pinned by a test that observes the ambient tenant at
+the moment the handler uses it — asserting the parser alone let the mutation
+survive.
+
+**The signature covers a timestamp as well as the body.** A signature makes a
+body unforgeable, not un-replayable; without the timestamp inside the signed
+material a captured request could be replayed with a fresh header. Five-minute
+tolerance, `hmac.compare_digest`.
+
+**Deduplication is not an optimisation.** Alertmanager re-sends on its
+`repeat_interval` and whenever a group's membership changes; investigating each
+delivery turns one flapping alert into an unbounded series of production
+cluster reads. A fingerprint that has already fired is refused for
+`EVENT_COOLDOWN_SECONDS` (1800). `TriggerLedger` follows the usual seam —
+in-memory, or Redis `SET NX EX` so three replicas do not each investigate the
+same alert.
+
+**It fails *closed* where the rate limiter fails open.** A missed deduplication
+is an unbounded series of cluster reads; a missed investigation is one alert the
+operator still sees in their own alerting. The expensive mistake is the one to
+avoid, and the two asymmetries are deliberate opposites.
+
+**Always 202 on a good signature**, even for a duplicate or an alert with no
+cluster label. Alertmanager retries a non-2xx, so reporting a normal outcome as
+an error produces exactly the storm deduplication exists to prevent.
+
 ### Rate limiting (`app/ratelimit/`)
 
 **What is limited is deliberately narrow.** An investigation is the platform's
