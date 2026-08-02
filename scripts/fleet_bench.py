@@ -533,6 +533,21 @@ def main(argv: list[str] | None = None) -> int:
             "measures this script as much as the platform."
         ),
     )
+    parser.add_argument(
+        "--agent-processes",
+        type=int,
+        default=1,
+        help=(
+            "Spread the synthetic fleet across N processes. 1 keeps them all in "
+            "this one, which the concurrency sweep showed becomes the bottleneck."
+        ),
+    )
+    parser.add_argument(
+        "--slots",
+        type=int,
+        default=32,
+        help="The platform's JOB_MAX_CONCURRENT, so slot occupancy can be computed.",
+    )
     parser.add_argument("--concurrency", type=int, default=50)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--seed", type=int, default=1729)

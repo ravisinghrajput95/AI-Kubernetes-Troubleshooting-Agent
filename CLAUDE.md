@@ -537,12 +537,13 @@ gives that signature identically. Then it was retracted in favour of ~143/s,
 extrapolated from a single investigation's 0.223 s — but **single-request
 latency does not extrapolate to throughput**.
 
-What settled it is a **concurrency sweep**: same offered load at 4 slots and at
-32. Throughput moved 11.4 → 12.3/s while `collect` inflated 0.241 s → 2.272 s.
-Eight times the slots for 8% more work, with per-phase time rising in
-proportion, is a shared serial resource *downstream* of the platform — here,
-50 synthetic agents in one harness process. So ~12/s is the fleet harness's
-ceiling; the platform's remains unknown.
+Then a **concurrency sweep** scaled three things in turn — platform slots 4→32
+(11.6 → 12.2/s), agent processes 1→6 (12.3 → 12.2/s), platform workers 1→2
+(12.2 → 9.1/s). Throughput flat or worse every time, with CPU at ~400% of an
+available 1500%. **The ceiling is a serialisation, not a capacity limit, and
+its location is unknown after three attempts.** `collect` is 98% of busy time
+and inflates in proportion to concurrency; the other phases do not inflate at
+all. Finding it needs a profiler, not a fourth load test.
 
 **The rule: throughput that does not rise with `JOB_MAX_CONCURRENT` is not the
 platform's.** `fleet_bench.py` now refuses to print "platform-bound" from a

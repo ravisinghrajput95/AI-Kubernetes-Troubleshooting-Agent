@@ -52,38 +52,50 @@ retraction should not have assumed it did.
 
 **Attempt 3 — the concurrency sweep.** Load offered from 6 processes, and
 completions counted from the platform's own `k8sagent_investigations_total`
-rather than by the client noticing them:
+rather than by the client noticing them. Then the same load with the synthetic
+fleet spread across 6 processes, and again with two platform workers:
 
-| `JOB_MAX_CONCURRENT` | offered | throughput | `collect` mean |
+| what was scaled | from | to | throughput |
 |---|---|---|---|
-| 4 | 132/s | **11.4/s** | 0.241 s |
-| 32 | 141/s | **12.3/s** | 2.272 s |
+| platform slots (`JOB_MAX_CONCURRENT`) | 4 | 32 | 11.6 → **12.2/s** |
+| synthetic agent processes | 1 | 6 | 12.3 → **12.2/s** |
+| platform workers | 1 | 2 | 12.2 → **9.1/s** |
 
-**Eight times the slots buys 8% more throughput, and `collect` inflates by
-almost exactly the concurrency factor.** That is the signature of a shared
-serial resource *downstream* of the platform — and here it is this harness: all
-50 synthetic agents are coroutines in **one Python process**, so the platform
-queues against them however many slots it has.
+**Three different components given more capacity; throughput flat or worse
+every time.** `collect` inflates in proportion to platform concurrency
+(0.24 s → 2.06 s from 4 to 32 slots) and is 98% of platform busy time;
+`analyse`, `report` and `persist` do not inflate at all and are *faster* at 32
+slots than uncontended.
 
-So ~12/s is the **synthetic fleet's** ceiling. The platform's is still unknown,
-now for a precisely understood reason rather than a suspected one.
+And the machine is **not** the limit: total CPU during a run sits around
+300–430% of an available 1500% on 15 cores.
 
-`collect` is 98% of platform busy time (2,726 s of 2,776 s across 1,200
-investigations). `analyse`, `report` and `persist` do not inflate under
-concurrency at all — 0.009 s, 0.020 s and 0.013 s at 32 slots, *faster* than
-uncontended. Whatever the fleet-side ceiling turns out to be, the platform's own
-compute is nowhere near it.
+**So the ceiling is a serialisation, not a capacity limit — and this document
+does not know where it is.** Adding load, slots, agent processes or workers
+does not move it, and there is spare CPU throughout, which is the signature of
+something serial in the path rather than something saturated. Candidates not
+yet eliminated: the 10-connection Postgres pool against 16–32 concurrent
+investigations each making a dozen round trips; per-event `INSERT` plus Redis
+publish on the progress path; the gRPC stream's own ordering.
+
+**Finding it needs profiling, not another load test.** Three load tests have
+now failed to attribute it, and each failure looked like an answer at the time.
+That is the honest state, and it is why the number below is presented as *a
+measurement taken on this setup* rather than as the platform's capacity.
+
+*What can be said:* on one machine with everything co-located — platform,
+agents, Postgres, Redis and the load generator — the stack sustains **~12
+investigations/s**, and no single component's capacity explains it.
 
 **The control that works**, and the one to run before believing any throughput
 number here: offer the same load at two values of `JOB_MAX_CONCURRENT`. If
-throughput rises with slots, the platform was the constraint. If it does not,
-and per-phase time inflates in proportion, the constraint is outside. The
-harness now refuses to print "platform-bound" from a single run for exactly
-this reason.
+throughput rises with slots, the platform was the constraint. If it does not
+and per-phase time inflates in proportion, the constraint is elsewhere. The
+harness refuses to print "platform-bound" from a single run for this reason.
 
 ```bash
-python scripts/fleet_bench.py --clusters 50 --investigations 1200 \
-    --load-processes 6 --slots 32
+python scripts/fleet_bench.py --clusters 48 --agent-processes 6 \
+    --investigations 400 --load-processes 6 --slots 32
 ```
 
 ### Memory per investigation
@@ -155,11 +167,10 @@ travel.
 - **Sustained operation.** The longest run here is under a minute. Nothing says
   what happens over hours: no leak test, no certificate rotation under load, no
   Postgres growth over a retention period.
-- **The platform's actual throughput ceiling.** Still unknown, and now for a
-  known reason: the *load generator* is multi-process, but the **synthetic
-  agent fleet is not**, and the concurrency sweep shows that fleet is the
-  constraint. Finding the platform's ceiling needs agents spread across
-  processes too — or a kubeconfig-backed run with no agents at all.
+- **The platform's actual throughput ceiling.** Still unknown after three
+  attempts. It is not platform slots, not the synthetic fleet, not worker
+  count, and not machine CPU — all four were varied. Something in the path
+  serialises; a profiler will find it and a fourth load test will not.
   Per-phase attribution *is* measured and is above.
 
 ## Known limits that are design, not measurement
