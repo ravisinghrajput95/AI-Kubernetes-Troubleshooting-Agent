@@ -8,6 +8,7 @@ from app.api.agents import router as agents_router
 from app.api.events import router as events_router
 from app.api.health import router as health_router
 from app.api.investigate import router as investigate_router
+from app.api.mcp import router as mcp_router
 from app.api.members import router as members_router
 from app.api.session import router as session_router
 from app.core.config import settings
@@ -61,6 +62,8 @@ def create_app() -> FastAPI:
     # No permission dependency: an alert carries no principal, and the
     # signature is the authorisation. See app/api/events.py.
     app.include_router(events_router)
+    # Authorisation is per tool, not per route. See app/api/mcp.py.
+    app.include_router(mcp_router)
 
     return app
 

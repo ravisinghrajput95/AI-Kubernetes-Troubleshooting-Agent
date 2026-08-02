@@ -269,6 +269,47 @@ Every collected fact is an `Evidence` record with a **deterministic id** (`kind:
 
 `select_provider()` (`app/services/investigation_service.py`) makes the choice: an agent connected for this cluster wins, otherwise the local kubeconfig. The registry is per-process, so a cluster whose agent is connected to another worker falls back to local — correct, and *visible*, via `investigation["cluster_access"]`. Routing to the worker holding the stream is M8.
 
+### MCP (`app/mcp/`, `app/api/mcp.py`, M9)
+
+The platform's capabilities as tools a customer's own agent can call. §3.7 puts
+MCP here rather than on the agent link — a valuable product surface and a poor
+fleet transport.
+
+**The danger is that it is a second entry point.** M6.5 made authorisation
+impossible to forget for HTTP by putting one check in a router-level dependency
+and denying any route absent from `ROUTE_PERMISSIONS`. A tool call is not a
+route, so none of that machinery reaches it, and a tool server calling
+`run_investigation` directly would be a complete authorisation bypass wearing a
+different protocol.
+
+So `app/mcp/tools.py` is the same idea in the same shape: every tool declares a
+`Permission`, **a tool with no entry cannot be called**, and `tests/test_mcp.py`
+asserts the registry is complete. `tools/list` is filtered by what the caller
+may actually do — listing a tool every call would refuse teaches an agent to
+keep trying it. Costed tools are the same `COSTED_PERMISSIONS` set and share
+the *same* rate-limit buckets, because a second entry point with its own budget
+would double the quota an operator configured.
+
+**Nothing that mutates the fleet is exposed** — no enrolment, revocation or
+member management. Those need `admin` and are the operations M6.5 identified as
+destructive; handing them to an autonomous agent is a decision a customer
+should make explicitly.
+
+`/mcp` is the *second* route mapped to `AUTHENTICATED`, and it means something
+different from `/me`: not "nothing to check" but "checked deeper". A test
+asserts exactly those two carry the marker.
+
+The JSON-RPC subset (`initialize`, `tools/list`, `tools/call`, `ping`,
+notifications) is hand-written rather than the reference SDK — same reasoning
+that kept axios out of the console. The cost is that new spec features do not
+arrive for free, which is why the supported subset is named rather than implied.
+
+**Every data router installs `require_permission`, and a test asserts it
+structurally.** Behaviour cannot see this: handlers also depend on
+`require_principal`, so deleting the router dependency leaves authentication
+working and every 401 test passing while authorisation silently stops running.
+`events` is the one deliberate exception and is asserted as such.
+
 ### Action egress (`app/notify/`, M9)
 
 One outbound interface — a signed JSON POST — rather than a shape per vendor,

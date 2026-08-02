@@ -203,10 +203,60 @@ class TestEveryRouteHasAPolicy:
         """The load-bearing default. Catches: `.get(key, AUTHENTICATED)`."""
         assert required_permission("POST", "/some/endpoint/added/next/year") is None
 
-    def test_only_one_route_requires_no_permission(self):
-        """`/me` has to be reachable so a locked-out user can see why."""
-        open_routes = [route for route, need in ROUTE_PERMISSIONS.items() if need is AUTHENTICATED]
-        assert open_routes == [("GET", "/me")]
+    def test_only_two_routes_require_no_route_permission(self):
+        """And the two mean different things, which is why both are named.
+
+        `/me` has to be reachable so a locked-out user can see why. `/mcp`
+        serves many capabilities through one endpoint, so its permission
+        belongs to the *tool* — `test_mcp.py` asserts every tool has one, which
+        is what stops `AUTHENTICATED` here from meaning "unchecked".
+
+        Anything else appearing in this list is a route that quietly stopped
+        requiring a permission.
+        """
+        open_routes = {route for route, need in ROUTE_PERMISSIONS.items() if need is AUTHENTICATED}
+        assert open_routes == {("GET", "/me"), ("POST", "/mcp")}
+
+    def test_every_data_router_installs_the_check(self):
+        """Structural, because behaviour alone cannot see this.
+
+        Handlers also depend on `require_principal`, so deleting
+        `require_permission` from a router leaves authentication working and
+        every 401 test passing — while the *authorisation* check silently stops
+        running for every route on it. Only `health` is exempt, and it carries
+        no data.
+
+        Catches: `APIRouter(tags=[...])` without the dependency.
+        """
+        import app.api.agents
+        import app.api.events
+        import app.api.investigate
+        import app.api.mcp
+        import app.api.members
+        import app.api.session
+        from app.authz.dependencies import require_permission
+
+        gated = {
+            "investigate": app.api.investigate.router,
+            "agents": app.api.agents.router,
+            "session": app.api.session.router,
+            "members": app.api.members.router,
+            "mcp": app.api.mcp.router,
+        }
+        for name, router in gated.items():
+            installed = [
+                dependency.dependency for dependency in getattr(router, "dependencies", [])
+            ]
+            assert require_permission in installed, (
+                f"the {name} router no longer installs require_permission; its "
+                f"routes are authenticated but no longer authorised, and every "
+                f"401 test still passes."
+            )
+
+        # Events is the one deliberate exception, and it is not an omission:
+        # the caller carries no principal, the signature is the authorisation,
+        # and `app/api/events.py` argues it.
+        assert not getattr(app.api.events.router, "dependencies", [])
 
     def test_an_unmapped_route_is_refused_at_runtime(self, api, monkeypatch):
         """Not just the table — the dependency's behaviour on a miss.

@@ -1065,7 +1065,7 @@ re-offering a stranded job back to the worker that dropped it.
 It needs Postgres and Redis and nothing else — standing up a thousand real agent
 streams measures a different thing and belongs to M8c.
 
-**M9 — Integration surfaces.** ⏳ In progress.
+**M9 — Integration surfaces. ✅ Delivered.**
 Event ingress, action egress, MCP server. *Exit:* an alert triggers an
 investigation that opens a ticket with no human involved.
 
@@ -1073,7 +1073,21 @@ investigation that opens a ticket with no human involved.
 signed `POST /events/{source}` turns an Alertmanager notification into an
 investigation, and a signed outbound POST announces the diagnosis when it
 finishes. `tests/test_action_egress.py::TestTheWholeChainRuns` drives the whole
-arc with no human in it. The MCP server remains.
+arc with no human in it.
+
+**The MCP server completes the milestone, and the roadmap.** Its risk is that
+it is a *second entry point* into the same capabilities: M6.5's guarantee lives
+in a router-level dependency and a route table, and a tool call is neither. The
+answer is the same shape rather than a new one — every tool declares a
+`Permission`, a tool with no entry cannot be called, `tools/list` is filtered by
+what the caller may do, and costed tools share the *same* rate-limit buckets
+rather than getting a second budget. Nothing that mutates the fleet is exposed.
+
+A mutation pass found the one structural hole this created: deleting
+`require_permission` from a router leaves authentication working and every 401
+test passing, while authorisation silently stops running for every route on it.
+Behaviour cannot see that, so a structural test now asserts each data router
+installs it — with `events` named as the one deliberate exception.
 
 *Outcome:* the signature was the easy part. The finding was that **an alert has
 no human, and impersonation is what makes "the platform cannot see more than

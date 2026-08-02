@@ -50,6 +50,13 @@ AUTHENTICATED = "authenticated"
 ROUTE_PERMISSIONS: dict[tuple[str, str], Permission | str] = {
     # --- session ---------------------------------------------------------
     ("GET", "/me"): AUTHENTICATED,
+    # --- MCP -------------------------------------------------------------
+    # The only other `AUTHENTICATED` entry, and it means something different:
+    # not "nothing to check" but "checked deeper". One endpoint serves many
+    # capabilities, so the permission belongs to the tool rather than the
+    # route — `app/mcp/tools.py` carries the table and `tests/test_mcp.py`
+    # asserts every tool has an entry.
+    ("POST", "/mcp"): AUTHENTICATED,
     # --- fleet -----------------------------------------------------------
     # Cluster names and contexts are fleet topology, so reading them is a
     # permission rather than a given.
