@@ -17,6 +17,7 @@ from app.collectors.kubernetes import build_default_collectors
 from app.core.config import settings
 from app.evidence.models import EvidenceKind
 from app.evidence.store import EvidenceStore
+from app.kubernetes.access import access_failure
 from app.kubernetes.errors import friendly_error
 from app.observability import metrics
 from app.playbooks.kubernetes import DEFAULT_PLAYBOOKS
@@ -267,6 +268,19 @@ class InvestigationService:
         security = self._security_analysis(pods)
         topology = self._cluster_topology(pods)
         health = self._health_summary(pods, events, deployments, network, nodes, storage, workloads)
+        # Recognised after the per-collector summary, so a partial refusal
+        # still reports whatever the collectors managed to say. Only a
+        # cluster-wide refusal overrides it, because only that is a different
+        # problem rather than a smaller answer.
+        refusal = access_failure(
+            store.coverage(),
+            subject=self.principal.subject if self.principal else "",
+            impersonating=settings.impersonate_users
+            and self.principal is not None
+            and not self.principal.anonymous,
+        )
+        if refusal:
+            health = {"status": "error", "message": refusal}
         overview = self._cluster_overview(store, pods, events, deployments, network, metrics)
         severity = self._severity_summary(
             pods, events, deployments, network, nodes, storage, workloads

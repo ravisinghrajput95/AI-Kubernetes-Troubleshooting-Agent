@@ -812,6 +812,35 @@ Edge rules live in `edge_rules.py` and are declarative. **No rule invents a node
 
 `evals/cases/investigations/graph-*.json` are the exit criterion — removing `GRAPH_SIGNAL_RULES` drops the corpus from 13/13 to 10/13.
 
+### Telling a locked door from a broken cluster (`app/kubernetes/access.py`)
+
+With impersonation on — the default — the platform reads as the *caller*, so a
+user whose Kubernetes RBAC is narrower than the service account's gets every
+read refused. That used to surface as a degraded investigation of a broken
+cluster, with the one fact that resolves it in seconds appearing nowhere.
+
+**Not the preflight F6 asked for, deliberately.** `kubectl auth can-i` is a
+*command*, and `ResourceRequest` cannot carry one — that closed verb set is the
+property that makes a request safe to send to a customer's cluster. Instead
+this reads `EvidenceStatus.FORBIDDEN`, which both providers already record, so
+it works identically through the agent and the kubeconfig where a preflight
+command would have worked only on one.
+
+Three conditions, and each stops a different false accusation:
+
+- **Nothing usable was collected.** Four good reads and six refusals is a
+  *partial view* the investigation can still reason over. An earlier version
+  fired on share alone and produced "every cluster read was refused" for a run
+  where four had succeeded; its own test caught it.
+- **At least `MINIMUM_REFUSALS` (3).** "Nothing usable, all refusals" is
+  technically true of a scope that attempted one read.
+- **Refusals dominate the failures.** Otherwise a cluster that is merely down
+  gets diagnosed as a permissions problem — the same confusion pointing the
+  other way.
+
+The message names the impersonated identity, because the confusing part is that
+the *platform* can read the cluster and the user cannot.
+
 ### Analysis layer (`app/analysis/`)
 
 Evidence → **signals** → **hypotheses**, all deterministic, all before any model call.
