@@ -41,10 +41,22 @@ class KubernetesContextService:
         if not isinstance(config, dict):
             return {}
 
+        # `or []`, not a `.get` default. `kubectl config view -o json` on a
+        # kubeconfig with no contexts *succeeds* and returns `"contexts": null`,
+        # so the key is present and its value is `None` — which means the
+        # default never applies and the loop iterates `None`.
+        #
+        # That 500'd `GET /clusters` on exactly the deployments most likely to
+        # have no kubeconfig: a fresh container, and an agent-only fleet where
+        # every cluster is reached through its agent. The console showed
+        # "Loading clusters…" forever. Every nested read below is defended the
+        # same way, because `contexts[].context` is null in the same file.
         mapping = {}
-        for item in config.get("contexts", []):
+        for item in config.get("contexts") or []:
+            if not isinstance(item, dict):
+                continue
             name = item.get("name")
-            cluster = item.get("context", {}).get("cluster")
+            cluster = (item.get("context") or {}).get("cluster")
             if name and cluster:
                 mapping[name] = cluster
 

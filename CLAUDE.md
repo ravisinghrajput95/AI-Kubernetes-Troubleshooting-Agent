@@ -965,4 +965,11 @@ Response shapes are typed in `src/types/investigation.ts`, but the backend retur
 ## Notes
 
 - Prompts are inline in `app/ai/prompt_builder.py`. The former `prompts/` directory described a loading convention that was never implemented and has been removed.
+- **`.get(key, default)` does not defend against `null`.** `kubectl config view
+  -o json` succeeds on a kubeconfig with no contexts and returns
+  `"contexts": null`, so the key is present, the default never applies, and the
+  loop iterates `None`. That 500'd `GET /clusters` on a fresh container and on
+  any agent-only fleet, and the console showed "Loading clusters…" forever.
+  1,167 tests passed with it present; it was found by opening the page. Use
+  `config.get(key) or []` wherever kubectl JSON is read.
 - Dead code with no importers: `app/ai/client.py`, `app/kubernetes/inspector.py` (its `inspect_nodes()` is a hardcoded stub, unrelated to the real `node_inspector.py`), and `start_investigation()` at the bottom of `investigation_service.py`. The live entry points are `LLMClient`, the per-resource inspectors, and `InvestigationService.run()`.

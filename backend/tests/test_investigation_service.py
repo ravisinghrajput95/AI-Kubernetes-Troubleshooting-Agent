@@ -504,3 +504,71 @@ class TestSeverityNeverOverclaims:
         # that neither surface calls an uninspectable cluster healthy.
         assert investigation["severity"]["severity"] != "Healthy"
         assert reported != "Healthy"
+
+
+class TestAKubeconfigWithNoContexts:
+    """`GET /clusters` 500'd on a kubeconfig with no contexts.
+
+    `kubectl config view -o json` *succeeds* there and returns
+    `"contexts": null`, so `config.get("contexts", [])` yields `None` — the
+    default only applies when the key is absent, and here it is present and
+    null. The loop then iterated `None`.
+
+    It broke exactly the deployments most likely to have no kubeconfig: a fresh
+    container, and an agent-only fleet where every cluster is reached through
+    its agent. The console showed "Loading clusters…" forever. 1,167 tests
+    passed with it present; it was found by opening the page.
+    """
+
+    def test_null_contexts_is_not_a_crash(self):
+        from app.kubernetes.context_service import KubernetesContextService
+
+        service = KubernetesContextService.__new__(KubernetesContextService)
+        assert service._context_cluster_map({"contexts": None}) == {}
+
+    def test_null_nested_context_is_not_a_crash(self):
+        """`contexts[].context` is null in the same file, for the same reason."""
+        from app.kubernetes.context_service import KubernetesContextService
+
+        service = KubernetesContextService.__new__(KubernetesContextService)
+        assert service._context_cluster_map({"contexts": [{"name": "x", "context": None}]}) == {}
+
+    def test_rubbish_entries_are_skipped_not_fatal(self):
+        from app.kubernetes.context_service import KubernetesContextService
+
+        service = KubernetesContextService.__new__(KubernetesContextService)
+        assert service._context_cluster_map({"contexts": [None, 3, "x"]}) == {}
+
+    def test_a_real_mapping_still_works(self):
+        from app.kubernetes.context_service import KubernetesContextService
+
+        service = KubernetesContextService.__new__(KubernetesContextService)
+        mapping = service._context_cluster_map(
+            {"contexts": [{"name": "prod", "context": {"cluster": "prod-eks"}}]}
+        )
+        assert mapping == {"prod": "prod-eks"}
+
+    def test_listing_contexts_survives_an_empty_kubeconfig(self):
+        """End to end, because the crash was in the composition rather than in
+        the mapping alone."""
+        from app.kubernetes.context_service import KubernetesContextService
+        from app.kubernetes.kubectl_executor import KubectlResult
+
+        class EmptyKubeconfig:
+            def run(self, args, parse_json: bool = False):
+                if args[:2] == ["config", "view"]:
+                    payload = {"contexts": None, "clusters": None, "users": None}
+                    return KubectlResult(["kubectl", *args], True, "", "", 0, data=payload)
+                if args[:2] == ["config", "current-context"]:
+                    return KubectlResult(
+                        ["kubectl", *args], False, "", "current-context is not set", 1
+                    )
+                return KubectlResult(["kubectl", *args], True, "", "", 0)
+
+        service = KubernetesContextService.__new__(KubernetesContextService)
+        service.kubectl = EmptyKubeconfig()
+        result = service.list_contexts()
+
+        assert result["items"] == []
+        assert result["current_context"] == ""
+        assert result["error"] == ""
