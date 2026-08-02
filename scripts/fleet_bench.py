@@ -172,6 +172,73 @@ class SyntheticAgent:
         )
 
 
+def _hold_agents(gateway: str, first: int, count: int, kinds: list[str], batch: int) -> None:
+    """Attach `count` agents in this process and hold them until terminated.
+
+    One process per slice of the fleet. A load generator that is multi-process
+    on the submitting side and single-process on the answering side still
+    measures itself, and this repository has published a table row that assumed
+    this existed while the flag was silently ignored.
+    """
+    import grpc
+
+    async def run() -> None:
+        agents = []
+        for index in range(first, first + count):
+            agent = SyntheticAgent(f"bench-{index:05d}", grpc.aio.insecure_channel(gateway), kinds)
+            agents.append(agent)
+            await agent.start()
+            if batch and (index - first + 1) % batch == 0:
+                await asyncio.sleep(0.05)
+        await asyncio.gather(*(agent.attached.wait() for agent in agents))
+        while True:  # held open: the agents are the counterparty being measured
+            await asyncio.sleep(3600)
+
+    with contextlib.suppress(BaseException):
+        asyncio.run(run())
+
+
+async def attach_distributed_fleet(arguments, kinds: list[str], api: str):
+    """Spread the fleet across processes; wait on the *platform's* view of it.
+
+    A child cannot report on the thing being measured, and the parent has no
+    other way to know the fleet is genuinely up.
+    """
+    import multiprocessing
+
+    import httpx
+
+    context = multiprocessing.get_context("spawn")
+    per_process = max(1, arguments.clusters // arguments.agent_processes)
+    started = time.perf_counter()
+    workers = [
+        context.Process(
+            target=_hold_agents,
+            args=(arguments.gateway, index * per_process, per_process, kinds, arguments.batch),
+            daemon=True,
+        )
+        for index in range(arguments.agent_processes)
+    ]
+    for worker in workers:
+        worker.start()
+
+    expected = per_process * arguments.agent_processes
+    deadline = time.perf_counter() + 120
+    seen = 0
+    async with httpx.AsyncClient(base_url=api, timeout=30.0) as probe:
+        while time.perf_counter() < deadline:
+            await asyncio.sleep(1.0)
+            try:
+                seen = len((await probe.get("/agents")).json().get("items", []))
+            except Exception:
+                continue
+            if seen >= expected:
+                break
+
+    names = [f"bench-{index:05d}" for index in range(expected)]
+    return workers, names, seen, time.perf_counter() - started
+
+
 async def attach_fleet(gateway: str, clusters: int, kinds: list[str], batch: int):
     """Bring `clusters` agents up, in batches, and report how long it took."""
     import grpc
@@ -240,9 +307,19 @@ async def main_async(arguments) -> int:
 
         kinds = sorted(set(_KINDS.values()))
 
-    agents, channels, attach_seconds = await attach_fleet(
-        arguments.gateway, arguments.clusters, kinds, arguments.batch
-    )
+    workers: list = []
+    if arguments.agent_processes > 1:
+        workers, names, _seen, attach_seconds = await attach_distributed_fleet(
+            arguments, kinds, arguments.api
+        )
+        # Names only: the agents live in the child processes. The load phase
+        # needs the cluster ids, not the objects.
+        agents = [SyntheticAgent(name, None, kinds) for name in names]
+        channels = []
+    else:
+        agents, channels, attach_seconds = await attach_fleet(
+            arguments.gateway, arguments.clusters, kinds, arguments.batch
+        )
     # The gateway registers on the hello, which it has already received; give
     # the last few a moment rather than racing the assertion below.
     await asyncio.sleep(arguments.settle)
@@ -328,6 +405,8 @@ async def main_async(arguments) -> int:
         await agent.stop()
     for channel in channels:
         await channel.close()
+    for worker in workers:
+        worker.terminate()
 
     if throughput:
         print(f"\nThroughput, load offered from {throughput['load_processes']} processes")

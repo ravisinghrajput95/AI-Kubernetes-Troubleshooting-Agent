@@ -537,13 +537,18 @@ gives that signature identically. Then it was retracted in favour of ~143/s,
 extrapolated from a single investigation's 0.223 s — but **single-request
 latency does not extrapolate to throughput**.
 
-Then a **concurrency sweep** scaled three things in turn — platform slots 4→32
-(11.6 → 12.2/s), agent processes 1→6 (12.3 → 12.2/s), platform workers 1→2
-(12.2 → 9.1/s). Throughput flat or worse every time, with CPU at ~400% of an
-available 1500%. **The ceiling is a serialisation, not a capacity limit, and
-its location is unknown after three attempts.** `collect` is 98% of busy time
-and inflates in proportion to concurrency; the other phases do not inflate at
-all. Finding it needs a profiler, not a fourth load test.
+A **concurrency sweep** then settled it. Scaling platform slots (4→32), agent
+processes (1→6) and the Postgres pool (10→64) each left throughput at ~12/s.
+Scaling **workers 1→2 gave 12.1 → 23.0/s** — linear. **The ceiling is per
+worker process; add workers, not slots.** That is M3's
+stateless-workers-behind-a-queue design, measured rather than assumed.
+
+In-process stack sampling shows a saturated worker ~92% *idle*, with every
+non-idle sample in a Postgres or Redis socket wait and no CPU hotspot — one
+Python process serialises HTTP, every agent's gRPC stream, the queue consumer
+and analysis, and `asyncio.to_thread` moves blocking calls off the loop but not
+off the GIL. `JOB_MAX_CONCURRENT` above a small number buys nothing on one
+worker: slots fill, `collect` inflates in proportion, throughput does not move.
 
 **The rule: throughput that does not rise with `JOB_MAX_CONCURRENT` is not the
 platform's.** `fleet_bench.py` now refuses to print "platform-bound" from a

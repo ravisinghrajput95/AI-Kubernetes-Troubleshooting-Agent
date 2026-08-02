@@ -50,53 +50,51 @@ wrong. Single-investigation latency (0.223 s end to end) was extrapolated to 32
 slots. **Single-request latency does not extrapolate to throughput**, and the
 retraction should not have assumed it did.
 
-**Attempt 3 — the concurrency sweep.** Load offered from 6 processes, and
-completions counted from the platform's own `k8sagent_investigations_total`
-rather than by the client noticing them. Then the same load with the synthetic
-fleet spread across 6 processes, and again with two platform workers:
+**Attempt 3 — the concurrency sweep.** Load offered from 6 processes, with
+completions counted from the platform's own `k8sagent_investigations_total`.
+Every candidate was given more capacity in turn, and each of these is a real
+measurement:
 
-| what was scaled | from | to | throughput |
-|---|---|---|---|
-| platform slots (`JOB_MAX_CONCURRENT`) | 4 | 32 | 11.6 → **12.2/s** |
-| synthetic agent processes | 1 | 6 | 12.3 → **12.2/s** |
-| platform workers | 1 | 2 | 12.2 → **9.1/s** |
+| what was scaled | from → to | throughput |
+|---|---|---|
+| platform slots (`JOB_MAX_CONCURRENT`) | 4 → 32 | 11.6 → 12.2/s |
+| synthetic agent processes | 1 → 6 | 12.3 → 12.0/s |
+| Postgres pool (`max_size`) | 10 → 64 | 12.2 → 12.1/s |
+| **platform workers** | **1 → 2** | **12.1 → 23.0/s** |
 
-**Three different components given more capacity; throughput flat or worse
-every time.** `collect` inflates in proportion to platform concurrency
-(0.24 s → 2.06 s from 4 to 32 slots) and is 98% of platform busy time;
-`analyse`, `report` and `persist` do not inflate at all and are *faster* at 32
-slots than uncontended.
+**Only the last one moves it, and it moves it linearly.** That is the answer:
+the ceiling is **per worker process**, and the platform scales by adding
+workers — which is exactly what M3's stateless-workers-behind-a-shared-queue
+design claims, now measured rather than assumed.
 
-And the machine is **not** the limit: total CPU during a run sits around
-300–430% of an available 1500% on 15 cores.
+*The two-worker figure required each worker to have its own gateway and its own
+attached agents.* An earlier attempt pointed both agent fleets at one gateway,
+so the second worker could reach no cluster and made things slower — a result
+that looked like evidence against scale-out and was a broken setup.
 
-**So the ceiling is a serialisation, not a capacity limit — and this document
-does not know where it is.** Adding load, slots, agent processes or workers
-does not move it, and there is spare CPU throughout, which is the signature of
-something serial in the path rather than something saturated. Candidates not
-yet eliminated: the 10-connection Postgres pool against 16–32 concurrent
-investigations each making a dozen round trips; per-event `INSERT` plus Redis
-publish on the progress path; the gRPC stream's own ordering.
+**Why one worker stops at ~12/s.** In-process stack sampling (`py-spy` needs
+root on macOS; `sys._current_thread_frames` does not) shows the worker ~92%
+idle under full load, with every non-idle sample in Postgres or Redis socket
+waits — `connection.py:wait` at 4.3%, Redis publish at 0.8%. There is no CPU
+hotspot, and the machine sits at ~400% of an available 1500%. One worker
+serialises everything through a single Python process: HTTP, the gRPC streams
+for every attached agent, the queue consumer, orchestration and analysis.
+`asyncio.to_thread` moves blocking calls off the loop but not off the GIL.
 
-**Finding it needs profiling, not another load test.** Three load tests have
-now failed to attribute it, and each failure looked like an answer at the time.
-That is the honest state, and it is why the number below is presented as *a
-measurement taken on this setup* rather than as the platform's capacity.
-
-*What can be said:* on one machine with everything co-located — platform,
-agents, Postgres, Redis and the load generator — the stack sustains **~12
-investigations/s**, and no single component's capacity explains it.
-
-**The control that works**, and the one to run before believing any throughput
-number here: offer the same load at two values of `JOB_MAX_CONCURRENT`. If
-throughput rises with slots, the platform was the constraint. If it does not
-and per-phase time inflates in proportion, the constraint is elsewhere. The
-harness refuses to print "platform-bound" from a single run for this reason.
+**What this means operationally.** `JOB_MAX_CONCURRENT` above a small number
+buys nothing on one worker — slots fill, per-phase time inflates in proportion
+(`collect` 0.24 s → 2.06 s from 4 to 32 slots) and throughput does not move.
+Add workers, not slots.
 
 ```bash
 python scripts/fleet_bench.py --clusters 48 --agent-processes 6 \
     --investigations 400 --load-processes 6 --slots 32
 ```
+
+**Still not measured:** where the per-worker limit actually binds. It is a
+serialisation inside one process, not CPU and not the Postgres pool, but which
+of the loop, the GIL or the gRPC stream handling dominates was not isolated.
+Scale-out makes it a sizing question rather than a blocker.
 
 ### Memory per investigation
 
@@ -167,10 +165,10 @@ travel.
 - **Sustained operation.** The longest run here is under a minute. Nothing says
   what happens over hours: no leak test, no certificate rotation under load, no
   Postgres growth over a retention period.
-- **The platform's actual throughput ceiling.** Still unknown after three
-  attempts. It is not platform slots, not the synthetic fleet, not worker
-  count, and not machine CPU — all four were varied. Something in the path
-  serialises; a profiler will find it and a fourth load test will not.
+- **Where the per-worker limit binds.** ~12/s per worker is measured and
+  scale-out is linear, but which serialisation inside the process sets it —
+  event loop, GIL, or gRPC stream handling — was not isolated. Ruled out: CPU,
+  the Postgres pool, platform slots and the synthetic fleet.
   Per-phase attribution *is* measured and is above.
 
 ## Known limits that are design, not measurement
