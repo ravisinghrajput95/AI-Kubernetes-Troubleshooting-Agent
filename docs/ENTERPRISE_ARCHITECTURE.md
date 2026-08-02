@@ -981,8 +981,27 @@ rather than by this document's guess. Split accordingly:
 
   Still open, to be decided against a re-measurement: whether the payload
   leaves the row at all.
-- **M8c — the envelope**: 1,000 clusters and 5,000 concurrent, documented.
-  Not started.
+- **M8c — the envelope.** ⏳ Partly delivered. `scripts/fleet_bench.py` stands
+  up N synthetic agents, each holding a real `Connect` stream and answering
+  real `CollectionRequest`s over the published contract, and
+  `docs/PERFORMANCE_ENVELOPE.md` publishes what it measures:
+
+  - **1,000 clusters attached to one gateway in 1.04 s**, all 1,000 visible to
+    the API, 159 MB platform RSS, zero stream failures.
+  - **~10 investigations/s per worker** at `JOB_MAX_CONCURRENT=32`, flat under
+    4x more offered load while latency grows linearly — saturation, which is
+    what makes it a platform ceiling rather than a harness artefact. 11,500
+    collections answered through real streams during that run.
+  - 13.4 MB peak heap per investigation; 100% routing hit rate; the payload
+    read reductions from M8b.
+
+  **5,000 concurrent is not measured, and §12's scalability score should not
+  move to 9 on this document.** One worker was measured; scale-out is expected
+  to be close to linear because workers are stateless behind a shared queue,
+  but expected is not measured. Also unmeasured: the Go agent, mTLS at fleet
+  scale, real networks, sustained operation, and which component the ~10/s
+  ceiling actually sits in. All listed in the envelope rather than left
+  implicit.
 
 **M8a — Routing and partitioned queues. ✅ Delivered.**
 Route an investigation to the worker holding the agent's stream. *Exit:* an

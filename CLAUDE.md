@@ -269,6 +269,34 @@ Every collected fact is an `Evidence` record with a **deterministic id** (`kind:
 
 `select_provider()` (`app/services/investigation_service.py`) makes the choice: an agent connected for this cluster wins, otherwise the local kubeconfig. The registry is per-process, so a cluster whose agent is connected to another worker falls back to local — correct, and *visible*, via `investigation["cluster_access"]`. Routing to the worker holding the stream is M8.
 
+### The performance envelope (M8c)
+
+`docs/PERFORMANCE_ENVELOPE.md` is the published one, with the command beside
+every number. `scripts/fleet_bench.py` takes them: N synthetic agents, each
+with its own gRPC channel and its own `Connect` stream, answering real
+`CollectionRequest`s over the published protobuf contract — not a mock of
+anything in `agent/`, so a change that breaks real agents breaks it too.
+
+Measured: **1,000 clusters attached in 1.04 s** on one gateway, all visible,
+159 MB platform RSS; **~10 investigations/s per worker** at
+`JOB_MAX_CONCURRENT=32`, with throughput flat under 4x more offered load while
+latency grows linearly. That flatness is the point — a single load level cannot
+tell a platform ceiling from a harness artefact, which is why two are run.
+
+**On a saturated platform, latency is backlog.** A 25 s p50 at 250 in flight is
+a queue absorbing four times the work a worker can do, not a slow
+investigation. Size on throughput; alarm on queue depth.
+
+**5,000 concurrent is not measured**, and the envelope says so — along with the
+Go agent, mTLS at fleet scale, real networks, sustained operation, and which
+component the ~10/s ceiling sits in. Do not move §12's scalability score to 9
+on the strength of that document.
+
+`fleet_bench.py` reports `stream_failures` and exits non-zero if any stream
+died. Its first run printed "5 collections, 0 records" — a plausible-looking
+platform result produced entirely by an `AttributeError` in the harness. A
+benchmark that fails quietly publishes confident nonsense.
+
 ### Payload sizes, measured (M8b)
 
 `scripts/payload_bench.py` runs the real pipeline against a scalable fake
