@@ -4,7 +4,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AgentDot } from "../components/fleet/AgentDot";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
-import { ApiError, createEnrolment, getAgents, type Enrolment } from "../services/api";
+import { useSession } from "../hooks/useSession";
+import {
+  ApiError,
+  createEnrolment,
+  getAgents,
+  PERMISSIONS,
+  type Enrolment,
+} from "../services/api";
 
 /**
  * Connect a cluster.
@@ -27,6 +34,13 @@ export function ConnectClusterPage() {
   const [enrolment, setEnrolment] = useState<Enrolment | null>(null);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+
+  // Minting an enrolment token needs the admin role. Showing the form to
+  // someone who will get a 403 on submit is worse than saying so up front —
+  // they would read it as the platform being broken rather than as a
+  // permission they do not have.
+  const session = useSession();
+  const mayEnrol = session.can(PERMISSIONS.clusterEnrol);
 
   const agents = useQuery({
     queryKey: ["agents"],
@@ -71,7 +85,27 @@ export function ConnectClusterPage() {
         any request that is not one of the evidence kinds it knows.
       </p>
 
-      {!agents.data?.gateway_enabled ? (
+      {!mayEnrol ? (
+        <section className="mt-6 rounded-lg border border-warning/40 bg-warning/5 p-4">
+          <h2 className="text-h2 text-warning">You cannot connect clusters</h2>
+          <p className="mt-2 max-w-measure text-sm leading-6 text-ink-2">
+            Enrolling a cluster mints a credential that admits it to the fleet,
+            which needs the <strong>admin</strong> role.{" "}
+            {session.data?.role_source === "suspended"
+              ? "Your account is suspended in this tenant."
+              : session.data?.role
+                ? `You hold the ${session.data.role} role.`
+                : "You hold no role in this tenant."}{" "}
+            Ask an administrator to grant it, or run{" "}
+            <code className="font-mono text-sm">
+              python -m app.agentctl issue-token
+            </code>{" "}
+            on the platform host.
+          </p>
+        </section>
+      ) : null}
+
+      {mayEnrol && !agents.data?.gateway_enabled ? (
         <section className="mt-6 rounded-lg border border-warning/40 bg-warning/5 p-4">
           <h2 className="text-h2 text-warning">No agent gateway is running</h2>
           <p className="mt-2 max-w-measure text-sm leading-6 text-ink-2">
@@ -82,6 +116,8 @@ export function ConnectClusterPage() {
         </section>
       ) : null}
 
+      {mayEnrol ? (
+      <>
       <section className="mt-6 rounded-lg border border-line bg-surface p-4">
         <h2 className="text-h2">1 · Name the cluster</h2>
         <p className="mt-1 max-w-measure text-sm leading-6 text-ink-2">
@@ -179,6 +215,8 @@ export function ConnectClusterPage() {
             </div>
           </section>
         </>
+      ) : null}
+      </>
       ) : null}
 
       <ConnectedAgents />

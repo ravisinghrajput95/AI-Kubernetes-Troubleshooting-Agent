@@ -70,7 +70,7 @@ ruff format --check .   # CI enforces formatting
 
 `requirements.txt` pins are kept current and audited — `pip-audit --strict` runs in CI and **fails the build**, because the original pins shipped known CVEs in PyJWT (which validates auth tokens) and Starlette.
 
-**Security status:** there is no authentication on any endpoint. See `SECURITY.md` and `docs/PRODUCTION_READINESS.md` — do not deploy against a production cluster.
+**Security status:** authentication (F13) and per-tenant authorisation are built — see *Authorisation* below. What remains is in `SECURITY.md` and `docs/PRODUCTION_READINESS.md`, chiefly no rate limiting and `AUTH_MODE=disabled` still being the shipped default.
 
 `PyYAML` is a runtime dependency: generated patches are applied to production clusters, so YAML is serialised properly rather than string-formatted.
 
@@ -116,11 +116,108 @@ Steps 2 and 3 block, so both are dispatched via `asyncio.to_thread` to keep the 
 
 `ContextVar` specifically because asyncio copies the context at task creation: an investigation submitted by a request keeps that request's tenant after the request returns.
 
+**The same copying is why `require_principal` must stay `async`.** It was `def` from M6 until M6.5, FastAPI runs a synchronous dependency in a worker thread, and a worker thread gets a *copy* — so the `set()` was discarded and **every request ran as `default`**: all tenants' rows in one, every tenant reading every other tenant's, with the policies enabled, forced and correct. The isolation tests missed it because they enter `tenant_scope()` by hand, proving the schema rather than the request path.
+
 **The one thing that would make all of it inert: connecting as a superuser.** `ENABLE`/`FORCE ROW LEVEL SECURITY` were both set and correct, and every tenant could still read every row, because superusers and `BYPASSRLS` roles skip policies entirely — a deployment with no isolation and no symptom. `Database.assert_row_level_security_applies()` refuses to start `shared` on such a role. `tests/test_tenancy.py` connects as an unprivileged role for exactly this reason; run as `postgres` its isolation assertions all pass while proving nothing.
 
 `system_scope()` is the one deliberate hole — the queue consumer and reaper cannot know a tenant before reading the row that names one. A test asserts `jobs/consumer.py` is its only user.
 
 Agent identities carry their tenant in the SPIFFE path (`spiffe://<domain>/tenant/<t>/cluster/<id>`); the untenanted M4b form still parses as `default`. `AgentRegistry` is keyed by `(tenant, cluster)`, so two customers may both call a cluster `prod` without either evicting or reaching the other.
+
+### Authorisation (`app/authz/`, migration `004`)
+
+M6 made a tenant a data boundary; this makes it an organisation. Four roles,
+and each boundary is a capability rather than a tier:
+
+| Role | Gains |
+|---|---|
+| `viewer` | read what they own, see the fleet |
+| `operator` | **may cause a read against a customer cluster** and spend model budget |
+| `admin` | **may change the fleet** (enrol, revoke) and **who is in it** |
+| `owner` | **may grant `owner`**; read every investigation in the tenant; is the floor |
+
+`owner` exists for one invariant — **you cannot grant a role you do not hold**.
+Without it, `admin` granting `admin` makes the two identical, there is no
+ceiling on escalation, and an admin can demote every other admin. The last
+un-suspended owner cannot be demoted, removed or suspended, or ownership becomes
+a state you can leave and cannot re-enter over HTTP.
+
+**The check is one router-level dependency plus a route → permission table
+(`routes.py`), and a route with no entry is *denied*.** That is what makes a
+forgotten endpoint fail closed; there are no per-route permission checks to
+forget because there are none. `tests/test_authz.py` derives the route list from
+the OpenAPI schema and asserts every route has an entry — leaving one open means
+naming it `AUTHENTICATED` in the table, where the decision is visible. `/me` is
+the only one, and has to be: a caller with no role must be able to discover that.
+
+**403 for a permission, 404 for ownership, and permission is checked first.**
+The 404 is a disclosure control about *ids*; a permission denial discloses only
+the caller's own role, which `/me` already tells them. Reversing the order would
+let a caller who cannot read investigations at all use 404-vs-403 as an
+existence oracle.
+
+Role resolution (`resolver.py`), in order: **suspension denies outright**; then
+the *higher* of the group-derived role and the stored binding — grants combine,
+because a binding that could lower an IdP grant is the second directory that
+group mapping exists to avoid; then the fallback:
+
+| Deployment | Unbound caller |
+|---|---|
+| `AUTH_MODE=disabled` | `owner` — one function, the only manufactured role |
+| `TENANCY_MODE=single` (default) | `RBAC_DEFAULT_ROLE`, default **`admin`** |
+| `TENANCY_MODE=shared` | nothing; denied everything but `/me` |
+
+`admin` by default is *today's behaviour preserved exactly*, so no existing
+install has to be administered back into working order on upgrade — same
+discipline as the single-process job store. It is **refused above `viewer` in
+`shared` mode**: a permissive default there means anyone the IdP can place in a
+tenant administers it.
+
+**`investigation.read_all` is owner-only, not admin, and the reason is that
+default.** Every unbound caller being an admin plus `read_all` on admin equals
+upgrading to this milestone silently removing the per-user report isolation
+those deployments already had. Caught by `test_auth.py::TestOwnership`.
+
+**A membership row created by a sighting carries no role** (`role=None`, not
+`viewer`). Every authenticated request upserts one so an admin can find real
+people in `GET /members`; a role there would demote a caller holding the
+deployment default on their next request.
+
+Store follows the same one decision as everything else: `FileMemberStore`
+(`RBAC_STORE_DIR`, default `data/rbac`) or `PostgresMemberStore`, both held to
+`tests/test_member_store_contract.py`. Never in memory — an operator who
+assigned roles by hand must not lose them to a restart.
+
+**Authorisation has no `system_scope` equivalent, deliberately.** The tenancy
+escape exists because the queue consumer must read a row before knowing its
+tenant; authorisation decides at the HTTP boundary and background work carries
+the principal it was submitted with. A test greps `app/` for any other place a
+role is manufactured.
+
+Bootstrap is a CLI, not an endpoint — same reasoning as `agentctl`, because a
+role-granting endpoint reachable before any role exists is the hole:
+
+```bash
+python -m app.rbacctl grant --subject alice@acme.com --role owner
+python -m app.rbacctl --tenant acme list
+python -m app.rbacctl suspend --subject bob@acme.com [--restore]
+```
+
+**No invite flow, by decision.** It needs email, single-use tokens, an
+acceptance endpoint and a second identity to reconcile — and could never grant
+access, because the platform cannot authenticate anyone the IdP does not know.
+Pre-assignment is an invite's whole useful content, and `PUT /members/{subject}`
+does it for someone who has never signed in.
+
+**`require_principal` must stay `async`.** FastAPI runs a synchronous dependency
+in a worker thread, which gets a *copy* of the context — so `_current.set()`
+there is discarded and every request runs as tenant `default`. That was true
+from M6 until this milestone: all tenants' rows landed in one and every tenant
+could read every other tenant's, with RLS enabled, forced and correct. The
+authenticator still runs in a thread (a JWKS cache miss must not block the
+loop). Pinned by `TestTheTenantSurvivesTheDependency`, which asserts on the
+value the request would hand to Postgres — asserting on `principal.tenant`
+passes with the bug present.
 
 ### State backends (`app/state.py`, `app/persistence/`)
 

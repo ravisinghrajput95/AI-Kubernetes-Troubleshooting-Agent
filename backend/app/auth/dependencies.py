@@ -1,4 +1,5 @@
 from fastapi import Depends, HTTPException, Request, status
+from starlette.concurrency import run_in_threadpool
 
 from app.auth.authenticators import Authenticator, build_authenticator
 from app.auth.models import AuthenticationError, Principal
@@ -29,7 +30,7 @@ def _bearer(request: Request) -> str | None:
     return credential.strip()
 
 
-def require_principal(
+async def require_principal(
     request: Request,
     authenticator: Authenticator = Depends(get_authenticator),
 ) -> Principal:
@@ -37,9 +38,25 @@ def require_principal(
 
     Applied as a router-level dependency so a newly added endpoint is protected
     by default. Forgetting to add it to a route should not be possible.
+
+    **`async` is load-bearing, and this function was `def` for a release.**
+    FastAPI runs a synchronous dependency in a worker thread, and a worker
+    thread gets a *copy* of the context — so `_current.set()` below applied to
+    a context that was discarded the moment this returned. Every request ran as
+    the default tenant no matter who the caller was: M6's rows were all written
+    into `default` and every tenant could read every other tenant's, with the
+    row-level security policies enabled, forced, correct, and inert.
+
+    An `async` dependency is awaited in the request's own task, so the value
+    survives into the handler and into any background task started from it.
+    `tests/test_tenancy.py::TestTheTenantSurvivesTheDependency` pins it, and
+    `tests/test_auth.py` reverts this to `def` as a mutation.
+
+    The authenticator itself still runs in a thread: validating a JWT can miss
+    the JWKS cache and fetch, and that must not block the event loop.
     """
     try:
-        principal = authenticator.authenticate(_bearer(request))
+        principal = await run_in_threadpool(authenticator.authenticate, _bearer(request))
     except AuthenticationError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

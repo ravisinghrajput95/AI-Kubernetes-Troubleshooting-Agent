@@ -5,9 +5,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AgentDot } from "../components/fleet/AgentDot";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { useScope } from "../hooks/useScope";
+import { useSession } from "../hooks/useSession";
 import {
   getInvestigationHistory,
   getKubernetesContexts,
+  PERMISSIONS,
   startInvestigationJob,
 } from "../services/api";
 
@@ -35,6 +37,12 @@ export function InvestigatePage() {
   const [name, setName] = useState("");
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
+
+  // A viewer may read what the team found and may not go and poke production.
+  // That is the viewer/operator boundary, and it is the one action this
+  // platform takes against a customer cluster.
+  const session = useSession();
+  const mayRun = session.can(PERMISSIONS.investigationRun);
 
   const contexts = useQuery({
     queryKey: ["kubernetes-contexts"],
@@ -142,13 +150,24 @@ export function InvestigatePage() {
           <button
             type="button"
             onClick={() => void start()}
-            disabled={starting || !selectedContext}
+            disabled={starting || !selectedContext || !mayRun}
+            title={mayRun ? undefined : "Running an investigation requires the operator role."}
             className="rounded-md border border-info/40 bg-info/10 px-4 py-2 text-sm font-medium text-info transition-colors duration-fast hover:bg-info/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info disabled:cursor-not-allowed disabled:border-line disabled:bg-raised disabled:text-ink-3"
           >
             {starting ? "Starting…" : "Start investigation"}
           </button>
 
-          {selected?.agent ? (
+          {!mayRun ? (
+            // Visible, not only a tooltip: a disabled button with no stated
+            // reason reads as a broken console rather than as a permission.
+            <span className="text-sm text-warning">
+              {session.data?.role_source === "suspended"
+                ? "Your account is suspended in this tenant."
+                : `Running an investigation requires the operator role; you hold ${
+                    session.data?.role ? `the ${session.data.role} role` : "no role"
+                  }.`}
+            </span>
+          ) : selected?.agent ? (
             <span className="flex items-center gap-2 text-sm text-ink-2">
               <AgentDot agent={selected.agent} />
               Collected through the agent in this cluster.

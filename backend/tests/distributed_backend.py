@@ -101,20 +101,26 @@ class DistributedBackend:
 
         return PostgresEnrolmentStore(self.database)
 
+    def members(self, database=None):
+        from app.persistence.members import PostgresMemberStore
+
+        return PostgresMemberStore(database or self.database)
+
     def drop_schema(self) -> None:
         """Return the database to empty, so a migration test starts from zero."""
         with self.database.cursor() as cursor:
             cursor.execute(
                 "DROP TABLE IF EXISTS investigation_events, investigation_reports, "
                 "investigations, agent_bootstrap_tokens, agent_certificates, "
-                "schema_migrations CASCADE"
+                "tenant_members, schema_migrations CASCADE"
             )
 
     def _truncate(self) -> None:
         with self.database.cursor() as cursor:
             cursor.execute(
                 "TRUNCATE investigations, investigation_events, investigation_reports, "
-                "agent_bootstrap_tokens, agent_certificates RESTART IDENTITY CASCADE"
+                "agent_bootstrap_tokens, agent_certificates, tenant_members "
+                "RESTART IDENTITY CASCADE"
             )
 
     async def close(self) -> None:

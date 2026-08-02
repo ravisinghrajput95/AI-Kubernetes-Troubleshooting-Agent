@@ -34,6 +34,37 @@ export interface SessionInfo {
   /** Where to end the provider's session. Empty unless OIDC publishes one. */
   end_session_url: string;
   multi_tenant: boolean;
+  /** This caller's role in their tenant. Empty means they hold none. */
+  role: string;
+  /**
+   * Where the role came from: `assigned`, `group`, `assigned+group`,
+   * `default`, `open-deployment`, `suspended`, or `none`.
+   *
+   * Carried so the console can distinguish "you were never granted anything"
+   * from "you were suspended" — the same denial to the API, and two different
+   * answers to the person reading the screen.
+   */
+  role_source: string;
+  /**
+   * What this caller may do. The console gates on these rather than on the
+   * role name, so a role gaining a permission needs no console change and a
+   * button is never shown for something the backend will refuse.
+   */
+  permissions: string[];
+}
+
+/** Permission strings the console gates on. Mirrors `app/authz/models.py`. */
+export const PERMISSIONS = {
+  investigationRun: "investigation.run",
+  clusterEnrol: "cluster.enrol",
+  memberRead: "member.read",
+} as const;
+
+export function permits(session: SessionInfo | undefined, permission: string): boolean {
+  // Undefined while `/me` is in flight. Treated as permitted so the UI does not
+  // flicker a disabled state on every load; the backend is the actual gate and
+  // answers 403 regardless.
+  return session === undefined || session.permissions.includes(permission);
 }
 
 export function getSession(): Promise<SessionInfo> {

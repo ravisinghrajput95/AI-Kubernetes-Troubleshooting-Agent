@@ -862,6 +862,79 @@ crash-loop, and raising the rule's severity to make its own test pass would
 have been inflating a control to satisfy the thing measuring it. The case now
 asserts the graph hypothesis is *present* and says why it should not win.
 
+**M6.5 — Tenant user RBAC. ✅ Delivered.**
+Users and roles within a tenant, stored under the same row-level security;
+permission checks that cannot be forgotten per route; OIDC group → role
+mapping. *Exit:* a viewer is refused every destructive operation, and each
+authorisation invariant fails a test when removed.
+
+*Outcome:* M6 made a tenant a data boundary and stopped there — inside one,
+every caller who could authenticate could start investigations, mint cluster
+enrolment tokens and revoke certificates. Four roles now separate real
+capabilities rather than tiers: `operator` is the only role that can cause a
+read against a customer cluster, `admin` changes the fleet and who is in it,
+and `owner` exists for one invariant — *you cannot grant a role you do not
+hold* — without which an admin granting admin makes the two identical and there
+is no ceiling on escalation.
+
+**The check lives in one router-level dependency and a route → permission
+table, and a route absent from that table is denied.** That is what makes a
+forgotten endpoint fail closed rather than open; `tests/test_authz.py` derives
+the route list from the OpenAPI schema and asserts every route has an entry, so
+the failure arrives at review time rather than in production. There are no
+per-route permission checks to forget because there are none at all.
+
+**The milestone found an ownership hole while enumerating what to gate.**
+`GET /investigations/{id}/events` took only the job store: every other
+investigation route takes the principal and 404s on a foreign id, and this one
+streamed another user's live investigation to anyone who knew it. Authentication
+was applied at the router and authorisation simply was not — which is the exact
+shape of gap the milestone existed to close, so it was closed rather than filed.
+
+**And it found that M6's ambient tenant had never reached the database over
+HTTP.** `require_principal` was a synchronous dependency; FastAPI runs those in
+a worker thread, a worker thread receives a *copy* of the context, and
+`_current.set(principal.tenant)` therefore applied to a context discarded the
+moment the dependency returned. Every request ran as `default` regardless of
+who called: rows from every tenant were written into one and every tenant could
+read every other tenant's, with the policies enabled, forced and correct. It is
+precisely the failure M6 already caught once at the database role — a control
+present, correct and inert — one layer up, and it was invisible to the test
+suite because the isolation tests entered `tenant_scope()` by hand and so proved
+the schema rather than the request path. The dependency is now `async` (the
+authenticator still runs in a thread, because a JWKS cache miss must not block
+the loop), and the regression test asserts on the value the request would hand
+to Postgres rather than on `principal.tenant`, which passes with the bug
+present.
+
+**A confidentiality regression was caught during implementation and removed.**
+`investigation.read_all` was initially an `admin` permission. But
+`RBAC_DEFAULT_ROLE=admin` is what keeps existing single-tenant installs working
+unchanged, so every unbound caller is an admin — and the two composed into
+upgrading to this milestone silently removing the per-user report isolation
+those deployments already had. It is now owner-only. `test_auth.py`'s ownership
+suite is what caught it, by asserting behaviour rather than a role table.
+
+*Deliberately not delivered:* an invite flow. It would need email delivery,
+single-use tokens, an acceptance endpoint and a second identity to reconcile
+against whatever the IdP eventually asserts — and it could never grant access,
+because the platform cannot authenticate anyone the IdP does not know. All an
+invite can do is pre-assign a role, which is what `PUT /members/{subject}` does
+for someone who has never signed in. Bootstrapping a tenant's first owner is
+`OIDC_ROLE_MAPPINGS` or `python -m app.rbacctl`, and explicitly *not* "the first
+caller to authenticate owns the tenant", which in a shared deployment hands a
+tenant to whoever arrives first.
+
+Authorisation has **no `system_scope` equivalent, and that is a conclusion
+rather than an omission**: the tenancy escape exists because the queue consumer
+must read a row before it can know the tenant that row names, and authorisation
+has no such ordering problem — the decision is made at the HTTP boundary and
+background work carries the principal it was submitted with. The single hole is
+`AUTH_MODE=disabled` resolving to `owner`, in one function, pinned by a test
+that greps for any other place a role is manufactured.
+
+Thirteen mutations were applied one at a time and all thirteen failed a test.
+
 **M8 — Scale hardening.**
 Evidence payloads to object storage; streaming ingest; partitioned queues; load
 tests at 1,000 clusters and 5,000 concurrent investigations. *Exit:* documented

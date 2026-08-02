@@ -19,6 +19,7 @@ equivalent, and a fake would prove the fake works.
 import pytest
 
 from app.auth.models import Principal
+from app.authz.models import Role
 from app.security.identity import identity_from_pem
 from app.tenancy import (
     DEFAULT_TENANT,
@@ -388,3 +389,166 @@ class TestTwoTenantsAreIsolated:
             cursor.execute("SELECT set_config('app.current_tenant', '', true)")
             cursor.execute("SELECT id FROM investigations")
             assert cursor.fetchall() == []
+
+
+class TestRolesAreIsolatedBetweenTenants:
+    """Migration 004 under the same policy as 003.
+
+    A membership row decides what somebody may *do*, so a leak here is not a
+    disclosure — it is a privilege grant. These assertions are deliberately the
+    same shape as the ones above, including the unfiltered SELECT: the point is
+    that the new table inherited the property rather than reimplemented it.
+    """
+
+    def members(self, backend):
+        from app.persistence.members import PostgresMemberStore
+
+        return PostgresMemberStore(backend.database)
+
+    async def test_a_member_of_one_tenant_is_invisible_in_another(self, backend):
+        store = self.members(backend)
+
+        with tenant_scope(ACME):
+            store.upsert("alice@acme.com", Role.OWNER)
+        with tenant_scope(GLOBEX):
+            assert store.get("alice@acme.com") is None
+            assert store.list() == []
+            assert store.count_owners() == 0
+
+    async def test_an_unfiltered_select_returns_only_one_tenants_members(self, backend):
+        store = self.members(backend)
+
+        with tenant_scope(ACME):
+            store.upsert("alice@acme.com", Role.OWNER)
+        with tenant_scope(GLOBEX):
+            store.upsert("bob@globex.com", Role.VIEWER)
+
+        with tenant_scope(ACME), backend.database.cursor() as cursor:
+            cursor.execute("SELECT subject FROM tenant_members")
+            assert [row[0] for row in cursor.fetchall()] == ["alice@acme.com"]
+
+    async def test_the_same_person_may_hold_different_roles_in_two_tenants(self, backend):
+        """A consultant with two customers is one subject and two memberships."""
+        store = self.members(backend)
+
+        with tenant_scope(ACME):
+            store.upsert("consultant@example.com", Role.OWNER)
+        with tenant_scope(GLOBEX):
+            store.upsert("consultant@example.com", Role.VIEWER)
+
+        with tenant_scope(ACME):
+            assert store.get("consultant@example.com").role is Role.OWNER
+        with tenant_scope(GLOBEX):
+            assert store.get("consultant@example.com").role is Role.VIEWER
+
+    async def test_one_tenant_cannot_promote_itself_inside_another(self, backend):
+        """WITH CHECK, and the reason it matters more here than anywhere else.
+
+        Writing a row into another tenant's investigations would leak data.
+        Writing one into another tenant's `tenant_members` would make you an
+        owner of their organisation.
+        """
+        import psycopg
+
+        with (
+            pytest.raises(psycopg.errors.Error),
+            tenant_scope(GLOBEX),
+            backend.database.cursor() as cursor,
+        ):
+            cursor.execute(
+                "INSERT INTO tenant_members (subject, role, tenant_id) VALUES (%s, %s, %s)",
+                ("attacker@globex.com", "owner", ACME),
+            )
+
+    async def test_one_tenant_cannot_promote_an_existing_member_of_another(self, backend):
+        store = self.members(backend)
+        with tenant_scope(ACME):
+            store.upsert("alice@acme.com", Role.VIEWER)
+
+        with tenant_scope(GLOBEX), backend.database.cursor() as cursor:
+            cursor.execute(
+                "UPDATE tenant_members SET role = 'owner' WHERE subject = 'alice@acme.com'"
+            )
+            assert cursor.rowcount == 0
+
+        with tenant_scope(ACME):
+            assert store.get("alice@acme.com").role is Role.VIEWER
+
+
+class TestTheTenantSurvivesTheDependency:
+    """The ambient tenant has to reach the *database*, not just the dependency.
+
+    This suite proved isolation by entering `tenant_scope()` by hand, which
+    proves the schema works and says nothing about whether a real request ever
+    gets there. It did not: `require_principal` was a synchronous dependency,
+    FastAPI runs those in a worker thread, and a worker thread receives a
+    *copy* of the context — so `_current.set(principal.tenant)` applied to a
+    context that was thrown away when the dependency returned.
+
+    Every request therefore ran as `default` regardless of who called. Rows
+    from every tenant were written into one, and every tenant could read every
+    other tenant's, with the policies enabled, forced and correct. It is the
+    same failure M6 already caught once at the database role, one layer up:
+    a control that is present, correct, and inert.
+
+    The assertion is on the value the request *would hand to Postgres*, because
+    that is the thing that was wrong. Asserting on `principal.tenant` passes
+    with the bug present.
+    """
+
+    def _client(self, monkeypatch, tmp_path):
+        from fastapi.testclient import TestClient
+
+        import app.kubernetes.kubectl_executor as executor_module
+        from app.auth.dependencies import reset_authenticator
+        from app.core.config import settings
+        from app.main import app
+        from tests.test_investigation_service import FakeKubectl
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(executor_module.KubectlExecutor, "run", FakeKubectl.run)
+        monkeypatch.setattr(settings, "auth_mode", "token")
+        monkeypatch.setattr(settings, "api_tokens", f"acme-tok:alice@acme.com::{ACME}")
+        monkeypatch.setattr(settings, "impersonate_users", False)
+        reset_authenticator()
+        return TestClient(app)
+
+    def test_the_tenant_reaches_the_layer_that_talks_to_postgres(self, monkeypatch, tmp_path):
+        """The direct form: what `Database.cursor()` would announce.
+
+        `app.authz.store` reads `current_tenant()` on every request through the
+        member store, so a request that authenticates into `acme` must produce
+        `acme` there. With `require_principal` synchronous this reads
+        `default`.
+        """
+        observed: list[str] = []
+
+        class Watching:
+            def get(self, subject):
+                observed.append(current_tenant())
+                return None
+
+            def touch(self, subject, email=""):
+                observed.append(current_tenant())
+
+        from app.authz.resolver import reset_resolver, reset_sightings
+        from app.authz.store import set_member_store
+
+        set_member_store(Watching())
+        reset_resolver()
+        reset_sightings()
+        try:
+            with self._client(monkeypatch, tmp_path) as client:
+                response = client.get("/me", headers={"Authorization": "Bearer acme-tok"})
+                assert response.status_code == 200
+                assert response.json()["tenant"] == ACME
+        finally:
+            set_member_store(None)
+            reset_resolver()
+
+        assert observed, "the member store was never consulted; the test proves nothing"
+        assert set(observed) == {ACME}, (
+            f"a request from tenant {ACME!r} reached the store as {set(observed)}. "
+            f"The ambient tenant is not surviving the authentication dependency, "
+            f"so every tenant's rows land in one."
+        )

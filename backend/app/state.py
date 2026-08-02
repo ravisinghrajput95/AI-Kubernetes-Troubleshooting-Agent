@@ -99,9 +99,14 @@ class StateBackend:
         if self.database is not None:
             self.database.close()
 
+        from app.authz.resolver import reset_resolver
+        from app.authz.store import set_member_store
+
         set_job_runner(None)
         set_job_store(None)
         set_report_store(None)
+        set_member_store(None)
+        reset_resolver()
 
         if self.gateway is not None:
             from app.gateway.presence import set_agent_presence
@@ -164,6 +169,14 @@ async def start_agent_gateway(state: "StateBackend | None" = None):
 def build_state() -> StateBackend:
     settings.validate_state_backend()
     settings.validate_tenancy()
+    # Refuses a permissive default role in a multi-tenant deployment, and a
+    # malformed group mapping anywhere. Both are the kind of misconfiguration
+    # whose only symptom is people holding the wrong authority.
+    settings.validate_authz()
+
+    from app.authz.resolver import reset_resolver
+
+    reset_resolver()
 
     if not settings.distributed_state:
         store = InMemoryJobStore()
@@ -202,6 +215,15 @@ def build_state() -> StateBackend:
     set_job_store(store)
     set_job_runner(runner)
     set_report_store(PostgresReportStore(database))
+
+    # Role bindings follow the same one decision as everything else: a shared
+    # table under the same row-level security when there is a database, a file
+    # beside the reports when there is not. Never in memory — an operator who
+    # assigned roles by hand must not lose them to a restart.
+    from app.authz.store import set_member_store
+    from app.persistence.members import PostgresMemberStore
+
+    set_member_store(PostgresMemberStore(database))
 
     logger.info("State is distributed; this worker is {worker}", worker=worker)
     return StateBackend(

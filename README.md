@@ -121,7 +121,10 @@ Read from the environment or `backend/.env`.
 | `AUTH_MODE` | `disabled` | `oidc`, `token`, or `disabled` |
 | `ALLOW_INSECURE_NO_AUTH` | `false` | Required to actually run with auth off |
 | `OIDC_ISSUER` / `OIDC_AUDIENCE` | — | Required when `AUTH_MODE=oidc` |
-| `API_TOKENS` | — | `token:subject[:group\|group]`, comma separated |
+| `API_TOKENS` | — | `token:subject[:group\|group][:tenant]`, comma separated |
+| `OIDC_ROLE_MAPPINGS` | — | `group=role` pairs, e.g. `sre=operator,platform=admin` |
+| `RBAC_DEFAULT_ROLE` | `admin` | Role for a caller with no binding and no matching group |
+| `RBAC_STORE_DIR` | `data/rbac` | Where role bindings live without `DATABASE_URL` |
 | `IMPERSONATE_USERS` | `true` | Run cluster reads as the calling user |
 | `OPENAI_API_KEY` | — | Optional; without it the deterministic path runs |
 | `OPENAI_MODEL` | `gpt-4o-mini` | |
@@ -133,6 +136,24 @@ Read from the environment or `backend/.env`.
 **Impersonation matters.** With it on, every cluster read runs as the calling
 user, so the cluster applies *their* RBAC rather than the service account's. The
 service account needs `impersonate` on users and groups.
+
+**Roles.** Four per tenant — `viewer` reads, `operator` may run investigations
+against a cluster, `admin` may enrol clusters and manage members, `owner` may
+grant `owner`. `RBAC_DEFAULT_ROLE=admin` is deliberate: it is exactly how the
+platform behaved before roles existed, so a single-tenant install upgrades
+unchanged. Set it to `viewer` and assign roles to get real RBAC; it is refused
+above `viewer` when `TENANCY_MODE=shared`.
+
+```bash
+python -m app.rbacctl grant --subject alice@example.com --role owner
+python -m app.rbacctl list
+python -m app.rbacctl suspend --subject bob@example.com   # deny now, whatever their groups say
+```
+
+A CLI rather than an endpoint, for the same reason `agentctl` is one: a
+role-granting endpoint reachable before any role exists is the hole it would be
+closing. There is no invite flow — grant a role by subject and it applies the
+first time that person signs in.
 
 ## Development
 

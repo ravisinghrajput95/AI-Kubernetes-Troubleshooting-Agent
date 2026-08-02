@@ -56,6 +56,56 @@ class Settings(BaseSettings):
     # `token:subject:group1,group2` entries, comma separated.
     api_tokens: str = Field(default="", validation_alias="API_TOKENS")
 
+    # --- Authorisation ------------------------------------------------------
+    # `group=role` pairs, so the customer's IdP drives platform roles and there
+    # is no second directory to maintain. Groups already ride on `Principal`;
+    # before this they were used only for Kubernetes impersonation.
+    oidc_role_mappings: str = Field(default="", validation_alias="OIDC_ROLE_MAPPINGS")
+
+    # What a caller with no binding and no matching group gets.
+    #
+    # `admin` is the default because it is *today's behaviour exactly*: before
+    # roles existed, every authenticated caller in a single-tenant deployment
+    # could do everything. Preserving that is what keeps the single-tenant
+    # deployment supported rather than something you have to administer your
+    # way back into. Set `viewer` (or `none`) and start assigning roles to get
+    # real RBAC in a single-tenant install.
+    #
+    # In `shared` mode this is refused above `viewer` — see `validate_authz()`.
+    rbac_default_role: str = Field(default="admin", validation_alias="RBAC_DEFAULT_ROLE")
+
+    # Where file-backed role bindings live when there is no DATABASE_URL.
+    # Relative, like the report store and the agent identity directory.
+    rbac_store_dir: str = Field(default="data/rbac", validation_alias="RBAC_STORE_DIR")
+
+    def validate_authz(self) -> None:
+        """Refuse an authorisation configuration that cannot mean what it says.
+
+        The one that matters is a permissive default in a multi-tenant
+        deployment: `RBAC_DEFAULT_ROLE=admin` plus `TENANCY_MODE=shared` means
+        anyone the IdP can place in a tenant administers it, which is the
+        failure this milestone exists to remove rather than relocate.
+        """
+        from app.authz.models import Role
+
+        raw = (self.rbac_default_role or "").strip().lower()
+        fallback = None if raw in {"", "none"} else Role.parse(raw)
+
+        if fallback is not None and self.multi_tenant and fallback.rank > Role.VIEWER.rank:
+            raise RuntimeError(
+                f"RBAC_DEFAULT_ROLE={self.rbac_default_role!r} grants "
+                f"{fallback} to every caller with no explicit role, and "
+                f"TENANCY_MODE=shared means that is every caller the identity "
+                f"provider can place in any tenant. Use 'viewer' or 'none' and "
+                f"assign roles with OIDC_ROLE_MAPPINGS or `python -m app.rbacctl`."
+            )
+
+        # Parsed at startup so a malformed mapping is a refused boot rather
+        # than a customer whose admins are silently viewers.
+        from app.authz.resolver import parse_role_mappings
+
+        parse_role_mappings(self.oidc_role_mappings)
+
     # --- Kubernetes impersonation ------------------------------------------
     # With impersonation on, every cluster read runs as the calling user, so the
     # user's own RBAC applies rather than the service account's. This is what

@@ -26,10 +26,15 @@ from pydantic import BaseModel, Field
 from app.audit.logger import get_audit_log
 from app.auth.dependencies import require_principal
 from app.auth.models import Principal
+from app.authz.dependencies import require_permission
 from app.core.config import settings
 from app.security.identity import IdentityError, require_cluster_id
 
-router = APIRouter(tags=["agents"], dependencies=[Depends(require_principal)])
+# Router level, so a new agent endpoint is authorised by default. Minting an
+# enrolment token now needs `cluster.enrol` (admin and owner) on top of the
+# authentication refusal below, which is about the deployment rather than the
+# caller and therefore stays.
+router = APIRouter(tags=["agents"], dependencies=[Depends(require_permission)])
 
 
 class EnrolmentRequest(BaseModel):

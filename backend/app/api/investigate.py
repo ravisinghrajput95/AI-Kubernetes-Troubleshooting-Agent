@@ -7,6 +7,8 @@ from loguru import logger
 from app.audit.logger import get_audit_log
 from app.auth.dependencies import require_principal
 from app.auth.models import Principal
+from app.authz.dependencies import has_permission, require_permission
+from app.authz.models import Permission
 from app.jobs.models import JobStatus
 from app.jobs.runner import InvestigationJobRunner, get_job_runner
 from app.jobs.store import get_job_store
@@ -23,9 +25,12 @@ from app.services.investigation_runner import (
     run_investigation,
 )
 
-# Applied at router level so a newly added endpoint is authenticated by
-# default. Health checks live on their own unauthenticated router.
-router = APIRouter(tags=["investigation"], dependencies=[Depends(require_principal)])
+# Applied at router level so a newly added endpoint is authenticated *and*
+# authorised by default. `require_permission` depends on `require_principal`,
+# so this is both checks in the right order; a route with no entry in
+# `ROUTE_PERMISSIONS` is denied rather than allowed. Health checks live on
+# their own unauthenticated router.
+router = APIRouter(tags=["investigation"], dependencies=[Depends(require_permission)])
 
 SSE_HEARTBEAT_SECONDS = 15.0
 SSE_HEADERS = {
@@ -173,6 +178,34 @@ async def start_investigation_job(
     )
 
 
+def _visible_owner(principal: Principal) -> str | None:
+    """Whose investigations this caller may list.
+
+    `None` means the whole tenant, and it is a role that grants it rather than
+    an argument a handler chooses: `investigation.read_all` belongs to admin
+    and owner, so an incident review does not depend on the person who happened
+    to run the investigation still being available. Everyone else sees their
+    own, exactly as before.
+
+    Tenant isolation is untouched either way — the store is already filtered by
+    row-level security, so "the whole tenant" is the widest this can possibly
+    mean.
+    """
+    if has_permission(principal, Permission.INVESTIGATION_READ_ALL):
+        return None
+    return principal.subject
+
+
+def _may_read_job(job, owner: str | None) -> bool:
+    """`owner=None` is the tenant-wide reader; otherwise it must be theirs.
+
+    Unowned jobs stay readable, which is what keeps investigations submitted
+    before authentication existed — and every job in an `AUTH_MODE=disabled`
+    deployment — addressable.
+    """
+    return owner is None or not job.owner or job.owner == owner
+
+
 @router.get("/investigation-jobs")
 def list_investigation_jobs(
     limit: int = 25,
@@ -180,11 +213,9 @@ def list_investigation_jobs(
     principal: Principal = Depends(require_principal),
 ) -> dict[str, list[dict]]:
     """In-flight and recently finished investigation jobs."""
+    owner = _visible_owner(principal)
     return {
-        "items": [
-            job.to_dict(include_result=False)
-            for job in store.list(limit=limit, owner=principal.subject)
-        ]
+        "items": [job.to_dict(include_result=False) for job in store.list(limit=limit, owner=owner)]
     }
 
 
@@ -192,7 +223,7 @@ def list_investigation_jobs(
 def list_investigations(
     principal: Principal = Depends(require_principal),
 ) -> dict[str, list[dict]]:
-    return {"items": InvestigationHistoryService().list_history(owner=principal.subject)}
+    return {"items": InvestigationHistoryService().list_history(owner=_visible_owner(principal))}
 
 
 @router.get("/investigations/{investigation_id}")
@@ -206,13 +237,14 @@ def get_investigation(
     Resolves a live job first, then falls back to a persisted report, so an id
     stays addressable after the job has been evicted or the process restarted.
     """
+    owner = _visible_owner(principal)
     job = store.get(investigation_id)
     if job is not None:
-        if job.owner and job.owner != principal.subject:
+        if not _may_read_job(job, owner):
             raise HTTPException(status_code=404, detail="Investigation not found")
         return job.to_dict()
 
-    report = InvestigationHistoryService().read_report(investigation_id, owner=principal.subject)
+    report = InvestigationHistoryService().read_report(investigation_id, owner=owner)
     if report is None:
         raise HTTPException(status_code=404, detail="Investigation not found")
 
@@ -273,13 +305,23 @@ async def stream_investigation_events(
     investigation_id: str,
     request: Request,
     store=Depends(get_job_store),
+    principal: Principal = Depends(require_principal),
 ) -> Response:
     """Server-sent event stream of investigation progress.
 
     Each frame carries the event's sequence as its SSE id, so a browser that
     reconnects resumes from where it stopped instead of replaying the timeline.
+
+    **This endpoint had no ownership check.** Every other investigation route
+    takes the principal and 404s on someone else's id; this one took only the
+    store, so any authenticated caller who knew — or guessed — an id received
+    the live progress of another user's investigation. Authentication was
+    applied at the router and authorisation simply was not, which is the exact
+    shape of gap this milestone exists to close, so it is closed here rather
+    than filed.
     """
-    if store.get(investigation_id) is None:
+    job = store.get(investigation_id)
+    if job is None or not _may_read_job(job, _visible_owner(principal)):
         raise HTTPException(status_code=404, detail="Investigation job not found")
 
     after_seq = _resume_position(request)
@@ -315,7 +357,7 @@ def _report_response(investigation_id: str, report_format: str, principal: Princ
     hand to the kernel. Status, media type and filename are unchanged.
     """
     content = InvestigationHistoryService().read_report_bytes(
-        investigation_id, report_format, owner=principal.subject
+        investigation_id, report_format, owner=_visible_owner(principal)
     )
     if content is None:
         raise HTTPException(status_code=404, detail="Investigation report not found")
@@ -353,7 +395,9 @@ def get_investigation_report(
     investigation_id: str,
     principal: Principal = Depends(require_principal),
 ) -> dict:
-    report = InvestigationHistoryService().read_report(investigation_id, owner=principal.subject)
+    report = InvestigationHistoryService().read_report(
+        investigation_id, owner=_visible_owner(principal)
+    )
     if report is None:
         raise HTTPException(status_code=404, detail="Investigation report not found")
     return report
@@ -364,6 +408,8 @@ def regenerate_investigation_report(
     investigation_id: str,
     principal: Principal = Depends(require_principal),
 ) -> dict:
+    # Owner-scoped rather than widened by `investigation.read_all`: this writes
+    # to the report store, and a read permission must not authorise a write.
     history = InvestigationHistoryService()
     if not history.owns(investigation_id, principal.subject):
         raise HTTPException(status_code=404, detail="Investigation report not found")

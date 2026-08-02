@@ -30,9 +30,24 @@ alone would decide *whether* you get in, not *what you can see*. History and
 jobs are owner-scoped, and denial returns 404 rather than 403 so it does not
 confirm an id exists.
 
-**Remaining (P1):** no rate limiting; no multi-tenancy beyond per-user
-ownership; `disabled` mode still ships as the default, so a careless deployment
-that sets `ALLOW_INSECURE_NO_AUTH` is unprotected.
+**Authorisation followed** (M6.5): four roles per tenant (`viewer` /
+`operator` / `admin` / `owner`) under the same row-level security, checked by a
+single router-level dependency against a route → permission table in which **a
+route with no entry is denied**. OIDC groups map to roles so the customer's IdP
+drives it. Single-tenant deployments keep working unchanged via
+`RBAC_DEFAULT_ROLE=admin`, which is refused above `viewer` when
+`TENANCY_MODE=shared`. Thirteen mutation tests, all caught.
+
+**Two defects fixed on the way:** `GET /investigations/{id}/events` had no
+ownership check and streamed any investigation to any authenticated caller who
+knew the id; and `require_principal` was a synchronous dependency, so M6's
+ambient tenant never survived into the request — every tenant's rows were
+written into `default` and readable by every other tenant, with row-level
+security enabled, forced and correct.
+
+**Remaining (P1):** no rate limiting; `disabled` mode still ships as the
+default, so a careless deployment that sets `ALLOW_INSECURE_NO_AUTH` is
+unprotected.
 
 ### F14 · Prompt injection reached operator-facing commands · **FIXED**
 

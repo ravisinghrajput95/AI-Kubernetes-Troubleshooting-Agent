@@ -7,6 +7,7 @@ from loguru import logger
 from app.api.agents import router as agents_router
 from app.api.health import router as health_router
 from app.api.investigate import router as investigate_router
+from app.api.members import router as members_router
 from app.api.session import router as session_router
 from app.core.config import settings
 from app.core.logging import configure_logging
@@ -55,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(investigate_router)
     app.include_router(agents_router)
     app.include_router(session_router)
+    app.include_router(members_router)
 
     return app
 

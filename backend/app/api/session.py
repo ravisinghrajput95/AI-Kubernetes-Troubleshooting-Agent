@@ -22,9 +22,10 @@ from loguru import logger
 
 from app.auth.dependencies import require_principal
 from app.auth.models import Principal
+from app.authz.dependencies import grant_for, require_permission
 from app.core.config import settings
 
-router = APIRouter(tags=["session"], dependencies=[Depends(require_principal)])
+router = APIRouter(tags=["session"], dependencies=[Depends(require_permission)])
 
 # Discovery is fetched once and kept. The end-session endpoint changes at the
 # cadence of a provider migration, and re-fetching it on every settings page
@@ -67,8 +68,19 @@ def reset_discovery() -> None:
 
 @router.get("/me")
 def describe_session(principal: Principal = Depends(require_principal)) -> dict[str, Any]:
-    """The signed-in caller, as the console should display them."""
+    """The signed-in caller, as the console should display them.
+
+    The one authenticated route that requires no permission, and it has to be:
+    a caller with no role must still be able to discover that they have no
+    role, or a locked-out user has no way to see why. `role_source` is carried
+    for the same reason — "you were never granted anything" and "you were
+    suspended" need different answers from the person reading the screen.
+
+    The permission list is also what the console gates its actions on, so a
+    viewer is not shown an Investigate button that will 403.
+    """
     return {
+        **grant_for(principal).to_dict(),
         "subject": principal.subject,
         "email": principal.email,
         "groups": list(principal.groups),

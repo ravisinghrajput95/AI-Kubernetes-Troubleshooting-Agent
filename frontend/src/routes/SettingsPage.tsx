@@ -64,6 +64,20 @@ export function SettingsPage() {
   if (session.data?.groups?.length) {
     rows.push(["Groups", session.data.groups.join(", ")]);
   }
+  // What this caller may actually do, and where it came from. Shown
+  // unconditionally once known: a deployment where everyone is an admin by
+  // default should say so rather than leave it to be discovered.
+  if (session.data) {
+    const source =
+      session.data.role_source === "suspended"
+        ? "suspended"
+        : session.data.role_source === "default"
+          ? "deployment default"
+          : session.data.role_source === "open-deployment"
+            ? "authentication is disabled"
+            : session.data.role_source;
+    rows.push(["Role", session.data.role ? `${session.data.role} (${source})` : `none (${source})`]);
+  }
 
   return (
     <div className="mx-auto max-w-document px-6 py-8">
