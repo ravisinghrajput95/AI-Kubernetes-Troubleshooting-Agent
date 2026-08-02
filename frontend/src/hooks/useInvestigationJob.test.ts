@@ -52,6 +52,14 @@ beforeEach(() => {
   vi.spyOn(api, "getInvestigationJob").mockResolvedValue(
     RESULT as unknown as Awaited<ReturnType<typeof api.getInvestigationJob>>,
   );
+  // The polling loop reads the status projection, which carries no
+  // investigation or diagnosis — that is the whole point of it. `settle` does
+  // the one full read once the job is terminal.
+  vi.spyOn(api, "getInvestigationJobStatus").mockResolvedValue({
+    id: "job-1",
+    status: "succeeded",
+    timeline: [],
+  } as unknown as Awaited<ReturnType<typeof api.getInvestigationJobStatus>>);
 });
 
 afterEach(() => {
@@ -152,6 +160,9 @@ describe("useInvestigationJob", () => {
         await vi.advanceTimersByTimeAsync(0);
       });
 
+      // Polled cheaply, then settled once with the full read. Asserting both
+      // is what stops the projection quietly reverting to the full endpoint.
+      expect(api.getInvestigationJobStatus).toHaveBeenCalledWith("job-1");
       expect(api.getInvestigationJob).toHaveBeenCalledWith("job-1");
       expect(result.current.phase).toBe("succeeded");
       expect(result.current.diagnosis?.root_cause).toBe("Missing DB_HOST");

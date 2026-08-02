@@ -293,6 +293,20 @@ export interface InvestigationJobAccepted {
   events_url: string;
 }
 
+/**
+ * A job's state without the investigation itself.
+ *
+ * `/investigations/{id}/status` exists because the polling fallback asks every
+ * 1.5 seconds and reads two fields off the answer, while the full endpoint
+ * re-serialises a finished investigation — megabytes, to render a progress bar.
+ * A structurally narrower type, so a component cannot read `investigation` off
+ * a status response and appear to work only until the payload is needed.
+ */
+export type InvestigationJobStatus = Omit<
+  InvestigationJobState,
+  "investigation" | "diagnosis" | "history_item"
+>;
+
 export interface InvestigationJobState {
   id: string;
   status: JobStatus;

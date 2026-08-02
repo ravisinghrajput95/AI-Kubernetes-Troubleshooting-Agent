@@ -4,6 +4,7 @@ import {
   cancelInvestigationJob,
   eventStreamUrl,
   getInvestigationJob,
+  getInvestigationJobStatus,
   startInvestigationJob,
   type InvestigationScope,
 } from "../services/api";
@@ -139,7 +140,11 @@ export function useInvestigationJob(): InvestigationJobHandle {
 
       pollRef.current = window.setInterval(async () => {
         try {
-          const state = await getInvestigationJob(id);
+          // The status projection, not the full job. This runs every 1.5s and
+          // reads exactly two fields; the full endpoint would re-serialise a
+          // finished investigation on every tick. `settle` below does the one
+          // full read, when there is actually a result to render.
+          const state = await getInvestigationJobStatus(id);
           if (!mountedRef.current) {
             return;
           }

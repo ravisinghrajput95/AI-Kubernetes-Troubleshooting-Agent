@@ -946,9 +946,27 @@ be **one mechanism**, and the remaining two are worth choosing by measurement
 rather than by this document's guess. Split accordingly:
 
 - **M8a — routing and partitioned queues.** ✅ Delivered.
-- **M8b — evidence and report bytes out of the Postgres row**: object storage
-  behind the existing `ReportStore` seam, streaming ingest so `fetch_many` stops
-  buffering a whole batch. Not started.
+- **M8b — payload reads.** ⏳ In progress. Measured first, and the measurement
+  inverted the brief: at 2,000 pods (the `MAX_LIST_ITEMS` ceiling) a stored
+  result is **2.7 MB**, of which `diagnosis.signals` is 34%,
+  `investigation.pods` 27% and `investigation.graph` 18% — so the majority is
+  *derived*, and "evidence payloads to object storage" would target about a
+  quarter of it. The waste was not where the bytes were stored but that they
+  were read by callers who discarded them: a 25-row listing pulled 67.5 MB out
+  of Postgres and returned none of it, and the polling fallback asked
+  `/investigations/{id}` every 1.5s to read two fields.
+
+  Delivered so far: `scripts/payload_bench.py`; a summary column list so a
+  listing never selects `result`; `get_summary()` on both stores for the four
+  internal reads that want a fact rather than the investigation; and an
+  additive `GET /investigations/{id}/status` measured at **73× smaller**
+  (784 KB → 10.7 KB at 500 pods). Derived sections stay stored — re-deriving on
+  read would make an archived report reflect today's rules rather than the ones
+  that produced it. Six mutations applied, all six caught.
+
+  Still open, to be decided against a re-measurement: whether the payload
+  leaves the row at all, and streaming ingest so `fetch_many` stops buffering a
+  whole batch.
 - **M8c — the envelope**: 1,000 clusters and 5,000 concurrent, documented.
   Not started.
 

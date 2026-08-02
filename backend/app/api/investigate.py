@@ -272,6 +272,48 @@ def get_investigation(
     }
 
 
+@router.get("/investigations/{investigation_id}/status")
+def get_investigation_status(
+    investigation_id: str,
+    store=Depends(get_job_store),
+    principal: Principal = Depends(require_principal),
+) -> dict:
+    """State and timeline, without the investigation itself.
+
+    The polling fallback asks "is it done yet?" every 1.5 seconds and reads two
+    fields off the answer. Serving that from `GET /investigations/{id}` meant a
+    finished investigation was re-serialised out of Postgres on every tick —
+    2.7 MB on a cluster at the `MAX_LIST_ITEMS` ceiling, to render a progress
+    bar. The path exists because a corporate proxy blocked SSE, so it is
+    already the degraded one; it should not also be the expensive one.
+
+    Additive rather than a change to the existing endpoint: `/investigations/{id}`
+    keeps returning the whole result, because that is what a client rendering
+    the report actually wants, and changing it would break every consumer to
+    benefit one.
+    """
+    job = store.get_summary(investigation_id)
+    if job is None or not _may_read_job(job, _visible_owner(principal)):
+        # Falls through to the persisted report for an evicted job, exactly as
+        # the full read does — an id must not stop being addressable here and
+        # keep working there.
+        report = InvestigationHistoryService().read_report(
+            investigation_id, owner=_visible_owner(principal)
+        )
+        if report is None:
+            raise HTTPException(status_code=404, detail="Investigation not found")
+        failure = collection_failure(report.get("investigation", {}))
+        return {
+            "id": investigation_id,
+            "status": str(JobStatus.FAILED if failure else JobStatus.SUCCEEDED),
+            "persisted": True,
+            "error": failure or "",
+            "timeline": [],
+        }
+
+    return job.to_dict(include_result=False)
+
+
 @router.post("/investigations/{investigation_id}/cancel")
 async def cancel_investigation(
     investigation_id: str,
@@ -288,7 +330,7 @@ async def cancel_investigation(
     so the durable flag this sets is the guarantee, and the message it publishes
     is only what makes it fast.
     """
-    job = store.get(investigation_id)
+    job = store.get_summary(investigation_id)
     if job is None or (job.owner and job.owner != principal.subject):
         raise HTTPException(status_code=404, detail="Investigation job not found")
     if job.status.terminal:
@@ -329,7 +371,7 @@ async def stream_investigation_events(
     shape of gap this milestone exists to close, so it is closed here rather
     than filed.
     """
-    job = store.get(investigation_id)
+    job = store.get_summary(investigation_id)
     if job is None or not _may_read_job(job, _visible_owner(principal)):
         raise HTTPException(status_code=404, detail="Investigation job not found")
 

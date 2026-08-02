@@ -134,7 +134,7 @@ class JobConsumer:
 
     async def _settle_unclaimable(self, job_id: str) -> None:
         with system_scope():
-            job = await asyncio.to_thread(self._store.get, job_id)
+            job = await asyncio.to_thread(self._store.get_summary, job_id)
         if job is None or job.status.terminal:
             return
         if job.cancel_requested:

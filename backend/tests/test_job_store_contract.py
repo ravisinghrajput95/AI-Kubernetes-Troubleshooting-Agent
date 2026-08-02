@@ -267,3 +267,63 @@ class TestCancellationRequests:
 
         assert seen == [job.id]
         assert store.get(job.id).cancel_requested is True
+
+
+class TestASummaryReadCarriesNoPayload:
+    """M8b: most reads of an investigation want a fact, not the investigation.
+
+    Cancellation reads an owner and a status. The stream handler reads an
+    owner. The consumer's settle path reads a boolean. Serving those from the
+    full row moved 2.7 MB out of Postgres to answer them
+    (`scripts/payload_bench.py`).
+
+    Held to both stores so `result` cannot be present on one backend and absent
+    on the other — a caller that read it would work single-process and return
+    `None` distributed, which is the divergence this suite exists to catch.
+    """
+
+    async def test_a_summary_omits_the_result(self, store):
+        job = store.create({"context": "prod"})
+        store.mark_running(job.id)
+        store.mark_succeeded(job.id, {"investigation": {"padding": "x" * 100_000}})
+
+        assert store.get(job.id).result is not None, "the full read must still carry it"
+        assert store.get_summary(job.id).result is None
+
+    async def test_a_summary_carries_everything_a_caller_decides_on(self, store):
+        job = store.create({"context": "prod"}, owner="alice")
+        store.mark_running(job.id)
+        store.request_cancel(job.id)
+
+        summary = store.get_summary(job.id)
+
+        # Exactly the fields the four internal call sites read.
+        assert summary.owner == "alice"
+        assert summary.status is JobStatus.RUNNING
+        assert summary.cancel_requested is True
+        assert summary.request == {"context": "prod"}
+
+    async def test_a_summary_carries_the_timeline(self, store):
+        """A status read is mostly the timeline; omitting it would make the
+        cheap endpoint useless and send callers back to the expensive one."""
+        job = store.create({})
+        store.publish(job.id, JobEvent(JobEventType.PROGRESS, "Collecting evidence"))
+
+        assert [event.message for event in store.get_summary(job.id).events] == [
+            "Investigation queued",
+            "Collecting evidence",
+        ]
+
+    async def test_an_unknown_id_summarises_as_nothing(self, store):
+        assert store.get_summary("does-not-exist") is None
+
+    async def test_a_summary_does_not_mutate_the_stored_job(self, store):
+        """The in-memory store hands out its own objects; stripping the result
+        in place would delete it for everyone."""
+        job = store.create({})
+        store.mark_running(job.id)
+        store.mark_succeeded(job.id, {"investigation": {"kept": True}})
+
+        store.get_summary(job.id)
+
+        assert store.get(job.id).result == {"investigation": {"kept": True}}

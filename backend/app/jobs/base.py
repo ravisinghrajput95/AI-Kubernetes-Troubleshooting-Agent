@@ -72,6 +72,21 @@ class JobStore(Protocol):
 
     def get(self, job_id: str) -> InvestigationJob | None: ...
 
+    def get_summary(self, job_id: str) -> InvestigationJob | None:
+        """The job without its result payload.
+
+        Everything a caller needs to know *about* an investigation — status,
+        owner, timeline, error — and none of the investigation itself. The
+        result is 2.7 MB on a cluster at the `MAX_LIST_ITEMS` ceiling
+        (`scripts/payload_bench.py`), and most reads want a boolean: is it
+        finished, is it mine, was cancellation requested.
+
+        `result` is always `None` here, on both stores, so a caller cannot come
+        to depend on the payload being present on one backend and absent on the
+        other.
+        """
+        ...
+
     def list(self, limit: int = 25, owner: str | None = None) -> list[InvestigationJob]: ...
 
     def mark_running(self, job_id: str) -> None: ...

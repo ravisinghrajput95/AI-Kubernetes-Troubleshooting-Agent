@@ -63,6 +63,7 @@ ROUTE_PERMISSIONS: dict[tuple[str, str], Permission | str] = {
     ("GET", "/investigations"): Permission.INVESTIGATION_READ,
     ("GET", "/investigation-jobs"): Permission.INVESTIGATION_READ,
     ("GET", "/investigations/{investigation_id}"): Permission.INVESTIGATION_READ,
+    ("GET", "/investigations/{investigation_id}/status"): Permission.INVESTIGATION_READ,
     ("GET", "/investigations/{investigation_id}/events"): Permission.INVESTIGATION_READ,
     ("GET", "/investigations/{investigation_id}/report"): Permission.INVESTIGATION_READ,
     ("GET", "/investigations/{investigation_id}/pdf"): Permission.INVESTIGATION_READ,

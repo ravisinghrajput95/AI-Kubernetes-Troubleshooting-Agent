@@ -299,6 +299,27 @@ Note what this is *not*: `result` is NULL until a job finishes, so polling an
 in-flight investigation was already cheap. The waste was on reads of finished
 rows that never wanted the payload.
 
+**`get_summary()` is the read for callers that want a fact, not the
+investigation.** Cancellation reads an owner and a status, the stream handler
+reads an owner, the consumer's settle path reads a boolean, and
+`GET /investigations/{id}/status` reads a status and a timeline — all of them
+used to pull the whole payload. Both stores implement it and
+`tests/test_job_store_contract.py` holds them to `result is None`, so a caller
+cannot come to depend on the payload being present single-process and absent
+distributed.
+
+`/investigations/{id}/status` is **additive**: `/investigations/{id}` still
+returns everything, because that is what a client rendering the report wants
+and changing it would break every consumer to benefit one. Measured end to end
+at 500 pods: **784 KB → 10.7 KB, 73×**, about 90 MB saved over a three-minute
+run on the polling transport. The status read is 10.7 KB rather than nothing
+because it carries the timeline, which is what a progress display is made of.
+
+The property under test is *not reading* the payload, not the response being
+small — switching the endpoint back to `store.get()` would still produce a
+small response while the megabytes had already left Postgres. The test asserts
+the store call.
+
 ### Routing an investigation to the right worker (M8a)
 
 A gRPC stream belongs to whichever worker holds the socket, so a cluster

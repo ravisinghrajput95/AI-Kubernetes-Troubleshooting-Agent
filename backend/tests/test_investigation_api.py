@@ -439,3 +439,99 @@ def test_a_live_failed_job_and_its_persisted_report_agree(client, monkeypatch):
         persisted["investigation"]["evidence_coverage"]
         == live["investigation"]["evidence_coverage"]
     )
+
+
+class TestTheStatusEndpointCarriesNoPayload:
+    """M8b: the cheap read for callers that only want to know if it is done.
+
+    The polling fallback asks every 1.5 seconds and reads two fields off the
+    answer. Served from `/investigations/{id}`, that re-serialised the whole
+    finished investigation out of Postgres on every tick — 2.7 MB at the
+    `MAX_LIST_ITEMS` ceiling, to render a progress bar. It is already the
+    degraded transport because a proxy blocked SSE; it should not also be the
+    expensive one.
+    """
+
+    def test_it_reports_status_and_timeline(self, client):
+        job_id = client.post("/investigations", json={"context": "test-cluster"}).json()["id"]
+        wait_for_terminal(client, job_id)
+
+        body = client.get(f"/investigations/{job_id}/status").json()
+
+        assert body["status"] == "succeeded"
+        assert body["timeline"], "a progress display is mostly the timeline"
+        assert body["id"] == job_id
+
+    def test_it_omits_the_investigation_and_the_diagnosis(self, client):
+        job_id = client.post("/investigations", json={"context": "test-cluster"}).json()["id"]
+        wait_for_terminal(client, job_id)
+
+        body = client.get(f"/investigations/{job_id}/status").json()
+
+        assert "investigation" not in body
+        assert "diagnosis" not in body
+
+    def test_it_is_much_smaller_than_the_full_read(self, client):
+        """The whole point, asserted as bytes rather than as a field list."""
+        job_id = client.post("/investigations", json={"context": "test-cluster"}).json()["id"]
+        wait_for_terminal(client, job_id)
+
+        full = len(client.get(f"/investigations/{job_id}").content)
+        status = len(client.get(f"/investigations/{job_id}/status").content)
+
+        assert status * 4 < full, (
+            f"the status read is {status} bytes against {full} for the full one; "
+            f"it is no longer meaningfully cheaper than the endpoint it exists "
+            f"to replace."
+        )
+
+    def test_the_full_read_still_carries_everything(self, client):
+        """Additive. Changing `/investigations/{id}` would break every consumer
+        to benefit one."""
+        job_id = client.post("/investigations", json={"context": "test-cluster"}).json()["id"]
+        body = wait_for_terminal(client, job_id)
+
+        assert body["investigation"]["evidence"]
+        assert body["diagnosis"]["root_cause"]
+
+    def test_it_does_not_read_the_payload_from_the_store(self, client):
+        """The response being small is not the property; not reading it is.
+
+        Switching this endpoint back to `store.get()` would still produce a
+        small response — `to_dict(include_result=False)` drops the payload in
+        Python — while the 2.7 MB had already crossed the wire from Postgres,
+        which is the whole cost. So this asserts the *call*, not the bytes.
+        """
+        job_id = client.post("/investigations", json={"context": "test-cluster"}).json()["id"]
+        wait_for_terminal(client, job_id)
+
+        store = client.job_store
+        full_reads: list[str] = []
+        original = store.get
+        store.get = lambda job: (full_reads.append(job), original(job))[1]
+        try:
+            assert client.get(f"/investigations/{job_id}/status").status_code == 200
+        finally:
+            store.get = original
+
+        assert full_reads == [], (
+            "the status endpoint performed a full read; the payload left the "
+            "database even though the response did not carry it."
+        )
+
+    def test_an_unknown_id_is_not_found(self, client):
+        assert client.get("/investigations/does-not-exist/status").status_code == 404
+
+    def test_it_answers_for_an_evicted_job_from_the_persisted_report(self, client):
+        """An id must not stop being addressable here while still working on
+        the full read."""
+        job_id = client.post("/investigations", json={"context": "test-cluster"}).json()["id"]
+        wait_for_terminal(client, job_id)
+
+        # The fixture injects its own store; evicting from the module global
+        # would silently do nothing and leave this asserting the live path.
+        client.job_store._jobs.pop(job_id, None)
+
+        body = client.get(f"/investigations/{job_id}/status").json()
+        assert body["status"] == "succeeded"
+        assert body["persisted"] is True

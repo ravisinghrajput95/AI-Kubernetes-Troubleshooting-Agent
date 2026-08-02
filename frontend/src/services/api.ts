@@ -6,6 +6,7 @@ import type {
   InvestigationHistoryItem,
   InvestigationJobAccepted,
   InvestigationJobState,
+  InvestigationJobStatus,
   InvestigationReport,
   InvestigationResponse,
   KubernetesContextResponse,
@@ -158,6 +159,18 @@ export function startInvestigationJob(
 
 export function getInvestigationJob(id: string): Promise<InvestigationJobState> {
   return get<InvestigationJobState>(`/investigations/${id}`);
+}
+
+/**
+ * State and timeline, without the investigation.
+ *
+ * For the polling fallback, which asks every 1.5 seconds and reads `status` and
+ * `timeline`. The full endpoint would re-serialise the whole finished
+ * investigation on every tick; polling is already the degraded transport
+ * because a proxy blocked SSE, and it should not also be the expensive one.
+ */
+export function getInvestigationJobStatus(id: string): Promise<InvestigationJobStatus> {
+  return get<InvestigationJobStatus>(`/investigations/${id}/status`);
 }
 
 export async function cancelInvestigationJob(id: string): Promise<void> {

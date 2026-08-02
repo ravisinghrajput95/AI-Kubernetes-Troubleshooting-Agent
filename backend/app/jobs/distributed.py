@@ -102,6 +102,32 @@ class PostgresRedisJobStore:
         job.events = self.events_since(job_id)
         return job
 
+    def get_summary(self, job_id: str) -> InvestigationJob | None:
+        """The job without its result, so the payload never leaves Postgres.
+
+        Most reads of an investigation want a fact about it rather than the
+        investigation: whether it is terminal, who owns it, whether a cancel
+        was requested. Serving those from the full row moves megabytes to
+        answer a boolean.
+
+        Events are still loaded — a status read wants the timeline, which is
+        the one thing a progress display is actually made of.
+        """
+        from psycopg.rows import dict_row
+
+        with self._db.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                f"SELECT {_JOB_SUMMARY_COLUMNS} FROM investigations WHERE id = %s",
+                (job_id,),
+            )
+            row = cursor.fetchone()
+
+        if row is None:
+            return None
+        job = self._to_job(row)
+        job.events = self.events_since(job_id)
+        return job
+
     def list(self, limit: int = 25, owner: str | None = None) -> list[InvestigationJob]:
         from psycopg.rows import dict_row
 

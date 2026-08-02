@@ -160,7 +160,8 @@ class InvestigationJobRunner:
         # A task cancelled before its coroutine ever started has no chance to
         # record the outcome itself, and the job would sit pending forever.
         if task.cancelled():
-            job = self.store.get(job_id)
+            # Only the status is read; the payload would be pure transfer.
+            job = self.store.get_summary(job_id)
             if job is not None and not job.status.terminal:
                 if self._stopping:
                     self.store.mark_failed(job_id, WORKER_LOST)

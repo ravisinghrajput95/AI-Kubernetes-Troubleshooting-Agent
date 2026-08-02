@@ -58,6 +58,20 @@ class InMemoryJobStore:
     def get(self, job_id: str) -> InvestigationJob | None:
         return self._jobs.get(job_id)
 
+    def get_summary(self, job_id: str) -> InvestigationJob | None:
+        """The job without its result.
+
+        There is no wire here, so this saves nothing — it exists so that the
+        two stores answer the same shape. A caller that reads `result` off a
+        summary would work in the single-process deployment and return `None`
+        in the distributed one, which is exactly the kind of divergence the
+        store contract tests exist to prevent.
+        """
+        from dataclasses import replace
+
+        job = self._jobs.get(job_id)
+        return None if job is None else replace(job, result=None)
+
     def list(self, limit: int = 25, owner: str | None = None) -> list[InvestigationJob]:
         """Recent jobs, optionally restricted to one owner.
 
