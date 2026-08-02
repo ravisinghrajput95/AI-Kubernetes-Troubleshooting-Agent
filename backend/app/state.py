@@ -115,6 +115,10 @@ class StateBackend:
         set_trigger_ledger(None)
         reset_sources()
 
+        from app.notify import reset_destinations
+
+        reset_destinations()
+
         if self.gateway is not None:
             from app.gateway.presence import set_agent_presence
             from app.security.enrolment import set_enrolment_store
@@ -182,6 +186,7 @@ def build_state() -> StateBackend:
     settings.validate_authz()
     settings.validate_rate_limits()
     settings.validate_event_sources()
+    settings.validate_notify_destinations()
 
     from app.authz.resolver import reset_resolver
 

@@ -148,6 +148,13 @@ events_rejected_total = Counter(
     registry=REGISTRY,
 )
 
+notifications_total = Counter(
+    "k8sagent_notifications_total",
+    "Outbound announcements, by outcome. `failed` means retries were exhausted.",
+    ["outcome"],
+    registry=REGISTRY,
+)
+
 rate_limited_total = Counter(
     "k8sagent_rate_limited_total",
     "Investigation submissions refused by a rate limit, by which bucket refused.",
@@ -179,6 +186,7 @@ _KNOWN_LABELS: tuple[tuple[Counter, str, tuple[str, ...]], ...] = (
     ),
     (cluster_access_total, "provider", ("agent", "kubeconfig")),
     (rate_limited_total, "scope", ("subject", "tenant")),
+    (notifications_total, "outcome", ("delivered", "rejected", "failed")),
     (
         events_rejected_total,
         "reason",
@@ -304,6 +312,11 @@ def event_triggered() -> None:
 def event_rejected(reason: str) -> None:
     """`reason` is a fixed category, never anything from the payload."""
     _safe(lambda: events_rejected_total.labels(reason=reason).inc())
+
+
+def notification(outcome: str) -> None:
+    """`outcome` is a fixed category, never the receiver's response body."""
+    _safe(lambda: notifications_total.labels(outcome=outcome).inc())
 
 
 def rate_limited(scope: str) -> None:

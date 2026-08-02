@@ -142,6 +142,22 @@ class Settings(BaseSettings):
 
         parse_sources(self.event_sources)
 
+    # --- Action egress ------------------------------------------------------
+    # `name:url:secret[:tenant][:min_severity][:outcomes]`, comma separated.
+    # Empty means nothing is announced, which is the default.
+    notify_destinations: str = Field(default="", validation_alias="NOTIFY_DESTINATIONS")
+
+    # Where the console lives, so a notification can link to the investigation
+    # instead of carrying its evidence. Empty omits the link rather than
+    # guessing a hostname that would 404 from a ticket.
+    console_url: str = Field(default="", validation_alias="CONSOLE_URL")
+
+    def validate_notify_destinations(self) -> None:
+        """Refuse a malformed destination at startup rather than at 3am."""
+        from app.notify.destinations import parse_destinations
+
+        parse_destinations(self.notify_destinations)
+
     # --- Rate limiting ------------------------------------------------------
     # Applies only to operations that cost a customer's cluster and a model
     # call — since M6.5 that is exactly the set requiring `investigation.run`.

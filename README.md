@@ -138,6 +138,8 @@ Read from the environment or `backend/.env`.
 | `RATE_LIMIT_TENANT_PER_MINUTE` | `0` | Per-tenant quota; 0 is unlimited, set it on `shared` |
 | `EVENT_SOURCES` | — | `name:secret:subject[:groups][:tenant]`; the subject is impersonated |
 | `EVENT_COOLDOWN_SECONDS` | `1800` | How long a repeated alert fingerprint is ignored |
+| `NOTIFY_DESTINATIONS` | — | `name\|url\|secret[\|tenant][\|severity][\|outcomes]` — pipe-delimited; URLs contain colons |
+| `CONSOLE_URL` | — | Used to link a notification to its investigation |
 
 **Impersonation matters.** With it on, every cluster read runs as the calling
 user, so the cluster applies *their* RBAC rather than the service account's. The

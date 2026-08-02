@@ -8,6 +8,7 @@ from app.auth.models import Principal
 from app.core.config import settings
 from app.jobs.models import InvestigationJob, JobEvent, JobEventType
 from app.models.investigation import InvestigationRequest
+from app.notify import announce
 from app.observability import metrics
 from app.providers.base import ClusterUnreachable
 from app.services.investigation_runner import (
@@ -237,12 +238,17 @@ class InvestigationJobRunner:
             # different shapes depending on whether the job is still in memory.
             await asyncio.to_thread(self.store.mark_failed, job_id, failure, result)
             metrics.investigation_finished("no_evidence", time.perf_counter() - started)
+            announce(job_id, "failed", result.get("investigation"), result.get("diagnosis"))
             return
 
         # The result carries the whole investigation; writing it can be slow
         # enough to matter, so keep it off the event loop.
         await asyncio.to_thread(self.store.mark_succeeded, job_id, result)
         metrics.investigation_finished("succeeded", time.perf_counter() - started)
+        # After the result is durable, never before: an announcement describes
+        # something that happened, and firing it first would let a receiver
+        # follow a link to an investigation that had not been written yet.
+        announce(job_id, "succeeded", result.get("investigation"), result.get("diagnosis"))
 
     def _start_watchdog(self, job_id: str) -> asyncio.Task | None:
         """Poll for a cancellation whose message never arrived, and hold the lease.

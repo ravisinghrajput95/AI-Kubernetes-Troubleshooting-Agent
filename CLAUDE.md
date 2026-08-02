@@ -269,6 +269,41 @@ Every collected fact is an `Evidence` record with a **deterministic id** (`kind:
 
 `select_provider()` (`app/services/investigation_service.py`) makes the choice: an agent connected for this cluster wins, otherwise the local kubeconfig. The registry is per-process, so a cluster whose agent is connected to another worker falls back to local — correct, and *visible*, via `investigation["cluster_access"]`. Routing to the worker holding the stream is M8.
 
+### Action egress (`app/notify/`, M9)
+
+One outbound interface — a signed JSON POST — rather than a shape per vendor,
+which would put six formats in this repository and make a seventh a code
+change. Fires on the investigation's terminal path, **after** the result is
+durable, so a link in a ticket cannot arrive before the thing it points at.
+
+Three rules, each of which fails silently if it regresses:
+
+- **A summary leaves, never the result.** The stored result is 2.7 MB of
+  cluster interior. `build_summary` is an explicit allowlist assembled field by
+  field, not a filter — a denylist leaks whatever a future collector adds. It
+  carries what a ticket needs and a *link* to the rest.
+- **A destination belongs to a tenant.** Announcing acme's incident into
+  globex's Slack is M6's failure committed on the way out.
+- **A notification can never fail an investigation.** Delivery is detached,
+  exceptions are dropped, `announce()` returns nothing to await — a caller that
+  could observe delivery would eventually be written to depend on it.
+
+Bounded retries (3, no retry on 4xx: retrying our bug becomes their rate
+limit). Guaranteed delivery would need a queue, a dead-letter and an ordering
+story, which is a different feature from "tell Slack".
+
+**`NOTIFY_DESTINATIONS` is pipe-delimited, unlike every other list here, and
+that is forced.** A URL contains colons — `https://`, and `host:8443` — so the
+colon-separated shape `API_TOKENS` uses cannot express one. The first draft
+split on `:` and silently truncated `https://hooks.example.com:8443/path` to
+the host, which would have sent every notification to the wrong place while
+parsing without complaint. Caught by its own test before it shipped.
+
+Failures are **not** announced by default: a failed collection is the
+platform's problem, visible in the console and in
+`k8sagent_investigations_total`, and paging someone about it trains them to
+ignore the channel.
+
 ### Event ingress (`app/events/`, `app/api/events.py`, M9)
 
 A signed webhook that *triggers* investigations — §3.7's "what turns the

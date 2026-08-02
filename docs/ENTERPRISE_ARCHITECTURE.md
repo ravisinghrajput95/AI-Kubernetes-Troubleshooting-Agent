@@ -1069,9 +1069,11 @@ streams measures a different thing and belongs to M8c.
 Event ingress, action egress, MCP server. *Exit:* an alert triggers an
 investigation that opens a ticket with no human involved.
 
-**Event ingress delivered.** A signed `POST /events/{source}` turns an
-Alertmanager notification into an investigation. The first half of the exit
-criterion; action egress and MCP remain.
+**Event ingress and action egress delivered — the exit criterion is met.** A
+signed `POST /events/{source}` turns an Alertmanager notification into an
+investigation, and a signed outbound POST announces the diagnosis when it
+finishes. `tests/test_action_egress.py::TestTheWholeChainRuns` drives the whole
+arc with no human in it. The MCP server remains.
 
 *Outcome:* the signature was the easy part. The finding was that **an alert has
 no human, and impersonation is what makes "the platform cannot see more than
@@ -1096,7 +1098,20 @@ unbounded series of production cluster reads. The ledger fails **closed**,
 deliberately opposite to the rate limiter, because the expensive mistake is the
 one to avoid.
 
-Twelve mutations applied one at a time; all twelve failed a test.
+*Egress outcome:* one interface rather than a shape per vendor, and three
+rules that each fail silently if broken — a summary leaves and never the
+result (an explicit allowlist, because a denylist leaks whatever a future
+collector adds), a destination only ever hears about its own tenant's work, and
+a notification can never fail an investigation.
+
+`NOTIFY_DESTINATIONS` is pipe-delimited where every other list here is
+colon-delimited, and that was forced by a bug its own test caught before it
+shipped: a URL contains colons, so the established shape silently truncated
+`https://hooks.example.com:8443/path` to the host and would have sent every
+notification to the wrong place while parsing without complaint.
+
+Twelve mutations on ingress and thirteen on egress, applied one at a time; all
+twenty-five failed a test.
 
 Sequencing note: M1–M3 deliver most of the enterprise value (HA, scale-out,
 durable state) without any agent work, and M3 alone closes the largest gap in
