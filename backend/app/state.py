@@ -178,6 +178,9 @@ async def start_agent_gateway(state: "StateBackend | None" = None):
 
 
 def build_state() -> StateBackend:
+    # First, because a deployment that cannot authenticate anyone has nothing
+    # useful to say about the rest of its configuration.
+    settings.validate_auth()
     settings.validate_state_backend()
     settings.validate_tenancy()
     # Refuses a permissive default role in a multi-tenant deployment, and a

@@ -70,6 +70,21 @@ ruff format --check .   # CI enforces formatting
 
 `requirements.txt` pins are kept current and audited — `pip-audit --strict` runs in CI and **fails the build**, because the original pins shipped known CVEs in PyJWT (which validates auth tokens) and Starlette.
 
+**Authentication configuration is validated at startup**, like every other
+setting. It was the only one checked lazily — the authenticator is built on
+first use, so a typo'd `AUTH_MODE`, a missing `OIDC_ISSUER` or `disabled`
+without its acknowledgement **started successfully and then 500'd every
+request**, with `/health` still green because it is unauthenticated. A
+readiness probe passing while the service serves nothing is the hardest shape
+of misconfiguration to notice. `Settings.validate_auth()` calls the same
+`build_authenticator` the dependency does, so the two cannot drift.
+
+`docker-compose.yml` deliberately does **not** set `ALLOW_INSECURE_NO_AUTH` for
+you. Pre-setting it was the "careless deployment" F13 warns about, shipped in
+this repository — a `docker compose up` that publishes a port, authenticates
+nobody, and supplies its own acknowledgement. Compose now refuses to start
+until an operator chooses, and the refusal names the variable.
+
 **Security status:** authentication (F13) and per-tenant authorisation are built — see *Authorisation* below. What remains is in `SECURITY.md` and `docs/PRODUCTION_READINESS.md`, chiefly no rate limiting and `AUTH_MODE=disabled` still being the shipped default.
 
 `PyYAML` is a runtime dependency: generated patches are applied to production clusters, so YAML is serialised properly rather than string-formatted.

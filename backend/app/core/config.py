@@ -56,6 +56,25 @@ class Settings(BaseSettings):
     # `token:subject:group1,group2` entries, comma separated.
     api_tokens: str = Field(default="", validation_alias="API_TOKENS")
 
+    def validate_auth(self) -> None:
+        """Refuse an unusable authentication configuration at startup.
+
+        Auth was the only configuration in this file validated *lazily* — the
+        authenticator is built on first use, so a deployment with a typo'd
+        `AUTH_MODE`, a missing `OIDC_ISSUER`, or `disabled` without its
+        acknowledgement **started successfully and then failed every request**.
+        `/health` is unauthenticated, so it kept answering: a readiness probe
+        stayed green while the service served nothing but 500s, which is the
+        worst shape a misconfiguration can take.
+
+        Every other validator here already runs in `build_state()`. This makes
+        auth consistent with them, and it is deliberately the *same* code path
+        the dependency uses rather than a second set of rules that could drift.
+        """
+        from app.auth.authenticators import build_authenticator
+
+        build_authenticator(self)
+
     # --- Authorisation ------------------------------------------------------
     # `group=role` pairs, so the customer's IdP drives platform roles and there
     # is no second directory to maintain. Groups already ride on `Principal`;

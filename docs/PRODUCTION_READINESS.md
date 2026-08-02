@@ -53,8 +53,16 @@ times the configured rate. It fails *open* by design, unlike authorisation:
 availability protection against a noisy caller, not a control against a hostile
 one.
 
-**Remaining (P1):** `disabled` mode still ships as the default, so a careless
-deployment that sets `ALLOW_INSECURE_NO_AUTH` is unprotected.
+**Startup validation followed**: authentication was the only configuration
+checked lazily, so an invalid one started the service and then failed every
+request while `/health` stayed green. It is now validated in `build_state()`
+through the same builder the dependency uses. And `docker-compose.yml` no
+longer sets `ALLOW_INSECURE_NO_AUTH` for the operator — pre-setting it was the
+careless deployment this finding describes, shipped in the repository.
+
+**Remaining (P1):** no traces. `disabled` remains the *default mode*, but it
+now costs a deliberate acknowledgement that nothing in this repository supplies
+and that refuses the boot until given.
 
 ### F14 · Prompt injection reached operator-facing commands · **FIXED**
 

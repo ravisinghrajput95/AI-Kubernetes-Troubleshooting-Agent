@@ -59,7 +59,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # Auth is required by default. For local development only:
-export AUTH_MODE=disabled ALLOW_INSECURE_NO_AUTH=true
+export AUTH_MODE=disabled ALLOW_INSECURE_NO_AUTH=true   # local only; see SECURITY.md
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -119,7 +119,7 @@ Read from the environment or `backend/.env`.
 | Variable | Default | Purpose |
 |---|---|---|
 | `AUTH_MODE` | `disabled` | `oidc`, `token`, or `disabled` |
-| `ALLOW_INSECURE_NO_AUTH` | `false` | Required to actually run with auth off |
+| `ALLOW_INSECURE_NO_AUTH` | `false` | Required to run with auth off. **Checked at startup**, so a misconfiguration refuses to boot rather than 500ing every request behind a green health check |
 | `OIDC_ISSUER` / `OIDC_AUDIENCE` | — | Required when `AUTH_MODE=oidc` |
 | `API_TOKENS` | — | `token:subject[:group\|group][:tenant]`, comma separated |
 | `OIDC_ROLE_MAPPINGS` | — | `group=role` pairs, e.g. `sre=operator,platform=admin` |

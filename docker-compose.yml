@@ -52,10 +52,22 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/k8sagent
       REDIS_URL: redis://redis:6379/0
       # This file is a local demonstration, not a deployment. The service holds
-      # a kubeconfig, so disabling auth is refused unless acknowledged
-      # explicitly — read SECURITY.md before exposing this port.
+      # a kubeconfig, so running with authentication off has to be acknowledged
+      # explicitly — and this file deliberately does **not** acknowledge it for
+      # you. Pre-setting it here was the "careless deployment" F13 warns about,
+      # shipped in the repository: a `docker compose up` that publishes a port
+      # and authenticates nobody, with the acknowledgement supplied by us.
+      #
+      # So `docker compose up` refuses to start until you choose:
+      #
+      #   ALLOW_INSECURE_NO_AUTH=true docker compose up     # local, open
+      #   AUTH_MODE=token API_TOKENS=tok:you@example.com docker compose up
+      #
+      # The refusal is at startup and names the variable, so the fix is one
+      # line rather than a search. Read SECURITY.md before exposing this port.
       AUTH_MODE: ${AUTH_MODE:-disabled}
-      ALLOW_INSECURE_NO_AUTH: ${ALLOW_INSECURE_NO_AUTH:-true}
+      ALLOW_INSECURE_NO_AUTH: ${ALLOW_INSECURE_NO_AUTH:-false}
+      API_TOKENS: ${API_TOKENS:-}
       KUBECONFIG: /home/app/.kube/config
     volumes:
       # Read-only. Without cluster credentials the backend still starts and

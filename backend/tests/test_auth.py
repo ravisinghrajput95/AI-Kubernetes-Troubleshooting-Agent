@@ -342,7 +342,11 @@ class TestHealthReportsTheAuthMode:
     """
 
     def test_disabled_mode_is_reported_as_insecure(self, monkeypatch):
+        # The acknowledgement is now required to *start*, not merely to serve
+        # the first request, so this fixture has to be a configuration that a
+        # real deployment could actually boot with.
         monkeypatch.setattr(settings, "auth_mode", "disabled")
+        monkeypatch.setattr(settings, "allow_insecure_no_auth", True)
         with TestClient(app) as client:
             body = client.get("/health").json()
 
@@ -351,6 +355,7 @@ class TestHealthReportsTheAuthMode:
 
     def test_token_mode_is_not_insecure(self, monkeypatch):
         monkeypatch.setattr(settings, "auth_mode", "token")
+        monkeypatch.setattr(settings, "api_tokens", "tok:alice@example.com")
         with TestClient(app) as client:
             body = client.get("/health").json()
 
@@ -377,3 +382,61 @@ class TestHealthReportsTheAuthMode:
 
         assert "supersecret" not in raw
         assert "alice@example.com" not in raw
+
+
+class TestAuthIsValidatedAtStartup:
+    """The one configuration that was checked lazily, and what that cost.
+
+    The authenticator is built on first use, so a deployment with a typo'd
+    `AUTH_MODE`, a missing `OIDC_ISSUER`, or `disabled` without its
+    acknowledgement **started successfully and then failed every request**.
+    `/health` is unauthenticated and kept answering, so a readiness probe
+    stayed green while the service served nothing but 500s — a misconfiguration
+    in the shape that is hardest to notice.
+
+    Found by running it, not by a test: every other validator in
+    `app/core/config.py` already ran in `build_state()`.
+    """
+
+    def _boot(self, monkeypatch, **config):
+        from app.state import build_state
+
+        for key, value in config.items():
+            monkeypatch.setattr(settings, key, value)
+        reset_authenticator()
+        return build_state()
+
+    def test_disabled_without_acknowledgement_refuses_to_start(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(ValueError, match="ALLOW_INSECURE_NO_AUTH"):
+            self._boot(monkeypatch, auth_mode="disabled", allow_insecure_no_auth=False)
+
+    def test_oidc_without_an_issuer_refuses_to_start(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(ValueError, match="OIDC_ISSUER"):
+            self._boot(monkeypatch, auth_mode="oidc", oidc_issuer="", oidc_audience="")
+
+    def test_token_mode_without_tokens_refuses_to_start(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(ValueError, match="API_TOKENS"):
+            self._boot(monkeypatch, auth_mode="token", api_tokens="")
+
+    def test_an_unknown_mode_refuses_to_start(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(ValueError, match="Unknown AUTH_MODE"):
+            self._boot(monkeypatch, auth_mode="tolken")
+
+    def test_a_usable_configuration_still_starts(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        state = self._boot(monkeypatch, auth_mode="token", api_tokens="tok:alice@example.com")
+        assert state is not None
+
+    def test_validation_uses_the_same_builder_the_dependency_does(self):
+        """Two sets of rules would drift, and the drift would be silent: a
+        deployment that started and then refused every request is exactly what
+        this exists to prevent."""
+        import inspect
+
+        from app.core.config import Settings
+
+        assert "build_authenticator" in inspect.getsource(Settings.validate_auth)
