@@ -269,6 +269,36 @@ Every collected fact is an `Evidence` record with a **deterministic id** (`kind:
 
 `select_provider()` (`app/services/investigation_service.py`) makes the choice: an agent connected for this cluster wins, otherwise the local kubeconfig. The registry is per-process, so a cluster whose agent is connected to another worker falls back to local — correct, and *visible*, via `investigation["cluster_access"]`. Routing to the worker holding the stream is M8.
 
+### Payload sizes, measured (M8b)
+
+`scripts/payload_bench.py` runs the real pipeline against a scalable fake
+cluster and reports where the bytes are. At 2,000 pods — the `MAX_LIST_ITEMS`
+ceiling the platform allows itself — one stored result is **2.7 MB**, and the
+composition is not what the roadmap assumed:
+
+| section | share |
+|---|---|
+| `diagnosis.signals` | 34% |
+| `investigation.pods` | 27% |
+| `investigation.graph` | 18% |
+| everything else | 21% |
+
+**The majority is derived, not collected.** "Evidence payloads to object
+storage" aims at roughly a quarter of it; signals and the graph are both
+reproducible from evidence by design.
+
+**A listing must never select `result`.** `_JOB_SUMMARY_COLUMNS` exists for
+this: the listing query used the full column list and the API then discarded
+the payload in Python via `to_dict(include_result=False)`, so a 25-row
+dashboard load moved 67.5 MB out of Postgres and returned none of it. The two
+column lists are kept as separate constants and a test asserts they differ by
+`result` alone, so adding a column to one and not the other is a visible diff
+rather than a silent absence.
+
+Note what this is *not*: `result` is NULL until a job finishes, so polling an
+in-flight investigation was already cheap. The waste was on reads of finished
+rows that never wanted the payload.
+
 ### Routing an investigation to the right worker (M8a)
 
 A gRPC stream belongs to whichever worker holds the socket, so a cluster

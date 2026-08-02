@@ -37,6 +37,22 @@ _JOB_COLUMNS = (
     "lease_worker, lease_expires_at, created_at, started_at, finished_at"
 )
 
+# The same columns without `result`, for the paths that do not want it.
+#
+# `result` is the whole investigation and diagnosis — measured at 2.7 MB on a
+# cluster at the `MAX_LIST_ITEMS` ceiling (`scripts/payload_bench.py`). A
+# listing selected it for every row and the API then dropped it in Python via
+# `to_dict(include_result=False)`: 67.5 MB read out of Postgres and 0 bytes of
+# it returned, on every dashboard load. Excluding it in SQL is the whole fix.
+#
+# Kept as a separate constant rather than a flag on one string, so that adding
+# a column means adding it to both and a mismatch is a visible diff rather than
+# a silent absence.
+_JOB_SUMMARY_COLUMNS = (
+    "id, owner, principal, status, request, error, cancel_requested, "
+    "lease_worker, lease_expires_at, created_at, started_at, finished_at"
+)
+
 
 class PostgresRedisJobStore:
     distributed = True
@@ -94,7 +110,7 @@ class PostgresRedisJobStore:
 
         with self._db.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
             cursor.execute(
-                f"SELECT {_JOB_COLUMNS} FROM investigations {clause} "
+                f"SELECT {_JOB_SUMMARY_COLUMNS} FROM investigations {clause} "
                 "ORDER BY created_at DESC LIMIT %s",
                 (*params, limit),
             )
@@ -421,7 +437,10 @@ class PostgresRedisJobStore:
             principal=row["principal"],
             cancel_requested=bool(row["cancel_requested"]),
             status=JobStatus(row["status"]),
-            result=row["result"],
+            # Absent on a summary read, which is different from a job that has
+            # no result yet — but only to this constructor, because every
+            # caller of the summary query discards it either way.
+            result=row.get("result"),
             error=row["error"] or "",
             created_at=row["created_at"],
             started_at=row["started_at"],

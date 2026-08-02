@@ -440,3 +440,59 @@ class TestMigrations:
 
         applied = [version for item in results for version in item]
         assert applied == expected, f"applied more than once: {applied}"
+
+
+class TestAListingDoesNotReadResults:
+    """M8b's first finding, and the cheapest fix in it.
+
+    `result` holds the whole investigation and diagnosis — measured at 2.7 MB
+    on a cluster at the `MAX_LIST_ITEMS` ceiling (`scripts/payload_bench.py`).
+    The listing query selected it for every row and the API then discarded it
+    in Python with `to_dict(include_result=False)`, so a 25-row dashboard load
+    pulled 67.5 MB out of Postgres and returned none of it.
+
+    Only observable against a real database: the in-memory store hands back the
+    same objects it holds, so there is no wire for anything to be wasted on.
+    That is exactly why this lives here and not in the store contract.
+    """
+
+    async def test_listed_jobs_carry_no_result(self, worker_a):
+        job = worker_a.create({"context": "prod"})
+        worker_a.mark_running(job.id)
+        worker_a.mark_succeeded(job.id, {"investigation": {"padding": "x" * 200_000}})
+
+        assert worker_a.get(job.id).result is not None, "the result must still be stored"
+
+        listed = next(one for one in worker_a.list(limit=25) if one.id == job.id)
+        assert listed.result is None, (
+            "list() is selecting `result` again. Every caller discards it, so "
+            "reading it only moves megabytes out of Postgres to be thrown away."
+        )
+
+    async def test_the_summary_query_still_carries_everything_else(self, worker_a):
+        """Excluding a column must not quietly drop the fields a listing needs."""
+        job = worker_a.create({"context": "prod"}, owner="alice")
+        worker_a.mark_running(job.id)
+        worker_a.mark_failed(job.id, "something broke")
+
+        listed = next(one for one in worker_a.list(limit=25) if one.id == job.id)
+
+        assert listed.owner == "alice"
+        assert listed.request == {"context": "prod"}
+        assert listed.status is JobStatus.FAILED
+        assert listed.error == "something broke"
+        assert listed.created_at is not None
+        assert listed.started_at is not None
+        assert listed.finished_at is not None
+
+    def test_the_two_column_lists_stay_in_step(self):
+        """A column added to one and not the other is a silent absence."""
+        from app.jobs.distributed import _JOB_COLUMNS, _JOB_SUMMARY_COLUMNS
+
+        full = {name.strip() for name in _JOB_COLUMNS.split(",")}
+        summary = {name.strip() for name in _JOB_SUMMARY_COLUMNS.split(",")}
+
+        assert full - summary == {"result"}, (
+            f"the summary query differs from the full one by {full - summary}; "
+            f"it should differ by `result` alone."
+        )
