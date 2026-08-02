@@ -530,19 +530,24 @@ Measured: **1,000 clusters attached in 1.04 s** on one gateway, all visible,
 159 MB platform RSS; a single investigation completing **end to end in
 0.223 s**, of which `collect` is 65%.
 
-**The throughput figure this document first carried was wrong, and the mistake
-is the useful part.** ~10/s was reported as a platform ceiling because
-throughput stayed flat while offered load rose 4× and latency grew linearly —
-but a saturated *client* produces that signature identically, and both runs
-came from one Python event loop. Two load levels from one process cannot tell
-the two apart; only the server's own counters can. `fleet_bench.py` now reports
-`platform_side.utilisation` and says `HARNESS-BOUND` when the server was idle,
-so a throughput number without a `platform-bound` verdict is a statement about
-the harness.
+**The throughput figure has been wrong twice, and the sequence is the useful
+part.** First ~10/s was called a platform ceiling on the grounds that
+throughput stayed flat while offered load rose 4× — but a saturated *client*
+gives that signature identically. Then it was retracted in favour of ~143/s,
+extrapolated from a single investigation's 0.223 s — but **single-request
+latency does not extrapolate to throughput**.
 
-**5,000 concurrent is not measured, and neither is the real ceiling** — finding
-it needs a load generator that can be shown not to be the bottleneck. Do not
-move §12's scalability score to 9 on the strength of that document.
+What settled it is a **concurrency sweep**: same offered load at 4 slots and at
+32. Throughput moved 11.4 → 12.3/s while `collect` inflated 0.241 s → 2.272 s.
+Eight times the slots for 8% more work, with per-phase time rising in
+proportion, is a shared serial resource *downstream* of the platform — here,
+50 synthetic agents in one harness process. So ~12/s is the fleet harness's
+ceiling; the platform's remains unknown.
+
+**The rule: throughput that does not rise with `JOB_MAX_CONCURRENT` is not the
+platform's.** `fleet_bench.py` now refuses to print "platform-bound" from a
+single run and says so. Do not move §12's scalability score to 9 on the
+strength of that document.
 
 `fleet_bench.py` reports `stream_failures` and exits non-zero if any stream
 died. Its first run printed "5 collections, 0 records" — a plausible-looking

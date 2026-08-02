@@ -37,6 +37,7 @@ import resource
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 BACKEND = Path(__file__).resolve().parents[1] / "backend"
 sys.path.insert(0, str(BACKEND))
@@ -258,7 +259,10 @@ async def main_async(arguments) -> int:
         latencies: list[float] = []
         drive_seconds = 0.0
         before = after = {}
-        if arguments.investigations:
+        throughput: dict[str, Any] = {}
+        if arguments.investigations and arguments.load_processes:
+            throughput = await measure_throughput(client, agents, arguments)
+        elif arguments.investigations:
             before = await platform_counters(client)
             drive_started = time.perf_counter()
             latencies = await drive_investigations(client, agents, arguments)
@@ -285,6 +289,9 @@ async def main_async(arguments) -> int:
             else "",
         },
     }
+    if throughput:
+        report["throughput"] = throughput
+
     if latencies:
         ordered = sorted(latencies)
         report["investigations"] = {
@@ -322,6 +329,17 @@ async def main_async(arguments) -> int:
     for channel in channels:
         await channel.close()
 
+    if throughput:
+        print(f"\nThroughput, load offered from {throughput['load_processes']} processes")
+        print(f"  offered      {throughput['offered']:>7}  at {throughput['offered_per_second']}/s")
+        print(f"  completed    {throughput['completed']:>7}  in {throughput['drain_seconds']}s")
+        print(f"  platform     {throughput['completed_per_second']:>7}/s")
+        print(
+            f"  server busy  {throughput['platform_busy_seconds']:>7}s  "
+            f"({throughput['slot_occupancy']:.0%} of {throughput['slots']} slots)"
+        )
+        print(f"\n  {throughput['verdict']}\n")
+
     print(json.dumps(report, indent=2))
     if failures:
         print(
@@ -331,6 +349,131 @@ async def main_async(arguments) -> int:
         )
         return 1
     return 0 if attached >= arguments.clusters * 0.99 else 1
+
+
+def _submit_batch(api: str, clusters: list[str], count: int, seed: int) -> int:
+    """Fire `count` submissions and return how many were accepted.
+
+    Runs in a **separate process**, and does exactly one thing: POST. It never
+    polls, because polling was the bottleneck that produced this repository's
+    first, wrong throughput number — a client that waits for each result cannot
+    offer load faster than the platform answers, so it measures itself.
+    """
+    import random
+
+    import httpx
+
+    rng = random.Random(seed)
+    accepted = 0
+    with httpx.Client(base_url=api, timeout=30.0) as client:
+        for _ in range(count):
+            try:
+                response = client.post("/investigations", json={"context": rng.choice(clusters)})
+                accepted += response.status_code == 202
+            except Exception:
+                pass
+    return accepted
+
+
+def _verdict(occupancy: float, offered: int, completed: float) -> str:
+    """Say what this run can and cannot conclude.
+
+    Deliberately refuses to say "platform-bound" from one run, because that is
+    the mistake this repository has now made twice. Utilisation alone cannot
+    establish it: a platform whose *counterparty* is the bottleneck looks fully
+    occupied while adding capacity changes nothing.
+
+    **The control is a concurrency sweep.** Run the same offered load at two
+    values of `JOB_MAX_CONCURRENT`. If throughput rises with slots, the
+    platform was the constraint. If it does not — and per-phase time inflates
+    in proportion to slots instead — the constraint is downstream of the
+    platform, which for this harness means the synthetic agents, all of which
+    live in one process.
+    """
+    if completed < offered * 0.95:
+        return "INCOMPLETE — the platform did not finish what it was offered within the timeout"
+    if occupancy < 0.3:
+        return (
+            f"HARNESS-BOUND — slots only {occupancy:.0%} occupied; the platform spent "
+            f"the run waiting for this script"
+        )
+    return (
+        f"INCONCLUSIVE from one run — slots {occupancy:.0%} occupied. Re-run at a "
+        f"different JOB_MAX_CONCURRENT: throughput that does not rise with slots "
+        f"means the bottleneck is downstream of the platform, not in it."
+    )
+
+
+async def measure_throughput(client, agents, arguments) -> dict[str, Any]:
+    """Saturate from several processes and read the *platform's* counters.
+
+    Two corrections to how this was measured the first time, both of which the
+    published envelope had to retract:
+
+    - **Completions come from the server.** `k8sagent_investigations_total` is
+      the platform's own count; a rate derived from it cannot be limited by how
+      fast this script can poll.
+    - **Load comes from several processes.** One Python event loop saturates
+      well before this platform does, and a saturated client looks exactly like
+      a saturated server if you only look at the client.
+
+    The verdict is the point: a throughput number is a statement about the
+    platform only if the platform was busy for most of the run.
+    """
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+
+    clusters = [agent.cluster_id for agent in agents] or ["bench"]
+    before = await platform_counters(client)
+    started = time.perf_counter()
+
+    per_process = max(1, arguments.investigations // arguments.load_processes)
+    context = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=arguments.load_processes, mp_context=context) as pool:
+        accepted = sum(
+            pool.map(
+                _submit_batch,
+                [arguments.api] * arguments.load_processes,
+                [clusters] * arguments.load_processes,
+                [per_process] * arguments.load_processes,
+                range(arguments.load_processes),
+            )
+        )
+    offered_seconds = time.perf_counter() - started
+
+    target = before.get("finished", 0) + accepted
+    deadline = time.perf_counter() + arguments.timeout
+    settled = before
+    while time.perf_counter() < deadline:
+        await asyncio.sleep(1.0)
+        settled = await platform_counters(client)
+        if settled.get("finished", 0) >= target:
+            break
+    drain_seconds = time.perf_counter() - started
+
+    completed = settled.get("finished", 0) - before.get("finished", 0)
+    busy = sum(
+        settled.get(phase, 0) - before.get(phase, 0)
+        for phase in ("collect", "analyse", "report", "persist")
+    )
+    # Divided by the concurrency limit, so this is slot *occupancy* in 0..1
+    # rather than a number that exceeds 100% whenever the platform runs more
+    # than one investigation at a time — which it always does.
+    slots = max(1, arguments.slots)
+    occupancy = (busy / drain_seconds / slots) if drain_seconds else 0
+
+    return {
+        "offered": accepted,
+        "offered_per_second": round(accepted / offered_seconds, 1) if offered_seconds else 0,
+        "completed": int(completed),
+        "completed_per_second": round(completed / drain_seconds, 1) if drain_seconds else 0,
+        "drain_seconds": round(drain_seconds, 2),
+        "platform_busy_seconds": round(busy, 2),
+        "slot_occupancy": round(occupancy, 3),
+        "slots": slots,
+        "load_processes": arguments.load_processes,
+        "verdict": _verdict(occupancy, accepted, completed),
+    }
 
 
 async def drive_investigations(client, agents, arguments) -> list[float]:
@@ -380,6 +523,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Evidence kinds the agents claim; empty means every kind the platform can ask for.",
     )
     parser.add_argument("--investigations", type=int, default=0)
+    parser.add_argument(
+        "--load-processes",
+        type=int,
+        default=0,
+        help=(
+            "Submit from N separate processes and count completions from the "
+            "platform's own counters. 0 uses the legacy client-side loop, which "
+            "measures this script as much as the platform."
+        ),
+    )
     parser.add_argument("--concurrency", type=int, default=50)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--seed", type=int, default=1729)
