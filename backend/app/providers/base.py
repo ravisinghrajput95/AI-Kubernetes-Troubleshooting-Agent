@@ -101,6 +101,22 @@ class ProviderUnsupported(RuntimeError):
     """
 
 
+class ClusterUnreachable(RuntimeError):
+    """Raised when no provider can honestly reach the requested cluster.
+
+    Specifically: an agent for this cluster exists in the fleet but is attached
+    to another worker. Falling back to the local kubeconfig would resolve the
+    cluster's *name* against whatever contexts the platform happens to hold —
+    which may be a different cluster, belonging to a different tenant, with the
+    same name. Evidence filed under a cluster it was not read from is the one
+    outcome the evidence spine exists to prevent, so this refuses instead.
+
+    Carries an operator-facing message naming the worker; unlike most failures,
+    it is surfaced verbatim rather than folded into the generic detail, because
+    it is actionable and retrying usually resolves it.
+    """
+
+
 @runtime_checkable
 class ClusterProvider(Protocol):
     """The engine's only route to a cluster."""

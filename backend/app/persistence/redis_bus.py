@@ -60,6 +60,19 @@ class RedisBus:
     def queue_key(self) -> str:
         return f"{self._prefix}:jobs:queue"
 
+    def worker_queue_key(self, worker_id: str) -> str:
+        """The queue for work only one worker can usefully do.
+
+        A gRPC stream belongs to whichever worker holds the socket, so an
+        investigation of an agent-connected cluster has exactly one worker that
+        can collect it. The shared queue cannot express that; this can.
+
+        It is a *hint*, never a second source of truth. The row stays `pending`
+        and the claim stays the conditional UPDATE, so a job on the wrong
+        worker's queue is a scheduling miss rather than a correctness failure.
+        """
+        return f"{self._prefix}:jobs:queue:{worker_id}"
+
     @property
     def control_channel(self) -> str:
         return f"{self._prefix}:jobs:control"
@@ -75,6 +88,15 @@ class RedisBus:
 
     def set_expiring(self, key: str, value: str, ttl_seconds: int) -> None:
         self._sync.set(key, value, ex=ttl_seconds)
+
+    def get(self, key: str) -> str | None:
+        """One key, for the routing lookup on the submit path.
+
+        Deliberately not expressed as a one-element `scan_values`: routing asks
+        about a single named cluster, and a scan would make the fleet's size the
+        cost of starting any investigation.
+        """
+        return self._sync.get(key)
 
     def delete(self, key: str) -> None:
         self._sync.delete(key)
@@ -92,11 +114,25 @@ class RedisBus:
 
     # --- queue --------------------------------------------------------------
 
-    def enqueue(self, job_id: str) -> None:
-        self._sync.rpush(self.queue_key, job_id)
+    def enqueue(self, job_id: str, worker_id: str = "") -> None:
+        """Offer a job to one worker, or to whoever is free.
 
-    async def dequeue(self, timeout: float = QUEUE_BLOCK_SECONDS) -> str | None:
+        `worker_id` is set when the cluster is reachable only through an agent
+        whose stream that worker holds. Everything else goes to the shared
+        queue, which is still the common case: a kubeconfig cluster can be
+        collected anywhere.
+        """
+        key = self.worker_queue_key(worker_id) if worker_id else self.queue_key
+        self._sync.rpush(key, job_id)
+
+    async def dequeue(
+        self, timeout: float = QUEUE_BLOCK_SECONDS, worker_id: str = ""
+    ) -> str | None:
         """Block for a job id, or return None so the caller can do other work.
+
+        `BLPOP` takes a key list and returns from the first non-empty one, so
+        naming this worker's own queue first gives affinity its priority in the
+        same round trip — no second poll, no fairness knob.
 
         An idle queue is the normal case, and redis-py surfaces the expiry of a
         blocking read as an exception. Letting that escape turns "no work right
@@ -105,11 +141,17 @@ class RedisBus:
         """
         import redis.exceptions
 
+        keys = [self.worker_queue_key(worker_id), self.queue_key] if worker_id else [self.queue_key]
         try:
-            item = await self._async.blpop([self.queue_key], timeout=timeout)
+            item = await self._async.blpop(keys, timeout=timeout)
         except (redis.exceptions.TimeoutError, TimeoutError):
             return None
         return item[1] if item else None
+
+    def queue_depth(self, worker_id: str = "") -> int:
+        """How many ids are waiting. For the load harness and for operators."""
+        key = self.worker_queue_key(worker_id) if worker_id else self.queue_key
+        return int(self._sync.llen(key))
 
     # --- control ------------------------------------------------------------
 

@@ -18,6 +18,7 @@ from app.models.investigation import (
     InvestigationRequest,
     InvestigationResponse,
 )
+from app.providers.base import ClusterUnreachable
 from app.services.history_service import InvestigationHistoryService
 from app.services.investigation_runner import (
     FAILURE_DETAIL,
@@ -133,6 +134,14 @@ async def investigate_cluster(
     target = (request.context if request else "") or "current-context"
     try:
         result = await run_investigation(request, principal=principal)
+    except ClusterUnreachable as exc:
+        # 409, not 500: nothing is broken. The cluster's agent is attached to
+        # another worker, and the honest answer is to say so rather than read a
+        # local context that may be a different cluster of the same name.
+        audit.record_action(
+            "investigation.run", principal, outcome="refused", target=target, detail=str(exc)[:200]
+        )
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Unexpected investigation failure")
         audit.record_action(

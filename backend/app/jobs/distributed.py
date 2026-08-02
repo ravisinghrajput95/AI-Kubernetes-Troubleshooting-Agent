@@ -218,8 +218,8 @@ class PostgresRedisJobStore:
 
     # --- queue and leases ---------------------------------------------------
 
-    def enqueue(self, job_id: str) -> None:
-        self._bus.enqueue(job_id)
+    def enqueue(self, job_id: str, worker_id: str = "") -> None:
+        self._bus.enqueue(job_id, worker_id)
 
     def claim(self, job_id: str, worker: str, lease_seconds: int) -> InvestigationJob | None:
         """Take ownership of a pending job, or return None if someone else did.
@@ -283,7 +283,15 @@ class PostgresRedisJobStore:
         return reaped
 
     def requeue_unclaimed(self, older_than_seconds: int) -> list[str]:
-        """Re-offer pending jobs whose queue message never reached a worker."""
+        """Re-offer pending jobs whose queue message never reached a worker.
+
+        Always to the **shared** queue, never back to a worker queue. A job
+        that has waited this long was either routed to a worker that died or
+        lost outright, and re-offering it to the same worker would strand it
+        permanently in the first case. Whoever picks it up either holds the
+        agent's stream or refuses honestly in `select_provider`, so the shared
+        queue cannot produce a wrong answer — only a slower one.
+        """
         with self._db.cursor() as cursor:
             cursor.execute(
                 "SELECT id FROM investigations WHERE status = %s "

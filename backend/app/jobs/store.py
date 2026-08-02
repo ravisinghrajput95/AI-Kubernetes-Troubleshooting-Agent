@@ -133,8 +133,12 @@ class InMemoryJobStore:
     def on_cancel(self, listener: CancelListener) -> None:
         self._cancel_listeners.append(listener)
 
-    def enqueue(self, job_id: str) -> None:
-        """No queue here: the submitting process runs the job itself."""
+    def enqueue(self, job_id: str, worker_id: str = "") -> None:
+        """No queue here: the submitting process runs the job itself.
+
+        `worker_id` is accepted and ignored on purpose: with one process there
+        is exactly one worker, so affinity is already satisfied and the caller
+        should not have to know which store it has."""
 
     def _notify_cancel(self, job_id: str) -> None:
         for listener in self._cancel_listeners:

@@ -144,8 +144,11 @@ class TestIdleConsumer:
     async def test_the_queue_loop_still_works_after_several_idle_cycles(
         self, backend, worker_a, worker_b, monkeypatch
     ):
-        async def brief_dequeue(timeout: float = 5.0):
-            return await type(backend.bus).dequeue(backend.bus, timeout=0.05)
+        async def brief_dequeue(timeout: float = 5.0, worker_id: str = ""):
+            # `worker_id` is forwarded, not dropped: since M8a the consumer
+            # reads its own queue before the shared one, and a double that
+            # ignored it would quietly test the wrong loop.
+            return await type(backend.bus).dequeue(backend.bus, timeout=0.05, worker_id=worker_id)
 
         monkeypatch.setattr(backend.bus, "dequeue", brief_dequeue)
 

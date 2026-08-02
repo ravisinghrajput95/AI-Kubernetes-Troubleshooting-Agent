@@ -269,6 +269,62 @@ Every collected fact is an `Evidence` record with a **deterministic id** (`kind:
 
 `select_provider()` (`app/services/investigation_service.py`) makes the choice: an agent connected for this cluster wins, otherwise the local kubeconfig. The registry is per-process, so a cluster whose agent is connected to another worker falls back to local — correct, and *visible*, via `investigation["cluster_access"]`. Routing to the worker holding the stream is M8.
 
+### Routing an investigation to the right worker (M8a)
+
+A gRPC stream belongs to whichever worker holds the socket, so a cluster
+reachable only through an agent has **exactly one worker** that can investigate
+it. Before M8a nothing expressed that: `select_provider` consulted only the
+*local* registry, so it could not tell "no agent anywhere" from "an agent, on
+another worker", and both fell back to `LocalKubectlProvider`. On three replicas
+roughly two thirds of agent-cluster investigations were answered by the
+platform's own kubeconfig — and since `LocalKubectlProvider` resolves a cluster
+*name* against whatever contexts the platform holds and has no tenant, tenant
+A's `prod` could be answered by someone else's `prod`.
+
+Two mechanisms, and the split is the design:
+
+- **Routing is a hint.** `agent_affinity()` (`app/jobs/runner.py`) asks the
+  presence index who holds the stream; `enqueue(job_id, worker_id)` puts the
+  work on `{prefix}:jobs:queue:{worker}`. `BLPOP` takes a key list and returns
+  from the first non-empty, so a consumer naming its own queue first gets
+  affinity priority in the round trip it was already making.
+- **Refusal is the guarantee.** `select_provider` raises `ClusterUnreachable`
+  naming the holding worker rather than reading a same-named local context.
+  Surfaced verbatim — 409 on `/investigate`, the job's `error` on the async
+  path — because the generic detail says "check your kubeconfig", which is
+  exactly the wrong instruction here.
+
+**Nothing about correctness rests on routing being right.** The row stays
+`pending` and the claim stays the conditional `UPDATE`, so a mis-route is a
+scheduling miss, never a double run.
+
+**A presence record naming *this* worker is never a routing target.**
+`holder()` is consulted only after the local registry has said no, so a record
+still claiming us means the agent disconnected here within the TTL. Returning it
+would queue work onto a queue we are already draining, and would make the
+refusal read "attached to worker-a, not this one" where worker-a *is* this one.
+
+**`PRESENCE_TTL_SECONDS` (45) must stay below `UNCLAIMED_GRACE_SECONDS` (60).**
+A job routed to a worker that dies waits on that worker's queue until the reaper
+re-offers it — to the **shared** queue, never back to a worker queue. That only
+terminates because the dead worker's presence has already lapsed by then;
+raise the TTL above the grace period and recovery becomes a permanent loop.
+`tests/test_agent_routing.py` asserts the inequality.
+
+**Presence is read with `GET`, not a scan** — routing is on the submit path of
+every investigation, and scanning the tenant's agents would make the fleet's
+size the cost of starting one. Measured flat at ~0.33ms p50 from 200 to 1,000
+clusters.
+
+```bash
+docker compose up -d postgres redis
+python scripts/routing_bench.py --clusters 1000 --workers 3 --submissions 2000
+```
+
+Prints the routing hit rate (100% at 1,000 clusters; 1/N before M8a) and the
+submit-path percentiles. Needs Postgres and Redis only — a thousand real agent
+streams measures a different thing and belongs to M8c.
+
 ### The cluster agent (`/agent`, `app/gateway/`, `app/providers/remote_agent.py`)
 
 A Go binary, one per cluster, that **dials out** to the platform and answers evidence requests on that connection. No inbound port is opened into a customer cluster — that is the binding constraint the transport is shaped around (ADR-004), not throughput or schema.
@@ -481,7 +537,7 @@ Sections with nothing behind them are **omitted, not padded** — same rule as t
 
 `POST /agents/enrolment` mints a single-use token and returns an apply-able manifest (namespace, ServiceAccount, a ClusterRole granting `get`/`list`/`watch` only, Deployment). **It refuses outright when `AUTH_MODE=disabled`** — an unauthenticated endpoint that enrols clusters is worse than the problem it solves — and points at `agentctl` instead. `agent/Dockerfile` builds the image the manifest references (distroless, non-root, no shell).
 
-**On more than one replica, the console reads a shared index, not its own registry** (`app/gateway/presence.py`). `AgentRegistry` is per-process by necessity, so `GET /agents` used to answer from whichever pod the load balancer picked — thirty clusters behind three replicas showed about ten, and a different ten next refresh. Each gateway now announces its agents into Redis with a 45s TTL, refreshed by the heartbeat, and the API returns the union. Expiry rather than deregistration, because a killed worker cannot deregister and phantom agents are worse than a few seconds of staleness. Every record carries `worker` and `local`: **visibility is fleet-wide, collection is not** — an agent held by another replica cannot be investigated through from here until M8 routes by stream ownership, and the console says so rather than falling back silently.
+**On more than one replica, the console reads a shared index, not its own registry** (`app/gateway/presence.py`). `AgentRegistry` is per-process by necessity, so `GET /agents` used to answer from whichever pod the load balancer picked — thirty clusters behind three replicas showed about ten, and a different ten next refresh. Each gateway now announces its agents into Redis with a 45s TTL, refreshed by the heartbeat, and the API returns the union. Expiry rather than deregistration, because a killed worker cannot deregister and phantom agents are worse than a few seconds of staleness. Every record carries `worker` and `local`. **M8a made presence routing as well as visibility**: the submit path asks `holder()` who owns the stream and queues the work there, so an agent held by another replica *is* investigated through that replica. What the record still cannot do is let *this* worker collect through someone else's socket, which is why `select_provider` refuses rather than falling back.
 
 **"Online" is heartbeat-derived, not socket-derived.** An idle stream and a half-open one look identical from the platform's side, so the gateway pings every 15s and the agent's `AgentHealth` reply refreshes `last_seen`; `AGENT_STALE_SECONDS` (45) decides staleness. Do not replace this with "the stream is open".
 

@@ -935,10 +935,84 @@ that greps for any other place a role is manufactured.
 
 Thirteen mutations were applied one at a time and all thirteen failed a test.
 
-**M8 — Scale hardening.**
+**M8 — Scale hardening.** *In progress; split into three tranches on contact.*
 Evidence payloads to object storage; streaming ingest; partitioned queues; load
 tests at 1,000 clusters and 5,000 concurrent investigations. *Exit:* documented
 performance envelope.
+
+Two of the four listed items — partitioned queues, and the separately-tracked
+"route an investigation to the worker holding an agent's stream" — turned out to
+be **one mechanism**, and the remaining two are worth choosing by measurement
+rather than by this document's guess. Split accordingly:
+
+- **M8a — routing and partitioned queues.** ✅ Delivered.
+- **M8b — evidence and report bytes out of the Postgres row**: object storage
+  behind the existing `ReportStore` seam, streaming ingest so `fetch_many` stops
+  buffering a whole batch. Not started.
+- **M8c — the envelope**: 1,000 clusters and 5,000 concurrent, documented.
+  Not started.
+
+**M8a — Routing and partitioned queues. ✅ Delivered.**
+Route an investigation to the worker holding the agent's stream. *Exit:* an
+investigation of a cluster whose agent is attached to another worker is
+collected **through that agent**, and the routing hit rate is measured rather
+than asserted.
+
+*Outcome:* the exit criterion is met and measured — 100% routing hit rate at
+1,000 clusters across both 3 and 10 workers, against a pre-M8a baseline of 1/N
+(33% and 10%).
+
+**This was filed as a scale item and is a correctness one.** `select_provider`
+consulted only the *local* `AgentRegistry`, so it could not distinguish "no
+agent exists anywhere in the fleet" from "an agent exists, on another worker".
+Both returned `LocalKubectlProvider`. On three replicas that meant roughly two
+thirds of agent-cluster investigations were answered by the platform's own
+kubeconfig rather than by the cluster — and `LocalKubectlProvider` resolves a
+cluster's *name* against whatever contexts the platform holds, with no notion of
+a tenant. M6 made `AgentRegistry` tenant-keyed precisely so two customers could
+both call a cluster `prod`; this path undid it. Evidence filed under a cluster
+it was not read from is the one outcome the evidence spine exists to prevent.
+
+Two mechanisms, and the split between them is the design:
+
+- **Routing is a hint.** The submit path asks the presence index who holds the
+  stream and queues the work on that worker's queue. `BLPOP` already takes a key
+  list and returns from the first non-empty one, so a consumer reading its own
+  queue before the shared one is the same round trip it was already making, and
+  affinity gets its priority with no fairness knob.
+- **Refusal is the guarantee.** If selection still lands on a worker that cannot
+  reach the agent, it raises `ClusterUnreachable` naming the holding worker
+  rather than reading a same-named local context. A hint that is occasionally
+  wrong costs a retry; a guarantee that is occasionally wrong costs a
+  misdiagnosis.
+
+Nothing about correctness rests on the routing being right: the row stays
+`pending` and the claim stays the conditional `UPDATE`, so a mis-route is a
+scheduling miss and never a double run.
+
+**The load-bearing detail is an inequality.** A job routed to a worker that then
+dies waits on that worker's queue until the reaper re-offers it after
+`UNCLAIMED_GRACE_SECONDS` (60) — and the re-offer goes to the **shared** queue,
+never back to a worker queue. That only terminates because `PRESENCE_TTL_SECONDS`
+(45) is smaller: by the time the re-offer fires, the dead worker's agents have
+lapsed from the index, so nothing routes the job back to it. Raising the TTL
+above the grace period turns recovery into a permanent loop, so the ordering is
+asserted by a test rather than left to a comment.
+
+**Presence is read with `GET`, not a scan.** Routing runs on the submit path of
+every investigation, and scanning a tenant's agents to answer a question about
+one of them would make the fleet's size the cost of starting any investigation.
+Measured: the affinity lookup is flat at ~0.33ms p50 / ~0.5ms p99 whether the
+fleet is 200 clusters or 1,000. Submission throughput is dominated by the job
+row `INSERT` (165/s with rows, 1,500/s without), not by routing.
+
+Ten mutations applied one at a time; all ten failed a test, including reversing
+the queue priority, raising the presence TTL above the grace period, and
+re-offering a stranded job back to the worker that dropped it.
+
+`scripts/routing_bench.py` prints the hit rate and the submit-path percentiles.
+It needs Postgres and Redis and nothing else — standing up a thousand real agent
+streams measures a different thing and belongs to M8c.
 
 **M9 — Integration surfaces.**
 Event ingress, action egress, MCP server. *Exit:* an alert triggers an

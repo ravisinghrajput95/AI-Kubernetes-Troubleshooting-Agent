@@ -38,6 +38,9 @@ class FakeBus:
         head = pattern.rstrip("*")
         return [value for key, value in self.values.items() if key.startswith(head)]
 
+    def get(self, key: str) -> str | None:
+        return self.values.get(key)
+
     def expire(self, key: str) -> None:
         """What Redis does on its own when a worker stops refreshing."""
         self.delete(key)

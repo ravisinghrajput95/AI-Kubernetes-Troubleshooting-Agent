@@ -21,7 +21,7 @@ from app.kubernetes.errors import friendly_error
 from app.playbooks.kubernetes import DEFAULT_PLAYBOOKS
 from app.playbooks.orchestrator import DEFAULT_MAX_ROUNDS, InvestigationOrchestrator
 from app.playbooks.registry import PlaybookRegistry
-from app.providers.base import ClusterProvider
+from app.providers.base import ClusterProvider, ClusterUnreachable
 from app.providers.local_kubectl import LocalKubectlProvider
 
 # Evidence kinds already surfaced through a named investigation section.
@@ -78,16 +78,27 @@ def select_provider(context: str | None, principal: Principal | None) -> Cluster
     """How this investigation will reach its cluster.
 
     One decision, made once, and the only place the two providers are named
-    together. If an agent is connected for this cluster, the investigation runs
-    through it; otherwise the local kubeconfig serves, which keeps
-    `uvicorn app.main:app --reload` against nothing but a kubeconfig the
-    getting-started path.
+    together. Three outcomes since M8a, not two, and the third is the point:
 
-    The registry is per-process (a stream belongs to whichever worker holds the
-    socket), so a cluster whose agent is connected to a *different* worker
-    falls back to local here. Routing an investigation to the worker that holds
-    the stream is M8's problem, and until then this is a correct answer rather
-    than a silent one — the chosen provider is reported on the investigation.
+    - an agent for this cluster is attached **here** → collect through it;
+    - **no agent anywhere in the fleet** → the local kubeconfig, which is what
+      keeps `uvicorn app.main:app --reload` against nothing but a kubeconfig
+      the getting-started path;
+    - an agent exists in the fleet but on **another worker** → refuse.
+
+    That last case used to fall back to the local kubeconfig, and it was wrong
+    rather than merely slow. `LocalKubectlProvider` resolves `context` against
+    whatever kubeconfig the platform happens to hold, and it has no notion of a
+    tenant — M6 made `AgentRegistry` tenant-keyed precisely so two customers
+    could both call a cluster `prod`, and this path undid that. An
+    investigation of tenant A's `prod` could be answered by a local context
+    named `prod` belonging to someone else entirely, and be filed as evidence
+    for the cluster it was not read from.
+
+    Routing (`agent_affinity`) is what makes the refusal rare: the submit path
+    queues the work on the worker holding the stream. The refusal is the
+    backstop for the race where an agent reconnects elsewhere in between, and
+    it names the worker so the answer is actionable rather than mysterious.
 
     Imported lazily, so a deployment with no agents never loads grpc.
     """
@@ -99,7 +110,43 @@ def select_provider(context: str | None, principal: Principal | None) -> Cluster
         if session is not None:
             return build_remote_provider(session, principal=principal)
 
+        holder = _fleet_holder(context)
+        if holder:
+            raise ClusterUnreachable(
+                f"The agent for cluster {context!r} is attached to worker {holder}, "
+                f"not this one. Reading the local kubeconfig instead could collect "
+                f"evidence from a different cluster with the same name, so this "
+                f"investigation is refused rather than answered wrongly. Retry — "
+                f"submissions are routed to the worker holding the agent."
+            )
+
     return LocalKubectlProvider(context=context, principal=principal)
+
+
+def _fleet_holder(context: str | None) -> str:
+    """Which other worker holds an agent for this cluster, if any.
+
+    Only consulted after the local registry has already said no, so the common
+    paths — agent here, or no agent at all in a single-process deployment —
+    never touch Redis.
+    """
+    from app.gateway.presence import get_agent_presence
+    from app.tenancy import current_tenant
+
+    presence = get_agent_presence()
+    if presence is None:
+        # One process: the local registry *is* the fleet, and it already
+        # answered. There is no other worker to be wrong about.
+        return ""
+
+    try:
+        return presence.holder(current_tenant(), context or "") or ""
+    except Exception:  # pragma: no cover - an unreadable index must not refuse
+        # If the index cannot be read we cannot prove another worker holds the
+        # agent, and refusing on a Redis hiccup would turn a degraded index
+        # into an outage. The local kubeconfig answer is the pre-M8a
+        # behaviour, and `cluster_access` still reports which route was used.
+        return ""
 
 
 class InvestigationService:

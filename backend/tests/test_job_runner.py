@@ -27,9 +27,14 @@ class QueueingStore(InMemoryJobStore):
     def __init__(self) -> None:
         super().__init__()
         self.queued: list[str] = []
+        self.affinities: list[str] = []
 
-    def enqueue(self, job_id: str) -> None:
+    def enqueue(self, job_id: str, worker_id: str = "") -> None:
+        # The affinity is recorded, not ignored: M8a routes agent-cluster work
+        # to the worker holding the stream, and a double that dropped it would
+        # let that regress silently.
         self.queued.append(job_id)
+        self.affinities.append(worker_id)
 
     def is_cancel_requested(self, job_id: str) -> bool:
         job = self.get(job_id)

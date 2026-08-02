@@ -118,6 +118,11 @@ class JobStore(Protocol):
         asyncio task if the job belongs to this process."""
         ...
 
-    def enqueue(self, job_id: str) -> None:
-        """Offer the job to the queue. A no-op for the in-process store."""
+    def enqueue(self, job_id: str, worker_id: str = "") -> None:
+        """Offer the job to the queue. A no-op for the in-process store.
+
+        `worker_id` names the one worker that can usefully run this job, which
+        is the case only when the cluster is reachable through an agent whose
+        stream that worker holds. Empty means anyone may take it.
+        """
         ...

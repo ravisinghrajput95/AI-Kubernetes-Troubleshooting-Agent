@@ -28,6 +28,13 @@ REAPER_INTERVAL_SECONDS = 15.0
 # How long a job may sit `pending` before the queue message is presumed lost.
 # Comfortably longer than a normal claim, short enough that a dropped message
 # is a hiccup rather than an outage.
+#
+# Since M8a it is also what un-strands a job routed to a worker that then died:
+# the re-offer goes to the **shared** queue, never back to a worker queue. That
+# is only terminating because `PRESENCE_TTL_SECONDS` (45) is smaller — by the
+# time this fires, the dead worker's agents have lapsed from the presence index,
+# so nothing routes the job back to it. Raising the TTL above this value would
+# turn recovery into a loop; `tests/test_agent_routing.py` asserts the ordering.
 UNCLAIMED_GRACE_SECONDS = 60
 
 
@@ -87,7 +94,10 @@ class JobConsumer:
                 await asyncio.sleep(0.25)
                 continue
 
-            job_id = await self._bus.dequeue()
+            # This worker's own queue first, then the shared one. `BLPOP` takes
+            # both keys and returns from the first non-empty, so affinity gets
+            # its priority in the same round trip that was already happening.
+            job_id = await self._bus.dequeue(worker_id=self._worker)
             if job_id is None:
                 continue
             await self._claim_and_run(job_id)

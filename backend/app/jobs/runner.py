@@ -7,6 +7,7 @@ from app.auth.models import Principal
 from app.core.config import settings
 from app.jobs.models import InvestigationJob, JobEvent, JobEventType
 from app.models.investigation import InvestigationRequest
+from app.providers.base import ClusterUnreachable
 from app.services.investigation_runner import (
     FAILURE_DETAIL,
     collection_failure,
@@ -14,6 +15,45 @@ from app.services.investigation_runner import (
 )
 
 WORKER_LOST = "Investigation worker stopped before the run finished."
+
+
+def agent_affinity(request: InvestigationRequest | None) -> str:
+    """The one worker that can collect this cluster, or "" for anyone.
+
+    A gRPC stream belongs to whichever worker holds the socket, so an
+    investigation of an agent-connected cluster has exactly one worker able to
+    run it. Before M8a nothing expressed that: the job went on the shared
+    queue, any worker claimed it, and a worker without the stream fell back to
+    the local kubeconfig — so on three replicas roughly two thirds of
+    agent-cluster investigations were answered by the platform's own kubeconfig
+    rather than by the cluster.
+
+    Returning "" is always safe. It means "the shared queue", which is correct
+    for kubeconfig clusters and merely slower for the rest, since
+    `select_provider` refuses rather than reading the wrong cluster.
+
+    Imported lazily so a deployment with no gateway never loads the presence
+    index to answer a question that can only be "no".
+    """
+    if not settings.agent_gateway_enabled:
+        return ""
+
+    context = (request.context if request else "") or ""
+    if not context:
+        # No cluster named means the local kubeconfig's current context, which
+        # no agent can serve.
+        return ""
+
+    from app.gateway.presence import get_agent_presence
+    from app.tenancy import current_tenant
+
+    presence = get_agent_presence()
+    if presence is None:
+        # Single-process, or no Redis: this worker is the fleet, so affinity is
+        # already satisfied and naming it would only add a queue.
+        return ""
+
+    return presence.holder(current_tenant(), context) or ""
 
 
 class JobProgressReporter:
@@ -66,8 +106,7 @@ class InvestigationJobRunner:
         )
 
         if self.store.distributed:
-            # Any worker may pick this up, including this one.
-            self.store.enqueue(job.id)
+            self.store.enqueue(job.id, agent_affinity(request))
         else:
             self.start(job.id, request, principal)
 
@@ -157,6 +196,13 @@ class InvestigationJobRunner:
                 logger.info("Investigation job {id} cancelled", id=job_id)
                 self.store.mark_cancelled(job_id)
             raise
+        except ClusterUnreachable as exc:
+            # Surfaced verbatim. The generic detail tells an operator to check
+            # their kubeconfig, which is exactly the wrong thing to do when the
+            # cluster is reachable and simply attached to another worker.
+            logger.warning("Investigation job {id} refused: {reason}", id=job_id, reason=str(exc))
+            self.store.mark_failed(job_id, str(exc))
+            return
         except Exception as exc:
             logger.opt(exception=exc).error("Investigation job {id} failed", id=job_id)
             self.store.mark_failed(job_id, FAILURE_DETAIL)
