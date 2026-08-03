@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "k8s-agent.fullname" . }}
+  labels: {{- include "k8s-agent.labels" . | nindent 4 }}
+data:
+  AUTH_MODE: {{ .Values.auth.mode | quote }}
+  ALLOW_INSECURE_NO_AUTH: {{ .Values.auth.allowInsecureNoAuth | quote }}
+  {{- if eq .Values.auth.mode "oidc" }}
+  OIDC_ISSUER: {{ .Values.auth.oidc.issuer | quote }}
+  OIDC_AUDIENCE: {{ .Values.auth.oidc.audience | quote }}
+  OIDC_JWKS_URL: {{ .Values.auth.oidc.jwksUrl | quote }}
+  OIDC_USERNAME_CLAIM: {{ .Values.auth.oidc.usernameClaim | quote }}
+  OIDC_GROUPS_CLAIM: {{ .Values.auth.oidc.groupsClaim | quote }}
+  OIDC_TENANT_CLAIM: {{ .Values.auth.oidc.tenantClaim | quote }}
+  OIDC_ROLE_MAPPINGS: {{ .Values.auth.oidc.roleMappings | quote }}
+  {{- end }}
+  RBAC_DEFAULT_ROLE: {{ .Values.rbac.defaultRole | quote }}
+  TENANCY_MODE: {{ .Values.tenancy.mode | quote }}
+  OPENAI_MODEL: {{ .Values.openai.model | quote }}
+  METRICS_ENABLED: {{ .Values.metrics.enabled | quote }}
+  PROMETHEUS_URL: {{ .Values.prometheusUrl | quote }}
+  LOKI_URL: {{ .Values.lokiUrl | quote }}
+  JOB_MAX_CONCURRENT: {{ .Values.config.jobMaxConcurrent | quote }}
+  RATE_LIMIT_PER_MINUTE: {{ .Values.config.rateLimitPerMinute | quote }}
+  RATE_LIMIT_TENANT_PER_MINUTE: {{ .Values.config.rateLimitTenantPerMinute | quote }}
+  REPORT_RETENTION_DAYS: {{ .Values.config.reportRetentionDays | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  {{- with .Values.config.corsOrigins }}
+  CORS_ORIGINS: {{ join "," . | quote }}
+  {{- end }}
+  {{- with .Values.config.notifyDestinations }}
+  NOTIFY_DESTINATIONS: {{ . | quote }}
+  {{- end }}
+  {{- if .Values.agentGateway.enabled }}
+  AGENT_GATEWAY_PORT: {{ .Values.agentGateway.port | quote }}
+  {{- if .Values.agentGateway.caSecret.name }}
+  AGENT_CA_CERT_FILE: /etc/agent-ca/{{ .Values.agentGateway.caSecret.certKey }}
+  AGENT_CA_KEY_FILE: /etc/agent-ca/{{ .Values.agentGateway.caSecret.keyKey }}
+  {{- end }}
+  {{- end }}

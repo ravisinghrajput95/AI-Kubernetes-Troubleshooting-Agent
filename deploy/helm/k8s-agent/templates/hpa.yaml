@@ -1,0 +1,28 @@
+{{- if .Values.autoscaling.enabled }}
+{{/*
+CPU is a poor signal here and is offered only because it is what HPA has by
+default: a saturated worker samples ~92% idle, with every non-idle sample in a
+Postgres or Redis socket wait. Prefer scaling on k8sagent_queue_depth through
+an external metrics adapter — and note the ceiling is per worker process, so
+adding replicas is the thing that works.
+*/}}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "k8s-agent.fullname" . }}
+  labels: {{- include "k8s-agent.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "k8s-agent.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}

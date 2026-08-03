@@ -1,0 +1,16 @@
+apiVersion: v2
+name: k8s-agent
+description: AI Kubernetes Troubleshooting Agent — the platform, not the cluster agent
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - kubernetes
+  - troubleshooting
+  - observability
+home: https://github.com/ravisinghrajput95/AI-Kubernetes-Troubleshooting-Agent
+sources:
+  - https://github.com/ravisinghrajput95/AI-Kubernetes-Troubleshooting-Agent
+annotations:
+  # Postgres and Redis are deliberately NOT subchart dependencies. See values.yaml.
+  category: Monitoring

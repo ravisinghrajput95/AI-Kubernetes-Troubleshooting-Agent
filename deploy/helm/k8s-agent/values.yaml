@@ -1,0 +1,225 @@
+# Defaults for the k8s-agent platform chart.
+#
+# Two rules govern what is and is not in here, and both cost more to violate
+# than to follow:
+#
+#   1. Nothing insecure is pre-set. The platform refuses to start with
+#      AUTH_MODE=disabled unless ALLOW_INSECURE_NO_AUTH is acknowledged, and
+#      this chart does not acknowledge it for you — the same decision
+#      docker-compose.yml makes, for the same reason. `helm install` with no
+#      auth values fails at startup, loudly, naming the variable.
+#
+#   2. No bundled Postgres or Redis. A subchart database is a database nobody
+#      backs up, sized for a demo, holding the only copy of every customer's
+#      incident history. Point `database.urlSecret` at a managed instance.
+#      There is no in-cluster fallback on purpose.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/ravisinghrajput95/k8s-agent-backend
+  tag: ""            # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# --- Authentication -----------------------------------------------------------
+# One of these blocks must produce a working configuration or the pods will
+# CrashLoopBackOff at startup with a message naming what is missing. That is the
+# intended behaviour: a readiness probe passing while the service authenticates
+# nobody is the worst shape a misconfiguration can take.
+auth:
+  # "oidc" | "token" | "disabled"
+  mode: oidc
+
+  oidc:
+    issuer: ""
+    audience: ""
+    jwksUrl: ""              # defaults to <issuer>/.well-known/jwks.json
+    usernameClaim: email
+    groupsClaim: groups
+    tenantClaim: ""          # required when tenancy.mode=shared
+    # "group=role" pairs. See docs/SSO_GROUP_MAPPING.md.
+    roleMappings: ""
+
+  # AUTH_MODE=token reads API_TOKENS from this secret key. Never set tokens
+  # inline in values — they end up in `helm get values` and in your CI logs.
+  tokensSecret:
+    name: ""
+    key: API_TOKENS
+
+  # Only honoured with mode=disabled, and only for a throwaway environment.
+  allowInsecureNoAuth: false
+
+# --- Authorisation ------------------------------------------------------------
+rbac:
+  # What a caller with no binding and no matching group gets.
+  # `admin` is the platform default (it preserves pre-RBAC behaviour), but a
+  # fresh install has no such history to preserve, so this chart ships `viewer`.
+  # Refused above `viewer` anyway when tenancy.mode=shared.
+  defaultRole: viewer
+
+# --- Tenancy ------------------------------------------------------------------
+tenancy:
+  # "single" | "shared". `shared` requires a database and real authentication,
+  # and is refused at startup without them — there is no in-memory equivalent
+  # of row-level security.
+  mode: single
+
+# --- State --------------------------------------------------------------------
+# Both or neither. Exactly one is refused at startup. Leaving both empty gives
+# the single-process deployment, which is supported but not what you want on
+# more than one replica: set replicaCount: 1 if you do that.
+database:
+  urlSecret:
+    name: ""
+    key: DATABASE_URL
+redis:
+  urlSecret:
+    name: ""
+    key: REDIS_URL
+
+# --- Model --------------------------------------------------------------------
+# Optional. Without a key the deterministic fallback produces a complete
+# diagnosis and nothing leaves the deployment — a supported configuration, and
+# the right one for a residency-constrained customer.
+openai:
+  model: gpt-4o-mini
+  apiKeySecret:
+    name: ""
+    key: OPENAI_API_KEY
+
+# --- Cluster access -----------------------------------------------------------
+# The platform reads clusters either through a mounted kubeconfig or through
+# agents that dial in. A pure-agent fleet needs no kubeconfig at all and no
+# kubectl on the platform.
+kubeconfig:
+  enabled: false
+  secretName: ""
+  key: config
+
+# The gateway agents dial into. Port 0 disables it, and app/gateway/ is imported
+# lazily, so a kubeconfig-only deployment never loads grpc.
+agentGateway:
+  enabled: false
+  port: 9443
+  # The enrolment listener is gateway + 1 and serves only token bootstrap.
+  # A fleet that has finished enrolling can firewall it off.
+  service:
+    type: ClusterIP
+    annotations: {}
+  # The CA is a file, never a database row. Supply a real one for anything
+  # shared; without it the platform generates a development CA and says so.
+  caSecret:
+    name: ""
+    certKey: ca.crt
+    keyKey: ca.key
+
+# --- Observability ------------------------------------------------------------
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
+# Optional backends. See docs/OBSERVABILITY_INTEGRATIONS.md — the queries need
+# cAdvisor *and* kube-state-metrics, and unset means the collectors record
+# not_applicable rather than inventing a healthy reading.
+prometheusUrl: ""
+lokiUrl: ""
+
+# --- Behaviour ----------------------------------------------------------------
+config:
+  # Raising this is an operator decision against their own cluster sizes.
+  # Peak heap is ~5x the stored result, ~76 investigations per GB. Throughput
+  # does NOT rise with this on one worker — add replicas, not slots.
+  jobMaxConcurrent: 4
+  rateLimitPerMinute: 60
+  # 0 = off. `shared` tenancy warns when unset: it is a fairness gap.
+  rateLimitTenantPerMinute: 0
+  reportRetentionDays: 14
+  corsOrigins: []
+  logLevel: INFO
+  # Pipe-delimited, unlike every other list here — a URL contains colons.
+  notifyDestinations: ""
+
+extraEnv: []
+extraEnvFrom: []
+
+# --- Workload -----------------------------------------------------------------
+service:
+  type: ClusterIP
+  port: 8000
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: k8s-agent.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 2Gi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Liveness is deliberately the same endpoint as readiness today: the platform
+# has one /health and does not yet distinguish them (backlog item 42).
+probes:
+  liveness:
+    initialDelaySeconds: 10
+    periodSeconds: 20
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# In-flight investigations are not drained on shutdown (backlog item 43); a
+# killed worker's job is reaped to `failed` via lease expiry instead. The grace
+# period below just gives short investigations a chance to finish.
+terminationGracePeriodSeconds: 60

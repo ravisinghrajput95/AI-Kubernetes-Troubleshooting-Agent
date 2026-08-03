@@ -1010,6 +1010,31 @@ Response shapes are typed in `src/types/investigation.ts`, but the backend retur
 
 `vite.config.ts` imports `defineConfig` from `vitest/config`, not `vite` — vitest owns the merged config type. Tests need `IS_REACT_ACT_ENVIRONMENT` from `src/test/setup.ts`. Avoid Testing Library's `waitFor` in fake-timer tests: it polls on timers and will hang; advance timers explicitly instead.
 
+### Deployment and operations docs
+
+Written in Tier 4 of the audit backlog. They record decisions, not just
+procedures, so read them before changing the thing they describe:
+
+| Doc | Load-bearing content |
+|---|---|
+| `docs/OBSERVABILITY_INTEGRATIONS.md` | What Prometheus must scrape, and the four defects found by running it |
+| `docs/SSO_GROUP_MAPPING.md` | Okta and Entra worked examples; **Entra's >200-group overage silently empties the claim**, so those users get `RBAC_DEFAULT_ROLE` — `admin` on a default install |
+| `docs/RUNBOOK_BACKUP_RESTORE.md` | The CA private key is the one irreplaceable file; losing only the enrolment store silently forgets revocations |
+| `docs/DATA_PROTECTION.md` | What is stored, why there is no application-layer blob encryption, retention gaps, residency |
+| `docs/SLO.md` | Proposed targets, **not measured attainment**; soundness is two-sided and queue depth means "add workers, not slots" |
+| `docs/TENANT_USAGE_REPORTING.md` | Chargeback needs a `BYPASSRLS` role; the application role produces a clean empty report instead of an error |
+| `docs/UPGRADE.md` | Forward-only migrations, no drain on shutdown, and the per-milestone behaviour changes |
+| `deploy/helm/k8s-agent/README.md` | The chart reproduces the platform's startup refusals at render time |
+
+Two conventions worth keeping:
+
+- **`scripts/tenant_usage.py` does not import `app`, deliberately.** Chargeback
+  is cross-tenant and `system_scope()` is pinned by test to one caller; a
+  reporting path inside `app/` would widen that hole. It reads the database as
+  an operator tool, in the same category as `pg_dump`.
+- **The Helm chart never pre-sets an insecure value**, and bundles no Postgres
+  or Redis. Both are the same decision `docker-compose.yml` already makes.
+
 ## Notes
 
 - Prompts are inline in `app/ai/prompt_builder.py`. The former `prompts/` directory described a loading convention that was never implemented and has been removed.

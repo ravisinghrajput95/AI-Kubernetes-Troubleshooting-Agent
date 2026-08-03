@@ -1,0 +1,28 @@
+{{- if .Values.agentGateway.enabled }}
+{{/*
+A separate Service because an agent stream is long-lived and must not be
+load-balanced across pods the way HTTP is: the worker holding the socket is the
+only one that can collect through it. Routing an investigation to that worker is
+the platform's job (M8a); keeping the stream pinned is this Service's.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "k8s-agent.fullname" . }}-gateway
+  labels: {{- include "k8s-agent.labels" . | nindent 4 }}
+  {{- with .Values.agentGateway.service.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.agentGateway.service.type }}
+  ports:
+    - port: {{ .Values.agentGateway.port }}
+      targetPort: gateway
+      protocol: TCP
+      name: gateway
+    - port: {{ add .Values.agentGateway.port 1 }}
+      targetPort: enrolment
+      protocol: TCP
+      name: enrolment
+  selector: {{- include "k8s-agent.selectorLabels" . | nindent 4 }}
+{{- end }}

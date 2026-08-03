@@ -1,0 +1,145 @@
+{{- include "k8s-agent.validate" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "k8s-agent.fullname" . }}
+  labels: {{- include "k8s-agent.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels: {{- include "k8s-agent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "k8s-agent.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}{{- toYaml . | nindent 8 }}{{- end }}
+      annotations:
+        # Roll the pods when non-secret configuration changes. Secrets are
+        # referenced by name rather than value, so they are deliberately not
+        # part of this hash — rotating a credential should not be gated on a
+        # chart upgrade.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}{{- toYaml . | nindent 8 }}{{- end }}
+    spec:
+      serviceAccountName: {{ include "k8s-agent.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: backend
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8000
+            {{- if .Values.agentGateway.enabled }}
+            - name: gateway
+              containerPort: {{ .Values.agentGateway.port }}
+            # The enrolment listener is gateway + 1 and requests no client
+            # certificate: gRPC's Python bindings offer no request-but-don't-
+            # require mode, so bootstrap needs its own listener.
+            - name: enrolment
+              containerPort: {{ add .Values.agentGateway.port 1 }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "k8s-agent.fullname" . }}
+            {{- with .Values.extraEnvFrom }}{{- toYaml . | nindent 12 }}{{- end }}
+          env:
+            {{- if .Values.database.urlSecret.name }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.urlSecret.name }}
+                  key: {{ .Values.database.urlSecret.key }}
+            {{- end }}
+            {{- if .Values.redis.urlSecret.name }}
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.urlSecret.name }}
+                  key: {{ .Values.redis.urlSecret.key }}
+            {{- end }}
+            {{- if .Values.openai.apiKeySecret.name }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.openai.apiKeySecret.name }}
+                  key: {{ .Values.openai.apiKeySecret.key }}
+            {{- end }}
+            {{- if and (eq .Values.auth.mode "token") .Values.auth.tokensSecret.name }}
+            - name: API_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.tokensSecret.name }}
+                  key: {{ .Values.auth.tokensSecret.key }}
+            {{- end }}
+            {{- if .Values.kubeconfig.enabled }}
+            - name: KUBECONFIG
+              value: /etc/kube/{{ .Values.kubeconfig.key }}
+            {{- end }}
+            {{- with .Values.extraEnv }}{{- toYaml . | nindent 12 }}{{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            # readOnlyRootFilesystem is on, so anything the process writes needs
+            # a writable mount. With DATABASE_URL set these hold nothing durable.
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /app/data
+            {{- if .Values.kubeconfig.enabled }}
+            - name: kubeconfig
+              mountPath: /etc/kube
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.agentGateway.enabled .Values.agentGateway.caSecret.name }}
+            - name: agent-ca
+              mountPath: /etc/agent-ca
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: data
+          emptyDir: {}
+        {{- if .Values.kubeconfig.enabled }}
+        - name: kubeconfig
+          secret:
+            secretName: {{ .Values.kubeconfig.secretName }}
+            defaultMode: 0400
+        {{- end }}
+        {{- if and .Values.agentGateway.enabled .Values.agentGateway.caSecret.name }}
+        - name: agent-ca
+          secret:
+            secretName: {{ .Values.agentGateway.caSecret.name }}
+            defaultMode: 0400
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints: {{- toYaml . | nindent 8 }}
+      {{- end }}
