@@ -1,0 +1,1859 @@
+{
+  "apiVersion": "v1",
+  "items": [
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-08-03T05:32:26Z",
+        "generateName": "archiver-6555564c46-",
+        "generation": 1,
+        "labels": {
+          "app": "archiver",
+          "pod-template-hash": "6555564c46"
+        },
+        "name": "archiver-6555564c46-9v2cd",
+        "namespace": "payments"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "busybox:1.36",
+            "name": "archiver",
+            "resources": {}
+          }
+        ],
+        "serviceAccountName": "default"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "message": "0/1 nodes are available: pod has unbound immediate PersistentVolumeClaims. not found",
+            "observedGeneration": 1,
+            "reason": "Unschedulable",
+            "status": "False",
+            "type": "PodScheduled"
+          }
+        ],
+        "phase": "Pending",
+        "qosClass": "BestEffort"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-08-03T06:12:28Z",
+        "generateName": "bad-image-name-6db59b9b65-",
+        "generation": 1,
+        "labels": {
+          "app": "bad-image-name",
+          "pod-template-hash": "6db59b9b65"
+        },
+        "name": "bad-image-name-6db59b9b65-v67nf",
+        "namespace": "payments"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "INVALID_UPPERCASE/Name:::bad",
+            "name": "app",
+            "resources": {}
+          }
+        ],
+        "nodeName": "qa-control-plane",
+        "serviceAccountName": "default"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "message": "containers with unready status: [app]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "message": "containers with unready status: [app]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "image": "INVALID_UPPERCASE/Name:::bad",
+            "imageID": "",
+            "lastState": {},
+            "name": "app",
+            "ready": false,
+            "restartCount": 0,
+            "started": false,
+            "state": {
+              "waiting": {
+                "message": "Failed to apply default image tag \"INVALID_UPPERCASE/Name:::bad\": couldn't parse image name \"INVALID_UPPERCASE/Name:::bad\": invalid reference format: repository name (Name) must be lowercase",
+                "reason": "InvalidImageName"
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-nvg9t",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.19.0.2",
+        "hostIPs": [
+          {
+            "ip": "172.19.0.2"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Pending",
+        "podIP": "10.244.0.14",
+        "podIPs": [
+          {
+            "ip": "10.244.0.14"
+          }
+        ],
+        "qosClass": "BestEffort",
+        "resources": {},
+        "startTime": "2026-08-03T06:12:28Z"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-08-03T05:32:26Z",
+        "generateName": "batch-trainer-7645f44f6c-",
+        "generation": 1,
+        "labels": {
+          "app": "batch-trainer",
+          "pod-template-hash": "7645f44f6c"
+        },
+        "name": "batch-trainer-7645f44f6c-sgrzc",
+        "namespace": "payments"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "busybox:1.36",
+            "name": "trainer",
+            "resources": {
+              "requests": {
+                "cpu": "64",
+                "memory": "512Gi"
+              }
+            }
+          }
+        ],
+        "serviceAccountName": "default"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "message": "0/1 nodes are available: 1 Insufficient cpu, 1 Insufficient memory. no new claims to deallocate, preemption: 0/1 nodes are available: 1 Preemption is not helpful for scheduling.",
+            "observedGeneration": 1,
+            "reason": "Unschedulable",
+            "status": "False",
+            "type": "PodScheduled"
+          }
+        ],
+        "phase": "Pending",
+        "qosClass": "Burstable"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-08-03T05:32:26Z",
+        "generateName": "checkout-77bd6cbdf4-",
+        "generation": 1,
+        "labels": {
+          "app": "checkout",
+          "pod-template-hash": "77bd6cbdf4"
+        },
+        "name": "checkout-77bd6cbdf4-2c5ln",
+        "namespace": "payments"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "busybox:1.36",
+            "name": "checkout",
+            "resources": {
+              "limits": {
+                "memory": "32Mi"
+              },
+              "requests": {
+                "cpu": "10m",
+                "memory": "16Mi"
+              }
+            }
+          }
+        ],
+        "nodeName": "qa-control-plane",
+        "serviceAccountName": "default"
+      },
+      "status": {
+        "allocatedResources": {
+          "cpu": "10m",
+          "memory": "16Mi"
+        },
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:18:42Z",
+            "message": "containers with unready status: [checkout]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:18:42Z",
+            "message": "containers with unready status: [checkout]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "allocatedResources": {
+              "cpu": "10m",
+              "memory": "16Mi"
+            },
+            "containerID": "containerd://18fc31dc7b50ee8899e4cfc0d9effe3dd9ccf96288d6cd836174c2a967e3283c",
+            "image": "docker.io/library/busybox:1.36",
+            "imageID": "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+            "lastState": {
+              "terminated": {
+                "containerID": "containerd://18fc31dc7b50ee8899e4cfc0d9effe3dd9ccf96288d6cd836174c2a967e3283c",
+                "exitCode": 1,
+                "finishedAt": "2026-08-03T06:18:41Z",
+                "reason": "Error",
+                "startedAt": "2026-08-03T06:18:41Z"
+              }
+            },
+            "name": "checkout",
+            "ready": false,
+            "resources": {
+              "limits": {
+                "memory": "32Mi"
+              },
+              "requests": {
+                "cpu": "10m",
+                "memory": "16Mi"
+              }
+            },
+            "restartCount": 14,
+            "started": false,
+            "state": {
+              "waiting": {
+                "message": "back-off 5m0s restarting failed container=checkout pod=checkout-77bd6cbdf4-2c5ln_payments(0543da6b-9448-4d4f-854b-fdfc25bccef4)",
+                "reason": "CrashLoopBackOff"
+              }
+            },
+            "user": {
+              "linux": {
+                "gid": 0,
+                "supplementalGroups": [
+                  0,
+                  10
+                ],
+                "uid": 0
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-d6drt",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.19.0.2",
+        "hostIPs": [
+          {
+            "ip": "172.19.0.2"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Running",
+        "podIP": "10.244.0.5",
+        "podIPs": [
+          {
+            "ip": "10.244.0.5"
+          }
+        ],
+        "qosClass": "Burstable",
+        "resources": {
+          "limits": {
+            "memory": "32Mi"
+          },
+          "requests": {
+            "memory": "16Mi"
+          }
+        },
+        "startTime": "2026-08-03T05:32:26Z"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-08-03T05:32:26Z",
+        "generateName": "checkout-77bd6cbdf4-",
+        "generation": 1,
+        "labels": {
+          "app": "checkout",
+          "pod-template-hash": "77bd6cbdf4"
+        },
+        "name": "checkout-77bd6cbdf4-2ktq5",
+        "namespace": "payments"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "busybox:1.36",
+            "name": "checkout",
+            "resources": {
+              "limits": {
+                "memory": "32Mi"
+              },
+              "requests": {
+                "cpu": "10m",
+                "memory": "16Mi"
+              }
+            }
+          }
+        ],
+        "nodeName": "qa-control-plane",
+        "serviceAccountName": "default"
+      },
+      "status": {
+        "allocatedResources": {
+          "cpu": "10m",
+          "memory": "16Mi"
+        },
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:18:33Z",
+            "message": "containers with unready status: [checkout]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:18:33Z",
+            "message": "containers with unready status: [checkout]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "allocatedResources": {
+              "cpu": "10m",
+              "memory": "16Mi"
+            },
+            "containerID": "containerd://e15e563e1f18ffd8fc72409a26cdd9f09de268efab6f28b5431228dd97ad0f75",
+            "image": "docker.io/library/busybox:1.36",
+            "imageID": "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+            "lastState": {
+              "terminated": {
+                "containerID": "containerd://e15e563e1f18ffd8fc72409a26cdd9f09de268efab6f28b5431228dd97ad0f75",
+                "exitCode": 1,
+                "finishedAt": "2026-08-03T06:18:32Z",
+                "reason": "Error",
+                "startedAt": "2026-08-03T06:18:32Z"
+              }
+            },
+            "name": "checkout",
+            "ready": false,
+            "resources": {
+              "limits": {
+                "memory": "32Mi"
+              },
+              "requests": {
+                "cpu": "10m",
+                "memory": "16Mi"
+              }
+            },
+            "restartCount": 14,
+            "started": false,
+            "state": {
+              "waiting": {
+                "message": "back-off 5m0s restarting failed container=checkout pod=checkout-77bd6cbdf4-2ktq5_payments(8ef68bf3-431c-49fd-b470-bd2d3f0fe2b6)",
+                "reason": "CrashLoopBackOff"
+              }
+            },
+            "user": {
+              "linux": {
+                "gid": 0,
+                "supplementalGroups": [
+                  0,
+                  10
+                ],
+                "uid": 0
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-x6z65",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.19.0.2",
+        "hostIPs": [
+          {
+            "ip": "172.19.0.2"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Running",
+        "podIP": "10.244.0.6",
+        "podIPs": [
+          {
+            "ip": "10.244.0.6"
+          }
+        ],
+        "qosClass": "Burstable",
+        "resources": {
+          "limits": {
+            "memory": "32Mi"
+          },
+          "requests": {
+            "memory": "16Mi"
+          }
+        },
+        "startTime": "2026-08-03T05:32:26Z"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-08-03T06:12:28Z",
+        "generateName": "doomed-migration-",
+        "generation": 1,
+        "labels": {
+          "batch.kubernetes.io/controller-uid": "0baeee3e-871e-4a19-887d-5c533fb36582",
+          "batch.kubernetes.io/job-name": "doomed-migration",
+          "controller-uid": "0baeee3e-871e-4a19-887d-5c533fb36582",
+          "job-name": "doomed-migration"
+        },
+        "name": "doomed-migration-65cfb",
+        "namespace": "payments"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "busybox:1.36",
+            "name": "migrate",
+            "resources": {}
+          }
+        ],
+        "nodeName": "qa-control-plane",
+        "serviceAccountName": "default"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:30Z",
+            "observedGeneration": 1,
+            "status": "False",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:29Z",
+            "observedGeneration": 1,
+            "reason": "PodFailed",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:29Z",
+            "observedGeneration": 1,
+            "reason": "PodFailed",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "containerID": "containerd://717dee1330532f6fa0db42b5f92903475b8a2c3325fecfd53cac6549b280c1ea",
+            "image": "docker.io/library/busybox:1.36",
+            "imageID": "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+            "lastState": {},
+            "name": "migrate",
+            "ready": false,
+            "resources": {},
+            "restartCount": 0,
+            "started": false,
+            "state": {
+              "terminated": {
+                "containerID": "containerd://717dee1330532f6fa0db42b5f92903475b8a2c3325fecfd53cac6549b280c1ea",
+                "exitCode": 1,
+                "finishedAt": "2026-08-03T06:12:28Z",
+                "reason": "Error",
+                "startedAt": "2026-08-03T06:12:28Z"
+              }
+            },
+            "user": {
+              "linux": {
+                "gid": 0,
+                "supplementalGroups": [
+                  0,
+                  10
+                ],
+                "uid": 0
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-xwhjl",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.19.0.2",
+        "hostIPs": [
+          {
+            "ip": "172.19.0.2"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Failed",
+        "podIP": "10.244.0.18",
+        "podIPs": [
+          {
+            "ip": "10.244.0.18"
+          }
+        ],
+        "qosClass": "BestEffort",
+        "resources": {},
+        "startTime": "2026-08-03T06:12:28Z"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-08-03T06:12:38Z",
+        "generateName": "doomed-migration-",
+        "generation": 1,
+        "labels": {
+          "batch.kubernetes.io/controller-uid": "0baeee3e-871e-4a19-887d-5c533fb36582",
+          "batch.kubernetes.io/job-name": "doomed-migration",
+          "controller-uid": "0baeee3e-871e-4a19-887d-5c533fb36582",
+          "job-name": "doomed-migration"
+        },
+        "name": "doomed-migration-w8gv4",
+        "namespace": "payments"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "busybox:1.36",
+            "name": "migrate",
+            "resources": {}
+          }
+        ],
+        "nodeName": "qa-control-plane",
+        "serviceAccountName": "default"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:40Z",
+            "observedGeneration": 1,
+            "status": "False",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:38Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:39Z",
+            "observedGeneration": 1,
+            "reason": "PodFailed",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:39Z",
+            "observedGeneration": 1,
+            "reason": "PodFailed",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:38Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "containerID": "containerd://5f17df8460e312c23fad1a2234d2b5f2d6f9666c5194abb371ffe0d9d2923ee7",
+            "image": "docker.io/library/busybox:1.36",
+            "imageID": "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+            "lastState": {},
+            "name": "migrate",
+            "ready": false,
+            "resources": {},
+            "restartCount": 0,
+            "started": false,
+            "state": {
+              "terminated": {
+                "containerID": "containerd://5f17df8460e312c23fad1a2234d2b5f2d6f9666c5194abb371ffe0d9d2923ee7",
+                "exitCode": 1,
+                "finishedAt": "2026-08-03T06:12:38Z",
+                "reason": "Error",
+                "startedAt": "2026-08-03T06:12:38Z"
+              }
+            },
+            "user": {
+              "linux": {
+                "gid": 0,
+                "supplementalGroups": [
+                  0,
+                  10
+                ],
+                "uid": 0
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-6ql2g",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.19.0.2",
+        "hostIPs": [
+          {
+            "ip": "172.19.0.2"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Failed",
+        "podIP": "10.244.0.19",
+        "podIPs": [
+          {
+            "ip": "10.244.0.19"
+          }
+        ],
+        "qosClass": "BestEffort",
+        "resources": {},
+        "startTime": "2026-08-03T06:12:38Z"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-08-03T05:32:26Z",
+        "generateName": "fraud-scorer-64bd66f44b-",
+        "generation": 1,
+        "labels": {
+          "app": "fraud-scorer",
+          "pod-template-hash": "64bd66f44b"
+        },
+        "name": "fraud-scorer-64bd66f44b-4cwzf",
+        "namespace": "payments"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "busybox:1.36",
+            "name": "scorer",
+            "resources": {
+              "limits": {
+                "memory": "24Mi"
+              },
+              "requests": {
+                "memory": "24Mi"
+              }
+            }
+          }
+        ],
+        "nodeName": "qa-control-plane",
+        "serviceAccountName": "default"
+      },
+      "status": {
+        "allocatedResources": {
+          "memory": "24Mi"
+        },
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:34Z",
+            "message": "containers with unready status: [scorer]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:34Z",
+            "message": "containers with unready status: [scorer]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "allocatedResources": {
+              "memory": "24Mi"
+            },
+            "containerID": "containerd://aa39a951557ffa8b28acf95a96c73c4f120de384a1b6b55ab19e2023a97f21a2",
+            "image": "docker.io/library/busybox:1.36",
+            "imageID": "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+            "lastState": {
+              "terminated": {
+                "containerID": "containerd://aa39a951557ffa8b28acf95a96c73c4f120de384a1b6b55ab19e2023a97f21a2",
+                "exitCode": 128,
+                "finishedAt": "2026-08-03T06:19:17Z",
+                "message": "failed to create containerd task: failed to create shim task: OCI runtime create failed: runc create failed: unable to start container process: container init was OOM-killed (memory limit too low?)",
+                "reason": "StartError",
+                "startedAt": "1970-01-01T00:00:00Z"
+              }
+            },
+            "name": "scorer",
+            "ready": false,
+            "resources": {
+              "limits": {
+                "memory": "24Mi"
+              },
+              "requests": {
+                "memory": "24Mi"
+              }
+            },
+            "restartCount": 14,
+            "started": false,
+            "state": {
+              "waiting": {
+                "message": "back-off 5m0s restarting failed container=scorer pod=fraud-scorer-64bd66f44b-4cwzf_payments(2742b08a-e280-4438-ba6d-c4678bcbf6e9)",
+                "reason": "CrashLoopBackOff"
+              }
+            },
+            "user": {
+              "linux": {
+                "gid": 0,
+                "supplementalGroups": [
+                  0,
+                  10
+                ],
+                "uid": 0
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-vqtzb",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.19.0.2",
+        "hostIPs": [
+          {
+            "ip": "172.19.0.2"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Running",
+        "podIP": "10.244.0.8",
+        "podIPs": [
+          {
+            "ip": "10.244.0.8"
+          }
+        ],
+        "qosClass": "Burstable",
+        "resources": {
+          "limits": {
+            "memory": "24Mi"
+          },
+          "requests": {
+            "memory": "24Mi"
+          }
+        },
+        "startTime": "2026-08-03T05:32:26Z"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-08-03T05:32:26Z",
+        "generateName": "gateway-6868567865-",
+        "generation": 1,
+        "labels": {
+          "app": "gateway",
+          "pod-template-hash": "6868567865"
+        },
+        "name": "gateway-6868567865-sdccp",
+        "namespace": "payments"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "busybox:1.36",
+            "name": "gateway",
+            "resources": {}
+          }
+        ],
+        "nodeName": "qa-control-plane",
+        "serviceAccountName": "default"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:27Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "message": "containers with unready status: [gateway]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "message": "containers with unready status: [gateway]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "containerID": "containerd://f5ad51f22db588087fddf417fc5e61d5fd0bf5c1efe5323e5ee0539cc5e34f46",
+            "image": "docker.io/library/busybox:1.36",
+            "imageID": "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+            "lastState": {},
+            "name": "gateway",
+            "ready": false,
+            "resources": {},
+            "restartCount": 0,
+            "started": true,
+            "state": {
+              "running": {
+                "startedAt": "2026-08-03T05:32:37Z"
+              }
+            },
+            "user": {
+              "linux": {
+                "gid": 0,
+                "supplementalGroups": [
+                  0,
+                  10
+                ],
+                "uid": 0
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-rc2kg",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.19.0.2",
+        "hostIPs": [
+          {
+            "ip": "172.19.0.2"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Running",
+        "podIP": "10.244.0.10",
+        "podIPs": [
+          {
+            "ip": "10.244.0.10"
+          }
+        ],
+        "qosClass": "BestEffort",
+        "resources": {},
+        "startTime": "2026-08-03T05:32:26Z"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-08-03T05:32:26Z",
+        "generateName": "healthy-api-5c586585-",
+        "generation": 1,
+        "labels": {
+          "app": "healthy-api",
+          "pod-template-hash": "5c586585"
+        },
+        "name": "healthy-api-5c586585-fdws2",
+        "namespace": "payments"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "busybox:1.36",
+            "name": "api",
+            "resources": {
+              "requests": {
+                "cpu": "10m",
+                "memory": "16Mi"
+              }
+            }
+          }
+        ],
+        "nodeName": "qa-control-plane",
+        "serviceAccountName": "default"
+      },
+      "status": {
+        "allocatedResources": {
+          "cpu": "10m",
+          "memory": "16Mi"
+        },
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:27Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:38Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:38Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "allocatedResources": {
+              "cpu": "10m",
+              "memory": "16Mi"
+            },
+            "containerID": "containerd://6d6945e1906c99420bdccf1be85ecc42cd1985b5611e2dfe25eaf2a62f212be9",
+            "image": "docker.io/library/busybox:1.36",
+            "imageID": "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+            "lastState": {},
+            "name": "api",
+            "ready": true,
+            "resources": {
+              "requests": {
+                "cpu": "10m",
+                "memory": "16Mi"
+              }
+            },
+            "restartCount": 0,
+            "started": true,
+            "state": {
+              "running": {
+                "startedAt": "2026-08-03T05:32:38Z"
+              }
+            },
+            "user": {
+              "linux": {
+                "gid": 0,
+                "supplementalGroups": [
+                  0,
+                  10
+                ],
+                "uid": 0
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-lhncd",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.19.0.2",
+        "hostIPs": [
+          {
+            "ip": "172.19.0.2"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Running",
+        "podIP": "10.244.0.11",
+        "podIPs": [
+          {
+            "ip": "10.244.0.11"
+          }
+        ],
+        "qosClass": "Burstable",
+        "resources": {
+          "requests": {
+            "memory": "16Mi"
+          }
+        },
+        "startTime": "2026-08-03T05:32:26Z"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-08-03T06:12:28Z",
+        "generateName": "init-blocked-54f55c7b4-",
+        "generation": 1,
+        "labels": {
+          "app": "init-blocked",
+          "pod-template-hash": "54f55c7b4"
+        },
+        "name": "init-blocked-54f55c7b4-6sxlg",
+        "namespace": "payments"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "nginx:1.27-alpine",
+            "name": "app",
+            "resources": {}
+          }
+        ],
+        "nodeName": "qa-control-plane",
+        "serviceAccountName": "default"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "message": "containers with incomplete status: [wait-for-db]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotInitialized",
+            "status": "False",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "message": "containers with unready status: [app]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "message": "containers with unready status: [app]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "image": "nginx:1.27-alpine",
+            "imageID": "",
+            "lastState": {},
+            "name": "app",
+            "ready": false,
+            "restartCount": 0,
+            "started": false,
+            "state": {
+              "waiting": {
+                "reason": "PodInitializing"
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-g6tvj",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.19.0.2",
+        "hostIPs": [
+          {
+            "ip": "172.19.0.2"
+          }
+        ],
+        "initContainerStatuses": [
+          {
+            "containerID": "containerd://a4a8225364a9f407cbcc1f3314153c45e8a63969510a51ea15f677741f67f0c5",
+            "image": "docker.io/library/busybox:1.36",
+            "imageID": "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+            "lastState": {
+              "terminated": {
+                "containerID": "containerd://a4a8225364a9f407cbcc1f3314153c45e8a63969510a51ea15f677741f67f0c5",
+                "exitCode": 1,
+                "finishedAt": "2026-08-03T06:18:07Z",
+                "reason": "Error",
+                "startedAt": "2026-08-03T06:18:07Z"
+              }
+            },
+            "name": "wait-for-db",
+            "ready": false,
+            "resources": {},
+            "restartCount": 6,
+            "started": false,
+            "state": {
+              "waiting": {
+                "message": "back-off 5m0s restarting failed container=wait-for-db pod=init-blocked-54f55c7b4-6sxlg_payments(6cb0e67c-cb09-48e1-b207-3e910996e79e)",
+                "reason": "CrashLoopBackOff"
+              }
+            },
+            "user": {
+              "linux": {
+                "gid": 0,
+                "supplementalGroups": [
+                  0,
+                  10
+                ],
+                "uid": 0
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-g6tvj",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Pending",
+        "podIP": "10.244.0.16",
+        "podIPs": [
+          {
+            "ip": "10.244.0.16"
+          }
+        ],
+        "qosClass": "BestEffort",
+        "resources": {},
+        "startTime": "2026-08-03T06:12:28Z"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-08-03T05:32:26Z",
+        "generateName": "ledger-5474c5c9bf-",
+        "generation": 1,
+        "labels": {
+          "app": "ledger",
+          "pod-template-hash": "5474c5c9bf"
+        },
+        "name": "ledger-5474c5c9bf-gtp9c",
+        "namespace": "payments"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "registry.invalid/does-not-exist:9.9.9",
+            "name": "ledger",
+            "resources": {}
+          }
+        ],
+        "nodeName": "qa-control-plane",
+        "serviceAccountName": "default"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "message": "containers with unready status: [ledger]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "message": "containers with unready status: [ledger]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "image": "registry.invalid/does-not-exist:9.9.9",
+            "imageID": "",
+            "lastState": {},
+            "name": "ledger",
+            "ready": false,
+            "restartCount": 0,
+            "started": false,
+            "state": {
+              "waiting": {
+                "message": "Back-off pulling image \"registry.invalid/does-not-exist:9.9.9\": ErrImagePull: failed to pull and unpack image \"registry.invalid/does-not-exist:9.9.9\": failed to resolve reference \"registry.invalid/does-not-exist:9.9.9\": failed to do request: Head \"https://registry.invalid/v2/does-not-exist/manifests/9.9.9\": dial tcp: lookup registry.invalid on 192.168.65.254:53: no such host",
+                "reason": "ImagePullBackOff"
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-x7z4d",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.19.0.2",
+        "hostIPs": [
+          {
+            "ip": "172.19.0.2"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Pending",
+        "podIP": "10.244.0.7",
+        "podIPs": [
+          {
+            "ip": "10.244.0.7"
+          }
+        ],
+        "qosClass": "BestEffort",
+        "resources": {},
+        "startTime": "2026-08-03T05:32:26Z"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-08-03T06:15:53Z",
+        "generateName": "memory-hog-6b7db97666-",
+        "generation": 1,
+        "labels": {
+          "app": "memory-hog",
+          "pod-template-hash": "6b7db97666"
+        },
+        "name": "memory-hog-6b7db97666-xklnn",
+        "namespace": "payments"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "python:3.12-alpine",
+            "name": "hog",
+            "resources": {
+              "limits": {
+                "memory": "128Mi"
+              },
+              "requests": {
+                "memory": "128Mi"
+              }
+            }
+          }
+        ],
+        "nodeName": "qa-control-plane",
+        "serviceAccountName": "default"
+      },
+      "status": {
+        "allocatedResources": {
+          "memory": "128Mi"
+        },
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:15:54Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:15:53Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:20:04Z",
+            "message": "containers with unready status: [hog]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:20:04Z",
+            "message": "containers with unready status: [hog]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:15:53Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "allocatedResources": {
+              "memory": "128Mi"
+            },
+            "containerID": "containerd://e63dd1bc59493cc7eabb86d4021185b1aa895a94d893a4275c79c7a68f2b2bbc",
+            "image": "docker.io/library/python:3.12-alpine",
+            "imageID": "docker.io/library/python@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df",
+            "lastState": {
+              "terminated": {
+                "containerID": "containerd://e63dd1bc59493cc7eabb86d4021185b1aa895a94d893a4275c79c7a68f2b2bbc",
+                "exitCode": 137,
+                "finishedAt": "2026-08-03T06:20:03Z",
+                "reason": "OOMKilled",
+                "startedAt": "2026-08-03T06:19:53Z"
+              }
+            },
+            "name": "hog",
+            "ready": false,
+            "resources": {
+              "limits": {
+                "memory": "128Mi"
+              },
+              "requests": {
+                "memory": "128Mi"
+              }
+            },
+            "restartCount": 5,
+            "started": false,
+            "state": {
+              "waiting": {
+                "message": "back-off 2m40s restarting failed container=hog pod=memory-hog-6b7db97666-xklnn_payments(11a0a177-7e47-4039-b3bc-ee1323690313)",
+                "reason": "CrashLoopBackOff"
+              }
+            },
+            "user": {
+              "linux": {
+                "gid": 0,
+                "supplementalGroups": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4,
+                  6,
+                  10,
+                  11,
+                  20,
+                  26,
+                  27
+                ],
+                "uid": 0
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-wp9kq",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.19.0.2",
+        "hostIPs": [
+          {
+            "ip": "172.19.0.2"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Running",
+        "podIP": "10.244.0.21",
+        "podIPs": [
+          {
+            "ip": "10.244.0.21"
+          }
+        ],
+        "qosClass": "Burstable",
+        "resources": {
+          "limits": {
+            "memory": "128Mi"
+          },
+          "requests": {
+            "memory": "128Mi"
+          }
+        },
+        "startTime": "2026-08-03T06:15:53Z"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-08-03T06:12:28Z",
+        "generateName": "never-pull-5d7965b8c9-",
+        "generation": 1,
+        "labels": {
+          "app": "never-pull",
+          "pod-template-hash": "5d7965b8c9"
+        },
+        "name": "never-pull-5d7965b8c9-8dbrf",
+        "namespace": "payments"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "not-present-locally:v1",
+            "name": "app",
+            "resources": {}
+          }
+        ],
+        "nodeName": "qa-control-plane",
+        "serviceAccountName": "default"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "message": "containers with unready status: [app]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "message": "containers with unready status: [app]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T06:12:28Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "image": "not-present-locally:v1",
+            "imageID": "",
+            "lastState": {},
+            "name": "app",
+            "ready": false,
+            "restartCount": 0,
+            "started": false,
+            "state": {
+              "waiting": {
+                "message": "Container image \"not-present-locally:v1\" is not present with pull policy of Never",
+                "reason": "ErrImageNeverPull"
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-gc6zq",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.19.0.2",
+        "hostIPs": [
+          {
+            "ip": "172.19.0.2"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Pending",
+        "podIP": "10.244.0.15",
+        "podIPs": [
+          {
+            "ip": "10.244.0.15"
+          }
+        ],
+        "qosClass": "BestEffort",
+        "resources": {},
+        "startTime": "2026-08-03T06:12:28Z"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-08-03T05:32:26Z",
+        "generateName": "notifier-85b54fffb6-",
+        "generation": 1,
+        "labels": {
+          "app": "notifier",
+          "pod-template-hash": "85b54fffb6"
+        },
+        "name": "notifier-85b54fffb6-j4q4k",
+        "namespace": "payments"
+      },
+      "spec": {
+        "containers": [
+          {
+            "image": "busybox:1.36",
+            "name": "notifier",
+            "resources": {}
+          }
+        ],
+        "nodeName": "qa-control-plane",
+        "serviceAccountName": "default"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "message": "containers with unready status: [notifier]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "message": "containers with unready status: [notifier]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-08-03T05:32:26Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "image": "busybox:1.36",
+            "imageID": "",
+            "lastState": {},
+            "name": "notifier",
+            "ready": false,
+            "restartCount": 0,
+            "started": false,
+            "state": {
+              "waiting": {
+                "message": "configmap \"notifier-config\" not found",
+                "reason": "CreateContainerConfigError"
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-2llcf",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.19.0.2",
+        "hostIPs": [
+          {
+            "ip": "172.19.0.2"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Pending",
+        "podIP": "10.244.0.9",
+        "podIPs": [
+          {
+            "ip": "10.244.0.9"
+          }
+        ],
+        "qosClass": "BestEffort",
+        "resources": {},
+        "startTime": "2026-08-03T05:32:26Z"
+      }
+    }
+  ],
+  "kind": "List",
+  "metadata": {
+    "resourceVersion": ""
+  }
+}

@@ -75,11 +75,27 @@ POD_STATUS_SIGNALS: dict[str, tuple[str, Severity]] = {
     "CrashLoopBackOff": (SignalType.POD_CRASH_LOOP, Severity.CRITICAL),
     "ImagePullBackOff": (SignalType.POD_IMAGE_PULL_FAILURE, Severity.CRITICAL),
     "ErrImagePull": (SignalType.POD_IMAGE_PULL_FAILURE, Severity.CRITICAL),
+    # A malformed reference and a `Never` pull policy with no local image. Both
+    # are image faults the kubelet rejects without ever reaching a registry, so
+    # they share the signal and differ in their remediation.
+    "InvalidImageName": (SignalType.POD_IMAGE_PULL_FAILURE, Severity.CRITICAL),
+    "ErrImageNeverPull": (SignalType.POD_IMAGE_PULL_FAILURE, Severity.CRITICAL),
+    "CreateContainerConfigError": (SignalType.POD_CONFIG_ERROR, Severity.CRITICAL),
+    "CreateContainerError": (SignalType.POD_CONFIG_ERROR, Severity.CRITICAL),
     "OOMKilled": (SignalType.POD_OOM_KILLED, Severity.CRITICAL),
     "Pending": (SignalType.POD_PENDING, Severity.HIGH),
     "Unschedulable": (SignalType.POD_PENDING, Severity.HIGH),
     "Error": (SignalType.POD_ERROR, Severity.HIGH),
+    "Failed": (SignalType.POD_ERROR, Severity.HIGH),
+    # The node reclaimed resources. HIGH rather than CRITICAL because the
+    # workload itself did nothing wrong and is usually rescheduled; what needs
+    # attention is the node, which `node.unhealthy` covers.
+    "Evicted": (SignalType.POD_EVICTED, Severity.HIGH),
     "ContainerCreating": (SignalType.POD_STUCK_CREATING, Severity.MEDIUM),
+    # MEDIUM on purpose: with no clock available a pod that is merely still
+    # starting looks the same as one that will never be ready. See
+    # `pod_inspector._detect_pod_status`.
+    "NotReady": (SignalType.POD_NOT_READY, Severity.MEDIUM),
 }
 
 
@@ -162,6 +178,12 @@ EVENT_REASON_SIGNALS: dict[str, tuple[str, Severity]] = {
     "FailedPull": (SignalType.EVENT_IMAGE_PULL_FAILURE, Severity.HIGH),
     "ErrImagePull": (SignalType.EVENT_IMAGE_PULL_FAILURE, Severity.HIGH),
     "FailedMount": (SignalType.EVENT_MOUNT_FAILURE, Severity.HIGH),
+    # Kept apart from `FailedMount`: the volume exists and is bound, but is
+    # still attached elsewhere (the "Multi-Attach" case) or the attach itself
+    # failed. Telling an operator their claim is unbound when it is bound and
+    # busy sends them to the wrong resource entirely.
+    "FailedAttachVolume": (SignalType.STORAGE_ATTACH_FAILURE, Severity.HIGH),
+    "FailedDetachVolume": (SignalType.STORAGE_ATTACH_FAILURE, Severity.HIGH),
     "Unhealthy": (SignalType.EVENT_PROBE_FAILURE, Severity.MEDIUM),
     "BackOff": (SignalType.EVENT_BACKOFF, Severity.HIGH),
 }

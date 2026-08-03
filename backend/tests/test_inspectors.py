@@ -286,3 +286,55 @@ class TestFindingsAreUnchangedByTheMigration:
         payload = DeploymentInspector().analyse([listing(deployment)], cluster_wide())
 
         assert payload["unhealthy_deployments"][0]["unavailable_replicas"] == 2
+
+
+class TestJobFailuresNameTheirReason:
+    """A Job's `Failed` condition carries *why* it gave up, and the two common
+    reasons need opposite fixes: `DeadlineExceeded` means the work ran past
+    `activeDeadlineSeconds` and may just need longer, while
+    `BackoffLimitExceeded` means it failed repeatedly and the work is broken.
+
+    Both reported "Job has failed pods" — and a Job that hit its deadline
+    without any pod failing reported nothing at all, which is that case's
+    normal shape. Both conditions below are verbatim from a real cluster; see
+    `docs/QA_AUDIT_2026-08-03.md`.
+    """
+
+    def job(self, **status):
+        return listing({"metadata": {"name": "nightly", "namespace": "prod"}, "status": status})
+
+    def issues(self, job_result):
+        results = [listing(), listing(), job_result, listing()]
+        return [
+            f["issue"] for f in WorkloadInspector().analyse(results, cluster_wide())["findings"]
+        ]
+
+    def test_a_deadline_is_named(self):
+        conditions = [{"type": "Failed", "status": "True", "reason": "DeadlineExceeded"}]
+        assert self.issues(self.job(conditions=conditions, failed=1)) == [
+            "Job exceeded its active deadline"
+        ]
+
+    def test_a_deadline_with_no_failed_pod_is_still_reported(self):
+        """The case that reported nothing at all: the deadline killed the pod,
+        so `status.failed` never incremented."""
+        conditions = [{"type": "Failed", "status": "True", "reason": "DeadlineExceeded"}]
+        assert self.issues(self.job(conditions=conditions)) == ["Job exceeded its active deadline"]
+
+    def test_an_exhausted_backoff_limit_is_named_differently(self):
+        conditions = [{"type": "Failed", "status": "True", "reason": "BackoffLimitExceeded"}]
+        assert self.issues(self.job(conditions=conditions, failed=2)) == [
+            "Job exhausted its backoff limit"
+        ]
+
+    def test_failed_pods_without_a_condition_keep_the_old_wording(self):
+        """A Job still retrying has failed pods and no terminal condition."""
+        assert self.issues(self.job(failed=1)) == ["Job has failed pods"]
+
+    def test_a_succeeding_job_reports_nothing(self):
+        conditions = [{"type": "Complete", "status": "True"}]
+        assert self.issues(self.job(conditions=conditions, succeeded=1)) == []
+
+    def test_a_failed_condition_that_is_not_true_is_ignored(self):
+        conditions = [{"type": "Failed", "status": "False", "reason": "DeadlineExceeded"}]
+        assert self.issues(self.job(conditions=conditions)) == []

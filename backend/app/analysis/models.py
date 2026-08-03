@@ -35,6 +35,17 @@ class SignalType:
     POD_PENDING = "pod.pending"
     POD_STUCK_CREATING = "pod.stuck_creating"
     POD_ERROR = "pod.error"
+    # A ConfigMap, Secret or key the container references does not exist. The
+    # deep equivalents (`CONFIG_REFERENCE_MISSING`) say *which* one and need a
+    # playbook round; this is the same fault visible in baseline collection.
+    POD_CONFIG_ERROR = "pod.config_error"
+    # The kubelet removed the pod, usually under node pressure. Not a failure
+    # of the workload, which is why it reads differently from `POD_ERROR`.
+    POD_EVICTED = "pod.evicted"
+    # Running, every container healthy, and never Ready. Emitted at MEDIUM and
+    # used as corroboration rather than as a conclusion — see
+    # `pod_inspector._detect_pod_status` for why it carries no grace period.
+    POD_NOT_READY = "pod.not_ready"
 
     LOGS_ERROR_PATTERN = "logs.error_pattern"
     LOGS_OOM_PATTERN = "logs.oom_pattern"
@@ -58,6 +69,11 @@ class SignalType:
 
     STORAGE_PVC_UNBOUND = "storage.pvc_unbound"
     STORAGE_PV_UNAVAILABLE = "storage.pv_unavailable"
+    # The claim is bound and the volume still will not attach — most often a
+    # ReadWriteOnce disk still held by a pod on another node. A different fault
+    # from `STORAGE_PVC_UNBOUND` with a different fix, and it was previously
+    # recorded as a generic warning.
+    STORAGE_ATTACH_FAILURE = "storage.attach_failure"
 
     WORKLOAD_DEGRADED = "workload.degraded"
 

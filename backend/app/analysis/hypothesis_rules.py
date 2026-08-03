@@ -230,6 +230,7 @@ DEFAULT_HYPOTHESIS_RULES: tuple[HypothesisRule, ...] = (
             {
                 SignalType.POD_CRASH_LOOP,
                 SignalType.POD_PENDING,
+                SignalType.POD_NOT_READY,
                 SignalType.EVENT_PROBE_FAILURE,
                 SignalType.DEPLOYMENT_UNAVAILABLE,
             }
@@ -275,8 +276,20 @@ DEFAULT_HYPOTHESIS_RULES: tuple[HypothesisRule, ...] = (
             "One or more nodes are not Ready or are reporting resource pressure, which "
             "evicts or blocks pods scheduled to them."
         ),
-        triggers=frozenset({SignalType.NODE_NOT_READY, SignalType.NODE_PRESSURE}),
-        supporting=frozenset({SignalType.POD_PENDING, SignalType.EVENT_SCHEDULING_FAILURE}),
+        # Eviction triggers as well as the node conditions. A pod evicted under
+        # memory pressure is often the first thing an operator sees, and the
+        # node condition that caused it may already have cleared by the time
+        # anyone looks — leaving the eviction as the only remaining evidence.
+        triggers=frozenset(
+            {SignalType.NODE_NOT_READY, SignalType.NODE_PRESSURE, SignalType.POD_EVICTED}
+        ),
+        supporting=frozenset(
+            {
+                SignalType.POD_PENDING,
+                SignalType.EVENT_SCHEDULING_FAILURE,
+                SignalType.POD_OOM_KILLED,
+            }
+        ),
         missing_evidence=(
             "kubelet status and logs on the affected node",
             "Node allocatable capacity versus scheduled requests",
@@ -321,12 +334,25 @@ DEFAULT_HYPOTHESIS_RULES: tuple[HypothesisRule, ...] = (
             "without the key the container reads. The container cannot start until "
             "the reference resolves."
         ),
-        triggers=frozenset({SignalType.CONFIG_REFERENCE_MISSING, SignalType.CONFIG_KEY_MISSING}),
+        # `POD_CONFIG_ERROR` is the baseline trigger and the other two are the
+        # deep ones. Without it this hypothesis needed a playbook round to
+        # exist at all, so a pod plainly reporting
+        # `CreateContainerConfigError` produced no configuration hypothesis on
+        # the first pass — the deep rules name *which* reference is missing,
+        # but the fault is already visible without them.
+        triggers=frozenset(
+            {
+                SignalType.POD_CONFIG_ERROR,
+                SignalType.CONFIG_REFERENCE_MISSING,
+                SignalType.CONFIG_KEY_MISSING,
+            }
+        ),
         supporting=frozenset(
             {
                 SignalType.POD_CRASH_LOOP,
                 SignalType.LOGS_ERROR_PATTERN,
                 SignalType.CONTAINER_NONZERO_EXIT,
+                SignalType.EVENT_WARNING,
             }
         ),
         missing_evidence=(
@@ -355,6 +381,36 @@ DEFAULT_HYPOTHESIS_RULES: tuple[HypothesisRule, ...] = (
         ),
         remediation_hint="Raise the quota or reduce the namespace's resource requests.",
         base_confidence=75,
+    ),
+    SignalPatternRule(
+        id="storage.volume_attach_blocked",
+        title="Volume is bound but cannot be attached to the node",
+        category="storage",
+        rationale=(
+            "The claim is bound, so this is not a provisioning problem. The volume "
+            "could not be attached to the node the pod was scheduled onto — most "
+            "often a ReadWriteOnce disk still attached to a pod on another node, "
+            "which resolves only when the previous pod fully terminates."
+        ),
+        triggers=frozenset({SignalType.STORAGE_ATTACH_FAILURE}),
+        supporting=frozenset(
+            {
+                SignalType.POD_PENDING,
+                SignalType.POD_STUCK_CREATING,
+                SignalType.EVENT_MOUNT_FAILURE,
+                SignalType.NODE_NOT_READY,
+            }
+        ),
+        missing_evidence=(
+            "Which node currently holds the volume attachment",
+            "Whether the previous pod using the claim has fully terminated",
+            "The claim's access mode and the volume plugin in use",
+        ),
+        remediation_hint=(
+            "Wait for or force detachment from the previous node, or move the "
+            "workload to ReadWriteMany if concurrent access is genuinely needed."
+        ),
+        base_confidence=70,
     ),
     SignalPatternRule(
         id="storage.no_default_storage_class",
@@ -412,8 +468,19 @@ DEFAULT_HYPOTHESIS_RULES: tuple[HypothesisRule, ...] = (
             "A liveness or readiness probe is failing. Either the application is genuinely "
             "unhealthy, or the probe's path, port, or timing is misconfigured."
         ),
-        triggers=frozenset({SignalType.EVENT_PROBE_FAILURE}),
-        supporting=frozenset({SignalType.POD_CRASH_LOOP, SignalType.NETWORK_NO_ENDPOINTS}),
+        # `POD_NOT_READY` triggers as well as `EVENT_PROBE_FAILURE` because
+        # Kubernetes expires events after an hour: a permanently failing probe
+        # stops producing them, and the pod condition is the only lasting
+        # trace. The condition is derived from the pod itself, so it survives
+        # as long as the fault does.
+        triggers=frozenset({SignalType.EVENT_PROBE_FAILURE, SignalType.POD_NOT_READY}),
+        supporting=frozenset(
+            {
+                SignalType.POD_CRASH_LOOP,
+                SignalType.NETWORK_NO_ENDPOINTS,
+                SignalType.DEPLOYMENT_UNAVAILABLE,
+            }
+        ),
         missing_evidence=(
             "Probe definitions including path, port, and thresholds",
             "Direct response from the probe endpoint inside the container",

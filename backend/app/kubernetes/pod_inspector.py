@@ -11,6 +11,12 @@ PROBLEM_STATUSES = {
     "Pending",
     "Error",
     "OOMKilled",
+    # The catch-all, and only ever reached when no container explained itself.
+    # A pod the control plane gave up on usually *does* have a container reason
+    # (a failed Job pod terminates with `Error`), but one removed out from
+    # under the kubelet may carry nothing else at all — and phase `Failed` is
+    # unambiguous, so ignoring it left those invisible.
+    "Failed",
 }
 
 # Container-level reasons, which the API server reports *separately* from the
@@ -29,11 +35,68 @@ CONTAINER_PROBLEM_REASONS = frozenset(
         "CrashLoopBackOff",
         "ImagePullBackOff",
         "ErrImagePull",
+        # The remaining two image reasons. `InvalidImageName` is a malformed
+        # reference the kubelet rejects without contacting a registry;
+        # `ErrImageNeverPull` is `imagePullPolicy: Never` with no local image.
+        # Both are image faults with different fixes from a failed pull, and
+        # both were previously reported as `Pending`.
+        "InvalidImageName",
+        "ErrImageNeverPull",
+        # A ConfigMap, Secret or key the container references does not exist.
+        # This is the `notifier` case from the audit: distinct from an image
+        # fault, and previously flattened to `Pending` with no signal of its
+        # own — the platform could only reach it through a playbook round.
+        "CreateContainerConfigError",
+        "CreateContainerError",
         "OOMKilled",
         "Error",
         "ContainerCreating",
     }
 )
+
+# A pod the kubelet removed rather than one that failed on its own. Reported at
+# the *pod* level (`status.reason`), not on any container, so it needs its own
+# check — an evicted pod's containers often report nothing useful at all.
+EVICTED = "Evicted"
+
+# How much each reason explains, most explanatory first. The candidates found
+# across a pod's containers are ranked by this rather than by which field they
+# came from, and that ordering does two things a field order cannot.
+#
+# **`OOMKilled` outranks `CrashLoopBackOff`.** A container being killed for
+# memory reports `waiting.reason: CrashLoopBackOff` *and*
+# `lastState.terminated.reason: OOMKilled` at the same time. Reading the
+# waiting state first — which is otherwise the right instinct — returned the
+# loop and discarded the cause, so `POD_OOM_KILLED` could not fire for the
+# failure it exists to name. The loop is the symptom; the kill is the finding.
+#
+# **It also makes repeat investigations agree.** A crash-looping container
+# alternates between running and backing off, so a point-in-time read caught
+# `Error` at one instant and `CrashLoopBackOff` a minute later — the audit saw
+# the same cluster produce two different root causes on consecutive runs.
+# Ranking a *set* of candidates is stable where "first field that matched" is
+# not; `_restart_candidate` below supplies the missing member of that set.
+REASON_PRECEDENCE = (
+    "OOMKilled",
+    "CreateContainerConfigError",
+    "CreateContainerError",
+    "InvalidImageName",
+    "ErrImageNeverPull",
+    "ImagePullBackOff",
+    "ErrImagePull",
+    "CrashLoopBackOff",
+    "Error",
+    "ContainerCreating",
+)
+
+# Restarts before a container counts as looping even when caught mid-run. Two
+# rather than one because a single restart is a recoverable blip, and this
+# turns into a `CrashLoopBackOff` claim.
+RESTART_THRESHOLD = 2
+
+# `phase: Running` with `Ready: False`. The workload is up and serving nothing,
+# which is what a Service with no endpoints is usually made of.
+NOT_READY = "NotReady"
 
 
 class PodInspector:
@@ -125,6 +188,29 @@ class PodInspector:
             "containers": containers,
         }
 
+    def _restart_candidate(self, container_status: dict[str, Any]) -> str | None:
+        """`CrashLoopBackOff` for a container that has been restarting.
+
+        A crash-looping container spends part of its cycle *running*, and at
+        that instant nothing reports the loop: `waiting` is empty and the only
+        trace is `lastState.terminated.reason: Error`. Half of the reads
+        therefore called it `Error` and half called it `CrashLoopBackOff`, which
+        is how the audit saw one unchanged cluster produce two different root
+        causes on consecutive investigations.
+
+        The restart count is the fact that does not oscillate, so it supplies
+        the loop as a candidate at every instant and precedence picks between
+        that and whatever else was observed. A container that exited cleanly is
+        excluded — completed init containers and finished jobs restart
+        legitimately.
+        """
+        if container_status.get("restartCount", 0) < RESTART_THRESHOLD:
+            return None
+        terminated = (container_status.get("lastState") or {}).get("terminated") or {}
+        if not terminated or terminated.get("reason") == "Completed":
+            return None
+        return "CrashLoopBackOff"
+
     def _detect_pod_status(self, pod: dict[str, Any]) -> str | None:
         """The most specific reason this pod is unhealthy, or `None`.
 
@@ -149,18 +235,34 @@ class PodInspector:
         """
         status = pod.get("status", {})
 
-        for container_status in status.get("containerStatuses", []) or []:
+        # Eviction first: the kubelet removed this pod, and its containers
+        # frequently report nothing that would explain why.
+        if status.get("reason") == EVICTED:
+            return EVICTED
+
+        # Init containers before app containers. An init container that cannot
+        # start blocks every container behind it, so its reason is the
+        # actionable one — the app containers are merely waiting, and reporting
+        # `PodInitializing` would name the symptom. These were not read at all
+        # before, so such a pod reported the bare phase.
+        candidates = set()
+        for container_status in [
+            *(status.get("initContainerStatuses") or []),
+            *(status.get("containerStatuses") or []),
+        ]:
             state = container_status.get("state") or {}
             last_state = container_status.get("lastState") or {}
-            # Current state before historical: a container waiting on a bad
-            # image now matters more than one that exited an hour ago.
             for reason in (
                 (state.get("waiting") or {}).get("reason"),
                 (state.get("terminated") or {}).get("reason"),
                 (last_state.get("terminated") or {}).get("reason"),
+                self._restart_candidate(container_status),
             ):
                 if reason in CONTAINER_PROBLEM_REASONS:
-                    return reason
+                    candidates.add(reason)
+
+        if candidates:
+            return min(candidates, key=REASON_PRECEDENCE.index)
 
         # Only now the phase, which is what `Pending` on an unscheduled pod
         # legitimately is: there are no container statuses to be more specific
@@ -169,8 +271,28 @@ class PodInspector:
         if phase in PROBLEM_STATUSES:
             return phase
 
-        for condition in status.get("conditions", []):
+        conditions = status.get("conditions", []) or []
+        for condition in conditions:
             if condition.get("type") == "PodScheduled" and condition.get("status") == "False":
                 return condition.get("reason", "Pending")
+
+        # Running, nothing wrong with any container, and still not Ready. The
+        # `gateway` case from the audit: a readiness probe that never passes, so
+        # the pod serves nothing and its Service has no endpoints — while every
+        # container reports healthy. It was detected only through the kubelet's
+        # `Unhealthy` event, and Kubernetes expires events after an hour, after
+        # which a permanently broken workload looked entirely healthy here.
+        #
+        # **Deliberately no grace period, because there is deliberately no
+        # clock.** `analyse()` is pure so that a stored report can be
+        # re-derived from its evidence; reading the wall clock here would make
+        # the same evidence produce different output on every run. The cost is
+        # that a pod still starting reports too, so this is emitted at MEDIUM
+        # and is wired to *corroborate* the probe and endpoint hypotheses
+        # rather than to conclude anything on its own.
+        if phase == "Running":
+            ready = next((c for c in conditions if c.get("type") == "Ready"), None)
+            if ready is not None and ready.get("status") == "False":
+                return NOT_READY
 
         return None

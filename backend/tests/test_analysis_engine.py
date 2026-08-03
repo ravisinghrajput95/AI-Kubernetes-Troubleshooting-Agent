@@ -263,3 +263,91 @@ def test_hypotheses_are_ranked_by_severity_then_confidence():
     ids = [item.id for item in result.hypotheses]
     assert ids[0] == "workload.out_of_memory"
     assert "probe.failing" in ids
+
+
+# --- Tier-2 detection breadth (docs/QA_AUDIT_2026-08-03.md) -------------------
+
+
+def event(reason, message="", obj="Pod/web-0"):
+    return investigation(
+        events={
+            "findings": [{"reason": reason, "message": message, "object": obj, "namespace": "prod"}]
+        }
+    )
+
+
+class TestVolumeAttachIsNotAnUnboundClaim:
+    """A bound volume that will not attach is a different fault from a claim
+    that was never provisioned, and the fixes have nothing in common: one waits
+    for a detach from another node, the other creates storage. `FailedAttachVolume`
+    previously fell through to a generic LOW warning, so the most common form —
+    a ReadWriteOnce disk still held by a pod elsewhere — had no finding at all.
+    """
+
+    def test_a_failed_attach_is_its_own_signal(self):
+        result = ENGINE.analyze(
+            event("FailedAttachVolume", "Multi-Attach error for volume pvc-abc123")
+        )
+
+        signal = result.by_type(SignalType.STORAGE_ATTACH_FAILURE)[0]
+        assert signal.severity is Severity.HIGH
+
+    def test_it_is_not_reported_as_an_unbound_claim(self):
+        result = ENGINE.analyze(event("FailedAttachVolume", "Multi-Attach error"))
+
+        assert not result.by_type(SignalType.STORAGE_PVC_UNBOUND)
+
+    def test_it_is_not_swallowed_as_a_generic_warning(self):
+        """What it used to be, and the reason it was invisible."""
+        result = ENGINE.analyze(event("FailedAttachVolume", "Multi-Attach error"))
+
+        assert not result.by_type(SignalType.EVENT_WARNING)
+
+    def test_it_raises_its_own_hypothesis(self):
+        result = ENGINE.analyze(event("FailedAttachVolume", "Multi-Attach error"))
+
+        assert any(h.id == "storage.volume_attach_blocked" for h in result.hypotheses)
+
+    def test_a_mount_failure_stays_a_mount_failure(self):
+        """The neighbouring reason must not be absorbed by the new one."""
+        result = ENGINE.analyze(event("FailedMount", "MountVolume.SetUp failed"))
+
+        assert result.by_type(SignalType.EVENT_MOUNT_FAILURE)
+        assert not result.by_type(SignalType.STORAGE_ATTACH_FAILURE)
+
+
+class TestTheNewPodStatusesReachHypotheses:
+    """A signal that no hypothesis consumes changes no diagnosis."""
+
+    def pods(self, status):
+        return investigation(
+            pods={"problematic_pods": [{"name": "web-0", "namespace": "prod", "status": status}]}
+        )
+
+    def test_a_configuration_error_raises_the_configuration_hypothesis(self):
+        """Previously reachable only after a playbook round, so a pod plainly
+        reporting `CreateContainerConfigError` produced no configuration
+        hypothesis on the first pass."""
+        result = ENGINE.analyze(self.pods("CreateContainerConfigError"))
+
+        assert any(h.id == "workload.missing_configuration" for h in result.hypotheses)
+
+    def test_an_evicted_pod_raises_the_node_hypothesis(self):
+        """The node condition that caused the eviction may already have
+        cleared, leaving the eviction as the only remaining evidence."""
+        result = ENGINE.analyze(self.pods("Evicted"))
+
+        assert any(h.id == "node.unhealthy" for h in result.hypotheses)
+
+    def test_a_pod_that_is_never_ready_raises_the_probe_hypothesis(self):
+        """Kubernetes expires events after an hour, so a permanently failing
+        probe stops producing them and the pod condition is the only lasting
+        trace."""
+        result = ENGINE.analyze(self.pods("NotReady"))
+
+        assert any(h.id == "probe.failing" for h in result.hypotheses)
+
+    def test_an_out_of_memory_pod_still_raises_its_own_hypothesis(self):
+        result = ENGINE.analyze(self.pods("OOMKilled"))
+
+        assert any(h.id == "workload.out_of_memory" for h in result.hypotheses)

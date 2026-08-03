@@ -93,8 +93,26 @@ class WorkloadInspector:
             ready = status.get("numberReady", 0)
             if ready < desired:
                 return "DaemonSet is not ready on all scheduled nodes"
-        if resource == "jobs" and status.get("failed", 0) > 0:
-            return "Job has failed pods"
+        if resource == "jobs":
+            # A Job's `Failed` condition carries *why* it gave up, and the two
+            # reasons need opposite fixes: `DeadlineExceeded` means the work
+            # ran past `activeDeadlineSeconds` and may simply need longer,
+            # while `BackoffLimitExceeded` means it failed repeatedly and the
+            # work itself is broken. Reporting only "has failed pods" gave the
+            # same sentence for both — and said nothing at all for a Job that
+            # hit its deadline without any pod failing, which is the deadline
+            # case's normal shape.
+            for condition in status.get("conditions", []) or []:
+                if condition.get("type") != "Failed" or condition.get("status") != "True":
+                    continue
+                reason = condition.get("reason", "")
+                if reason == "DeadlineExceeded":
+                    return "Job exceeded its active deadline"
+                if reason == "BackoffLimitExceeded":
+                    return "Job exhausted its backoff limit"
+                return f"Job failed: {reason}" if reason else "Job failed"
+            if status.get("failed", 0) > 0:
+                return "Job has failed pods"
         if resource == "cronjobs" and spec.get("suspend") is True:
             return "CronJob is suspended"
         return ""
