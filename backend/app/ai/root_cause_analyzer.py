@@ -10,6 +10,7 @@ from app.ai.prompt_builder import PromptBuilder
 from app.analysis.confidence import CompositeConfidenceScorer
 from app.analysis.engine import AnalysisEngine
 from app.analysis.grounding import GroundingResult, GroundingValidator
+from app.analysis.incidents import group_incidents, selection_rationale
 from app.analysis.models import AnalysisResult
 from app.kubernetes.command_policy import CommandClass, classify_command
 from app.observability import metrics
@@ -215,6 +216,14 @@ class RootCauseAnalyzer:
             "patches": [patch.to_dict() for patch in plan.patches] if plan else [],
             "signals": [signal.to_dict() for signal in analysis.signals],
             "hypotheses": [item.to_dict() for item in analysis.hypotheses],
+            # Additive views over the same hypotheses, so neither can disagree
+            # with `selected_hypothesis`. `incidents` separates concurrent
+            # unrelated faults from one fault seen from several angles;
+            # `selection_rationale` explains an ordering that is otherwise
+            # invisible — severity outranks confidence, so the leader can show
+            # a lower percentage than an entry beneath it.
+            "incidents": [item.to_dict() for item in group_incidents(analysis.hypotheses)],
+            "selection_rationale": selection_rationale(analysis.hypotheses),
             "selected_hypothesis": top.id if top else None,
             "cited_signals": cited_signals,
             "cited_evidence": analysis.evidence_ids_for(tuple(cited_signals)),

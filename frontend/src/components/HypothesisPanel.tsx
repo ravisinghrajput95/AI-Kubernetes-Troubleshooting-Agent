@@ -56,6 +56,11 @@ export function HypothesisPanel({ diagnosis }: { diagnosis?: Diagnosis }) {
   const hypotheses = rankHypotheses(diagnosis?.hypotheses ?? []);
   const lookup = signalsById(diagnosis?.signals ?? []);
   const selected = diagnosis?.selected_hypothesis ?? null;
+  // Only present when the leader is not also the most confident. Without it a
+  // reader sees a higher percentage lose and has no way to know severity was
+  // the tiebreak — an unexplained ordering costs more credibility than the
+  // ordering gains.
+  const rationale = diagnosis?.selection_rationale ?? "";
 
   return (
     <Panel
@@ -67,6 +72,13 @@ export function HypothesisPanel({ diagnosis }: { diagnosis?: Diagnosis }) {
         ) : undefined
       }
     >
+      {rationale ? (
+        <p className="mb-3 rounded-md border border-slate-800 bg-[#0d131c] px-3 py-2 text-xs leading-5 text-slate-400">
+          <span className="font-semibold text-slate-300">Why this one: </span>
+          {rationale}
+        </p>
+      ) : null}
+
       {hypotheses.length === 0 ? (
         <EmptyState message="No hypotheses were generated. The evidence showed no recognised failure pattern." />
       ) : (

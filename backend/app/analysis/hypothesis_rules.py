@@ -16,6 +16,17 @@ REFUTE_PENALTY = 20
 MAX_CONFIDENCE = 92
 MIN_CONFIDENCE = 5
 
+# Charged to a hypothesis resting on one observation with nothing corroborating
+# it. Confidence is meant to express how well evidence converges, and without
+# this a rule with a high `base_confidence` scored the same whether ten signals
+# agreed or one did — so a single stray reading could outrank a thoroughly
+# supported explanation purely because its rule was written optimistically.
+#
+# It is a penalty on *breadth*, not on severity: one CRITICAL signal is still
+# critical and still ranks first on severity. What it stops is that hypothesis
+# also claiming the confidence of a corroborated one.
+UNCORROBORATED_PENALTY = 15
+
 
 class HypothesisRule(Protocol):
     id: str
@@ -49,6 +60,10 @@ class SignalPatternRule:
         confidence = self.base_confidence
         confidence += SUPPORT_BONUS * len({signal.type for signal in supporting})
         confidence -= REFUTE_PENALTY * len({signal.type for signal in refuting})
+        # One triggering signal, nothing supporting it, nothing refuting it:
+        # a single observation and an assertion about what it means.
+        if len(triggering) == 1 and not supporting:
+            confidence -= UNCORROBORATED_PENALTY
         confidence = max(MIN_CONFIDENCE, min(confidence, MAX_CONFIDENCE))
 
         primary = max(triggering, key=lambda signal: signal.severity.weight)

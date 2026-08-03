@@ -62,6 +62,10 @@ class SignalType:
 
     NETWORK_NO_ENDPOINTS = "network.no_endpoints"
     NETWORK_NO_SELECTOR = "network.no_selector"
+    # A selector that matches nothing at all, as opposed to one matching pods
+    # that are merely unhealthy. "No endpoints" is true of both and the fixes
+    # have nothing in common: correct the labels, or repair the workload.
+    NETWORK_SELECTOR_MATCHES_NOTHING = "network.selector_matches_nothing"
     NETWORK_DNS_MISSING = "network.dns_missing"
 
     NODE_NOT_READY = "node.not_ready"

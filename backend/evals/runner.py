@@ -123,10 +123,31 @@ class EvalRunner:
                     f"confidence {top.confidence} above expected maximum {expect.max_confidence}"
                 )
 
+        # Counted before the pass/fail verdict, so a case that fails on
+        # confidence still reports the detections it did make.
+        expected_detections = (
+            len(expect.hypotheses_present)
+            + len(expect.signals_present)
+            + (1 if expect.top_hypothesis not in (UNSET, None) else 0)
+        )
+        found_detections = (
+            sum(1 for item in expect.hypotheses_present if item in hypothesis_ids)
+            + sum(1 for item in expect.signals_present if item in signal_ids)
+            + (
+                1
+                if expect.top_hypothesis not in (UNSET, None)
+                and top is not None
+                and top.id == expect.top_hypothesis
+                else 0
+            )
+        )
+
         return CaseResult(
             case_id=case.id,
             passed=not failures,
             failures=failures,
+            expected_detections=expected_detections,
+            found_detections=found_detections,
             detail={
                 "top_hypothesis": top.id if top else None,
                 "confidence": top.confidence if top else None,

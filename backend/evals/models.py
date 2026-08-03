@@ -93,6 +93,14 @@ class CaseResult:
     passed: bool
     failures: list[str] = field(default_factory=list)
     detail: dict[str, Any] = field(default_factory=dict)
+    # How many of the observations this case says must be detected actually
+    # were. Pass/fail alone answers "did the corpus stay green"; these answer
+    # "how much of what we claim to detect still fires", which is the question
+    # a detection regression shows up in first. A case expecting six signals
+    # that finds five fails once, exactly as a case expecting one that finds
+    # none does — the count is what tells those apart.
+    expected_detections: int = 0
+    found_detections: int = 0
 
 
 @dataclass
@@ -103,6 +111,21 @@ class EvalReport:
     @property
     def hypothesis_accuracy(self) -> float:
         return _ratio(sum(1 for r in self.investigations if r.passed), len(self.investigations))
+
+    @property
+    def detection_recall(self) -> float:
+        """Share of all expected signals and hypotheses across the corpus that
+        fired. Distinct from accuracy: accuracy asks whether the chosen answer
+        was right, recall asks how much of what should have been seen was seen.
+
+        A platform can score 100% accuracy while quietly detecting less than it
+        used to — the audit found exactly that, with every gate green and a
+        textbook ImagePullBackOff producing no signal at all.
+        """
+        expected = sum(case.expected_detections for case in self.investigations)
+        if not expected:
+            return 1.0
+        return sum(case.found_detections for case in self.investigations) / expected
 
     @property
     def grounding_accuracy(self) -> float:
@@ -125,6 +148,10 @@ class EvalReport:
         lines = [
             f"Golden investigations : {_count(self.investigations)}  "
             f"({self.hypothesis_accuracy:.0%} correct)",
+            f"Detection recall      : {self.detection_recall:.0%}  "
+            f"({sum(c.found_detections for c in self.investigations)}/"
+            f"{sum(c.expected_detections for c in self.investigations)} expected "
+            f"signals and hypotheses fired)",
             f"Grounding corpus      : {_count(self.grounding)}  "
             f"({self.grounding_accuracy:.0%} correct)",
         ]

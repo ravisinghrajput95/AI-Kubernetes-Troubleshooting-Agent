@@ -1,0 +1,61 @@
+{
+  "description": "A pod Running with every container healthy and never Ready. Detected before only through an Unhealthy event, which Kubernetes expires after an hour \u2014 after which a permanently broken workload looked healthy.",
+  "investigation": {
+    "context": "eval",
+    "health": {
+      "status": "issues_found"
+    },
+    "evidence": [
+      {
+        "id": "k8s.pods:cluster/_cluster/t",
+        "kind": "k8s.pods"
+      },
+      {
+        "id": "k8s.events:cluster/_cluster/t",
+        "kind": "k8s.events"
+      },
+      {
+        "id": "k8s.network:cluster/_cluster/t",
+        "kind": "k8s.network"
+      },
+      {
+        "id": "k8s.nodes:cluster/_cluster/t",
+        "kind": "k8s.nodes"
+      },
+      {
+        "id": "k8s.storage:cluster/_cluster/t",
+        "kind": "k8s.storage"
+      },
+      {
+        "id": "k8s.deployments:cluster/_cluster/t",
+        "kind": "k8s.deployments"
+      },
+      {
+        "id": "k8s.pods.logs:cluster/_cluster/t",
+        "kind": "k8s.pods.logs"
+      },
+      {
+        "id": "k8s.workloads:cluster/_cluster/t",
+        "kind": "k8s.workloads"
+      }
+    ],
+    "pods": {
+      "problematic_pods": [
+        {
+          "name": "gateway-0",
+          "namespace": "prod",
+          "status": "NotReady"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "hypotheses_present": [
+      "probe.failing"
+    ],
+    "signals_present": [
+      "pod.not_ready:pod/prod/gateway-0"
+    ]
+  },
+  "id": "pod-running-but-never-ready"
+}

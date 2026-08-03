@@ -1,0 +1,70 @@
+{
+  "description": "A Service whose selector matches no pod at all. 'No ready endpoints' is true of this and of a service whose pods are merely unhealthy, and the fixes have nothing in common: correct the labels, or repair the workload.",
+  "investigation": {
+    "context": "eval",
+    "health": {
+      "status": "issues_found"
+    },
+    "evidence": [
+      {
+        "id": "k8s.pods:cluster/_cluster/t",
+        "kind": "k8s.pods"
+      },
+      {
+        "id": "k8s.events:cluster/_cluster/t",
+        "kind": "k8s.events"
+      },
+      {
+        "id": "k8s.network:cluster/_cluster/t",
+        "kind": "k8s.network"
+      },
+      {
+        "id": "k8s.nodes:cluster/_cluster/t",
+        "kind": "k8s.nodes"
+      },
+      {
+        "id": "k8s.storage:cluster/_cluster/t",
+        "kind": "k8s.storage"
+      },
+      {
+        "id": "k8s.deployments:cluster/_cluster/t",
+        "kind": "k8s.deployments"
+      },
+      {
+        "id": "k8s.pods.logs:cluster/_cluster/t",
+        "kind": "k8s.pods.logs"
+      },
+      {
+        "id": "k8s.workloads:cluster/_cluster/t",
+        "kind": "k8s.workloads"
+      }
+    ],
+    "network": {
+      "findings": [],
+      "selectors": {
+        "prod/checkout-svc": {
+          "app": "checkout-v2"
+        }
+      }
+    },
+    "pods": {
+      "problematic_pods": [],
+      "pod_inventory": [
+        {
+          "name": "checkout-0",
+          "namespace": "prod",
+          "labels": {
+            "app": "checkout"
+          },
+          "phase": "Running"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "signals_present": [
+      "network.selector_matches_nothing:service/prod/checkout-svc"
+    ]
+  },
+  "id": "selector-matches-nothing"
+}

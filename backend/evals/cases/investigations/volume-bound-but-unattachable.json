@@ -1,0 +1,60 @@
+{
+  "description": "A bound volume that will not attach \u2014 most often a ReadWriteOnce disk still held on another node. Distinct from an unbound claim: one waits for a detach, the other creates storage.",
+  "investigation": {
+    "context": "eval",
+    "health": {
+      "status": "issues_found"
+    },
+    "evidence": [
+      {
+        "id": "k8s.pods:cluster/_cluster/t",
+        "kind": "k8s.pods"
+      },
+      {
+        "id": "k8s.events:cluster/_cluster/t",
+        "kind": "k8s.events"
+      },
+      {
+        "id": "k8s.network:cluster/_cluster/t",
+        "kind": "k8s.network"
+      },
+      {
+        "id": "k8s.nodes:cluster/_cluster/t",
+        "kind": "k8s.nodes"
+      },
+      {
+        "id": "k8s.storage:cluster/_cluster/t",
+        "kind": "k8s.storage"
+      },
+      {
+        "id": "k8s.deployments:cluster/_cluster/t",
+        "kind": "k8s.deployments"
+      },
+      {
+        "id": "k8s.pods.logs:cluster/_cluster/t",
+        "kind": "k8s.pods.logs"
+      },
+      {
+        "id": "k8s.workloads:cluster/_cluster/t",
+        "kind": "k8s.workloads"
+      }
+    ],
+    "events": {
+      "findings": [
+        {
+          "reason": "FailedAttachVolume",
+          "object": "Pod/web-0",
+          "namespace": "prod",
+          "message": "Multi-Attach error for volume pvc-abc123"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "top_hypothesis": "storage.volume_attach_blocked",
+    "hypotheses_absent": [
+      "storage.volume_unavailable"
+    ]
+  },
+  "id": "volume-bound-but-unattachable"
+}

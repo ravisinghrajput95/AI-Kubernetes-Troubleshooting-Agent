@@ -1,0 +1,59 @@
+{
+  "description": "A settled ImagePullBackOff must raise the image hypothesis from baseline evidence alone. The platform could not do this at all: the pod's phase is Pending and the reason lives on the container, so the reason was discarded and neither trigger for image.pull_failure ever fired.",
+  "investigation": {
+    "context": "eval",
+    "health": {
+      "status": "issues_found"
+    },
+    "evidence": [
+      {
+        "id": "k8s.pods:cluster/_cluster/t",
+        "kind": "k8s.pods"
+      },
+      {
+        "id": "k8s.events:cluster/_cluster/t",
+        "kind": "k8s.events"
+      },
+      {
+        "id": "k8s.network:cluster/_cluster/t",
+        "kind": "k8s.network"
+      },
+      {
+        "id": "k8s.nodes:cluster/_cluster/t",
+        "kind": "k8s.nodes"
+      },
+      {
+        "id": "k8s.storage:cluster/_cluster/t",
+        "kind": "k8s.storage"
+      },
+      {
+        "id": "k8s.deployments:cluster/_cluster/t",
+        "kind": "k8s.deployments"
+      },
+      {
+        "id": "k8s.pods.logs:cluster/_cluster/t",
+        "kind": "k8s.pods.logs"
+      },
+      {
+        "id": "k8s.workloads:cluster/_cluster/t",
+        "kind": "k8s.workloads"
+      }
+    ],
+    "pods": {
+      "problematic_pods": [
+        {
+          "name": "ledger-0",
+          "namespace": "prod",
+          "status": "ImagePullBackOff"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "top_hypothesis": "image.pull_failure",
+    "signals_present": [
+      "pod.image_pull_failure:pod/prod/ledger-0"
+    ]
+  },
+  "id": "image-pull-backoff-at-baseline"
+}

@@ -146,14 +146,24 @@ class PodLogRule:
             target = _pod_ref(namespace, name)
             sample = [str(line) for line in lines[:5]]
 
+            # The line itself, not a count of lines. `sample_lines` has always
+            # carried the text, but only the tally reached the summary — which
+            # is what the report renders and what a reader sees first. On the
+            # audit cluster the application printed
+            # `FATAL: config key DB_HOST is not set`, naming its own root
+            # cause, and the diagnosis said "logs contain 4 failure line(s)".
+            # Truncated because a stack trace must not push the summary out of
+            # the report's line budget.
+            quoted = sample[0].strip()[:160]
+            others = f" (+{len(lines) - 1} more)" if len(lines) > 1 else ""
             signals.append(
                 Signal.create(
                     SignalType.LOGS_ERROR_PATTERN,
                     Severity.HIGH,
-                    f"Pod {namespace}/{name} logs contain {len(lines)} failure line(s).",
+                    f'Pod {namespace}/{name} logs report: "{quoted}"{others}',
                     target,
                     evidence,
-                    {"sample_lines": sample, "line_count": len(lines)},
+                    {"sample_lines": sample, "line_count": len(lines), "first_line": quoted},
                 )
             )
 
@@ -442,12 +452,91 @@ class ResourceLimitsRule:
         ]
 
 
+class ServiceSelectorRule:
+    """A Service whose selector matches no pod that exists.
+
+    `network.no_endpoints` is true of two faults with nothing in common. Either
+    the selector is wrong — a typo, or a label that moved with a rewrite — and
+    the workload behind it may be perfectly healthy; or the selector is right
+    and every pod it matches is failing readiness. The first is fixed by
+    editing labels, the second by repairing the workload, and an operator told
+    only "no ready endpoints" has to work out which by hand.
+
+    `graph.service_backends_failing` already covers the second case, and covers
+    it well, because it can name the pods. It cannot cover the first: with no
+    matching pod there is no edge, so the traversal has nothing to walk and
+    stays silent. This rule is the complement, and the two are mutually
+    exclusive by construction.
+
+    **Only fires when pods were actually collected for that namespace.** A
+    scope that read no pods produces "matches nothing" for every service in the
+    cluster, which is the absence-of-evidence mistake the evidence layer exists
+    to prevent.
+    """
+
+    id = "network.selector_match"
+
+    def extract(self, data: AnalysisInput) -> Sequence[Signal]:
+        selectors = data.section("network").get("selectors") or {}
+        if not selectors:
+            return []
+
+        inventory = data.section("pods").get("pod_inventory") or []
+        namespaces_with_pods = {pod.get("namespace", "default") for pod in inventory}
+        evidence = (
+            *data.evidence_for(EvidenceKind.NETWORK, "network"),
+            *data.evidence_for(EvidenceKind.PODS, "pods"),
+        )
+
+        signals = []
+        for key, selector in selectors.items():
+            namespace, _, name = str(key).partition("/")
+            if not selector or namespace not in namespaces_with_pods:
+                continue
+
+            matched = [
+                pod
+                for pod in inventory
+                if pod.get("namespace", "default") == namespace
+                and _matches(selector, pod.get("labels") or {})
+            ]
+            if matched:
+                continue
+
+            rendered = ", ".join(f"{k}={v}" for k, v in sorted(selector.items()))
+            signals.append(
+                Signal.create(
+                    SignalType.NETWORK_SELECTOR_MATCHES_NOTHING,
+                    Severity.CRITICAL,
+                    f"Service {namespace}/{name} selects {rendered}, which matches no pod "
+                    f"in the namespace. The selector is wrong rather than the workload.",
+                    ResourceRef(kind="Service", name=name, namespace=namespace),
+                    evidence,
+                    {
+                        "service": f"{namespace}/{name}",
+                        "selector": dict(selector),
+                        "pods_in_namespace": sum(
+                            1 for pod in inventory if pod.get("namespace", "default") == namespace
+                        ),
+                    },
+                )
+            )
+
+        return signals
+
+
+def _matches(selector: dict[str, str], labels: dict[str, str]) -> bool:
+    """Kubernetes selector semantics: every key must match, extras are fine."""
+    return all(str(labels.get(key)) == str(value) for key, value in selector.items())
+
+
 DEFAULT_SIGNAL_RULES: tuple[SignalRule, ...] = (
     PodStatusRule(),
     PodLogRule(),
     EventRule(),
     DeploymentRule(),
     NetworkRule(),
+    ServiceSelectorRule(),
     NodeRule(),
     StorageRule(),
     WorkloadRule(),

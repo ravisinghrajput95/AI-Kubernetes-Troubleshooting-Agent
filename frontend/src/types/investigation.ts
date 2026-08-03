@@ -166,6 +166,25 @@ export interface Hypothesis {
   remediation_hint: string;
 }
 
+/**
+ * One independent problem, and every hypothesis explaining part of it.
+ *
+ * Derived from the same hypotheses rather than collected separately, so it
+ * cannot disagree with `selected_hypothesis`. Two hypotheses join an incident
+ * when they cite a shared signal — one fault seen from two ends — which is what
+ * separates concurrent unrelated outages from a single story.
+ */
+export interface Incident {
+  id: string;
+  title: string;
+  severity: Severity;
+  confidence: number;
+  primary_hypothesis: string;
+  hypotheses: string[];
+  target: ResourceRef;
+  missing_evidence: string[];
+}
+
 export interface ConfidenceComponent {
   component: string;
   weight: number;
@@ -257,6 +276,15 @@ export interface Diagnosis {
   signals?: Signal[];
   hypotheses?: Hypothesis[];
   selected_hypothesis?: string | null;
+  incidents?: Incident[];
+  /**
+   * Why the leading hypothesis leads, when that needs saying. Ranking puts
+   * severity before confidence, so the selected explanation can show a lower
+   * percentage than one listed beneath it. Empty when the leader is also the
+   * most confident — there is nothing to explain, and a sentence saying so is
+   * noise.
+   */
+  selection_rationale?: string;
   cited_signals?: string[];
   cited_evidence?: string[];
   confidence_breakdown?: ConfidenceComponent[];
