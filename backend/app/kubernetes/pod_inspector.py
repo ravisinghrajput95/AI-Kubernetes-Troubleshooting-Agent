@@ -13,6 +13,28 @@ PROBLEM_STATUSES = {
     "OOMKilled",
 }
 
+# Container-level reasons, which the API server reports *separately* from the
+# pod phase. This distinction is the whole of the bug below: `kubectl get pods`
+# prints one merged STATUS column, so `ImagePullBackOff` looks like a pod-level
+# status, while the API returns `phase: Pending` plus
+# `containerStatuses[].state.waiting.reason: ImagePullBackOff`. Reading the
+# phase first discarded the only actionable half.
+#
+# Deliberately exactly the container reasons `POD_STATUS_SIGNALS` can turn into
+# a signal — a reason returned from here that nothing maps produces a pod
+# visible in `problematic_pods` and no signal, which is a worse kind of silence
+# than not detecting it at all.
+CONTAINER_PROBLEM_REASONS = frozenset(
+    {
+        "CrashLoopBackOff",
+        "ImagePullBackOff",
+        "ErrImagePull",
+        "OOMKilled",
+        "Error",
+        "ContainerCreating",
+    }
+)
+
 
 class PodInspector:
     id = "k8s.pods"
@@ -104,27 +126,48 @@ class PodInspector:
         }
 
     def _detect_pod_status(self, pod: dict[str, Any]) -> str | None:
-        status = pod.get("status", {})
-        phase = status.get("phase")
+        """The most specific reason this pod is unhealthy, or `None`.
 
+        **Container reasons are read before the phase, and the order is the
+        point.** A pod that cannot pull its image is `phase: Pending` *and*
+        `waiting.reason: ImagePullBackOff`. Both are true; only the second is
+        useful. This checked the phase first and returned `Pending`, so the
+        reason was never reached — and because `POD_IMAGE_PULL_FAILURE` is one
+        of only two triggers for the image hypothesis, a textbook
+        ImagePullBackOff produced no hypothesis and no remediation at all.
+
+        It survived a full suite because every fixture supplied `status` as the
+        single merged string `kubectl` *prints*, not the phase-plus-reason the
+        API server returns — so the fakes encoded the same misunderstanding as
+        the code and could not fail. Found against a real cluster; see
+        `docs/QA_AUDIT_2026-08-03.md`. The regression fixtures are captured
+        API-server payloads for exactly that reason.
+
+        Only pods whose phase happened *not* to be a problem status ever
+        reached the loop, which is why crash-loop detection (`phase: Running`)
+        looked healthy and hid the hole.
+        """
+        status = pod.get("status", {})
+
+        for container_status in status.get("containerStatuses", []) or []:
+            state = container_status.get("state") or {}
+            last_state = container_status.get("lastState") or {}
+            # Current state before historical: a container waiting on a bad
+            # image now matters more than one that exited an hour ago.
+            for reason in (
+                (state.get("waiting") or {}).get("reason"),
+                (state.get("terminated") or {}).get("reason"),
+                (last_state.get("terminated") or {}).get("reason"),
+            ):
+                if reason in CONTAINER_PROBLEM_REASONS:
+                    return reason
+
+        # Only now the phase, which is what `Pending` on an unscheduled pod
+        # legitimately is: there are no container statuses to be more specific
+        # with, because no kubelet has accepted it yet.
+        phase = status.get("phase")
         if phase in PROBLEM_STATUSES:
             return phase
-
-        for container_status in status.get("containerStatuses", []):
-            state = container_status.get("state", {})
-            last_state = container_status.get("lastState", {})
-            waiting_reason = state.get("waiting", {}).get("reason")
-            terminated_reason = state.get("terminated", {}).get("reason")
-            last_terminated_reason = last_state.get("terminated", {}).get("reason")
-
-            if waiting_reason in PROBLEM_STATUSES:
-                return waiting_reason
-            if terminated_reason in PROBLEM_STATUSES:
-                return terminated_reason
-            if last_terminated_reason in PROBLEM_STATUSES:
-                return last_terminated_reason
-            if waiting_reason == "ContainerCreating":
-                return "ContainerCreating"
 
         for condition in status.get("conditions", []):
             if condition.get("type") == "PodScheduled" and condition.get("status") == "False":

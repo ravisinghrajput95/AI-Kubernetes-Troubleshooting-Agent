@@ -440,3 +440,67 @@ class TestAuthIsValidatedAtStartup:
         from app.core.config import Settings
 
         assert "build_authenticator" in inspect.getsource(Settings.validate_auth)
+
+
+class TestTheShippedDefaultCannotServeUnauthenticated:
+    """`AUTH_MODE` defaults to `disabled`, and it is worth being precise about
+    what that does and does not mean — an audit of this repository initially
+    read the default as "ships open" and recommended changing it.
+
+    It does not ship open. `disabled` requires `ALLOW_INSECURE_NO_AUTH`, so a
+    fresh install with no configuration **refuses to start**, naming both ways
+    forward. The insecure state is reachable only by an operator asking for it
+    in as many words.
+
+    That makes the default value a documentation hazard rather than a security
+    one, and the property worth protecting is the refusal itself — which is
+    behaviour, and therefore testable — rather than the string. Changing the
+    default to `token` would break every local-development deployment relying
+    on the acknowledgement while buying nothing, because both paths already
+    refuse. See `docs/QA_AUDIT_2026-08-03.md`.
+    """
+
+    def test_a_fresh_install_refuses_to_start(self):
+        from app.core.config import Settings
+
+        config = Settings(_env_file=None)
+
+        assert config.auth_mode == "disabled"
+        assert config.allow_insecure_no_auth is False
+        with pytest.raises((ValueError, RuntimeError)) as raised:
+            config.validate_auth()
+        assert "ALLOW_INSECURE_NO_AUTH" in str(raised.value)
+
+    def test_the_refusal_names_the_secure_alternatives(self):
+        """A refusal that only names the escape hatch teaches operators to take
+        it. This one has to offer the ways out that are not insecure."""
+        from app.core.config import Settings
+
+        with pytest.raises((ValueError, RuntimeError)) as raised:
+            Settings(_env_file=None).validate_auth()
+
+        message = str(raised.value)
+        assert "AUTH_MODE=oidc" in message or "oidc" in message
+        assert "token" in message
+
+    def test_token_mode_with_no_tokens_also_refuses(self):
+        """The other half: falling back to an empty token set would
+        authenticate nobody while looking configured."""
+        from app.core.config import Settings
+
+        config = Settings(_env_file=None)
+        object.__setattr__(config, "auth_mode", "token")
+        object.__setattr__(config, "api_tokens", "")
+
+        with pytest.raises((ValueError, RuntimeError)) as raised:
+            config.validate_auth()
+        assert "API_TOKENS" in str(raised.value)
+
+    def test_the_acknowledgement_is_what_permits_it(self):
+        """The escape hatch must still work, or local development breaks."""
+        from app.core.config import Settings
+
+        config = Settings(_env_file=None)
+        object.__setattr__(config, "allow_insecure_no_auth", True)
+
+        config.validate_auth()

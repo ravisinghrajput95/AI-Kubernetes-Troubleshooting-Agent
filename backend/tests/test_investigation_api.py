@@ -535,3 +535,39 @@ class TestTheStatusEndpointCarriesNoPayload:
         body = client.get(f"/investigations/{job_id}/status").json()
         assert body["status"] == "succeeded"
         assert body["persisted"] is True
+
+
+class TestRequestFieldsAreBounded:
+    """Every field on an investigation request names a Kubernetes object, and
+    RFC 1123 caps those at 253 characters. Before this they were unbounded: a
+    1 MB `context` was accepted with a 202 and written into the job row's
+    `request` jsonb *and* into the audit log, which is append-only by design and
+    therefore the one store that must stay bounded regardless of what the API
+    lets through. See `docs/QA_AUDIT_2026-08-03.md`.
+    """
+
+    def test_an_oversized_context_is_refused(self, cluster, auth, client):
+        response = client.post("/investigations", json={"context": "x" * 1_000_000}, headers=AUTH)
+
+        assert response.status_code == 422
+
+    def test_it_is_refused_before_any_work_starts(self, cluster, auth, client):
+        """422 rather than a 202 followed by a failure — validation that
+        happens after the row is written has not bounded the store."""
+        response = client.post("/investigations", json={"namespace": "n" * 1_000_000}, headers=AUTH)
+
+        assert response.status_code == 422
+        assert "id" not in response.json()
+
+    def test_every_free_text_field_is_bounded(self, cluster, auth, client):
+        """One bounded field and three unbounded ones is not a bound."""
+        for field in ("context", "namespace", "resource_kind", "resource_name"):
+            response = client.post("/investigations", json={field: "z" * 4096}, headers=AUTH)
+            assert response.status_code == 422, f"{field} accepted 4096 characters"
+
+    def test_a_realistic_name_is_still_accepted(self, cluster, auth, client):
+        """The bound must be generous against real Kubernetes names, or it
+        becomes an outage for anyone with long namespaces."""
+        response = client.post("/investigations", json={"namespace": "a" * 253}, headers=AUTH)
+
+        assert response.status_code == 202

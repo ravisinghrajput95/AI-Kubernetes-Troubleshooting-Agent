@@ -393,3 +393,103 @@ def test_healthy_dns_produces_no_signal():
 def test_deep_signals_are_ignored_when_no_deep_evidence_exists():
     result = ENGINE.analyze({"health": {"status": "healthy"}})
     assert result.signals == ()
+
+
+# --- Image-pull events, and what is *not* one ---------------------------------
+#
+# Every message below is verbatim from a real cluster unless marked otherwise;
+# they were captured during the audit in `docs/QA_AUDIT_2026-08-03.md`. The
+# defect these pin was found because the platform reported a missing ConfigMap
+# as a missing container image — the rule accepted `reason: Failed` (which the
+# kubelet emits for config, mount and runtime errors as well as image pulls)
+# and then substring-matched "not found" in its message.
+
+CONFIGMAP_MISSING = 'Error: configmap "notifier-config" not found'
+OOM_AT_INIT = (
+    "Error: failed to create containerd task: failed to create shim task: "
+    "OCI runtime create failed: runc create failed: unable to start container "
+    "process: container init was OOM-killed (memory limit too low?)"
+)
+REGISTRY_UNREACHABLE = (
+    'Failed to pull image "registry.invalid/does-not-exist:9.9.9": failed to pull '
+    'and unpack image "registry.invalid/does-not-exist:9.9.9": failed to resolve '
+    'reference "registry.invalid/does-not-exist:9.9.9": failed to do request: Head '
+    '"https://registry.invalid/v2/does-not-exist/manifests/9.9.9": dial tcp: lookup '
+    "registry.invalid on 192.168.65.254:53: no such host"
+)
+# Representative containerd phrasing for a tag that genuinely does not exist,
+# rather than a registry that could not be reached.
+MANIFEST_MISSING = (
+    'Failed to pull image "docker.io/library/nginx:9.9.9": rpc error: code = NotFound '
+    'desc = failed to pull and unpack image "docker.io/library/nginx:9.9.9": failed to '
+    'resolve reference "docker.io/library/nginx:9.9.9": docker.io/library/nginx:9.9.9: '
+    "not found"
+)
+
+
+def events(*messages, reason="Failed"):
+    return deep(
+        "k8s.resource.events",
+        {"events": [{"reason": reason, "message": m} for m in messages]},
+    )
+
+
+def test_a_missing_configmap_is_not_an_image_problem():
+    """The defect, verbatim. `Failed` + "not found" was enough to emit a
+    CRITICAL "image does not exist in the registry" over a message that says
+    the opposite, sending an operator to the registry when the fix is to
+    create a ConfigMap."""
+    result = ENGINE.analyze(investigation(events(CONFIGMAP_MISSING)))
+
+    assert not result.by_type(SignalType.IMAGE_NOT_FOUND)
+    assert not result.by_type(SignalType.IMAGE_PULL_UNAUTHORIZED)
+
+
+def test_a_runtime_failure_is_not_an_image_problem():
+    result = ENGINE.analyze(investigation(events(OOM_AT_INIT)))
+
+    assert not result.by_type(SignalType.IMAGE_NOT_FOUND)
+
+
+def test_a_missing_tag_is_still_reported():
+    """The guard that keeps the fix from being a silent over-correction: an
+    over-strict gate does not fail loudly, it just stops diagnosing."""
+    result = ENGINE.analyze(investigation(events(MANIFEST_MISSING)))
+
+    signal = result.by_type(SignalType.IMAGE_NOT_FOUND)[0]
+    assert signal.severity is Severity.CRITICAL
+
+
+def test_an_unreachable_registry_is_not_reported_as_a_missing_image():
+    """Real, and a distinction worth keeping: DNS did not resolve, so nothing
+    was learned about whether the image exists. Claiming it does not would be
+    the same overreach in a subtler form."""
+    result = ENGINE.analyze(investigation(events(REGISTRY_UNREACHABLE)))
+
+    assert not result.by_type(SignalType.IMAGE_NOT_FOUND)
+
+
+def test_an_unambiguous_image_reason_needs_no_phrasing():
+    """`FailedPull` names the image path on its own, so a terse message must
+    still classify."""
+    result = ENGINE.analyze(investigation(events("manifest unknown", reason="FailedPull")))
+
+    assert result.by_type(SignalType.IMAGE_NOT_FOUND)
+
+
+def test_an_unauthorized_pull_is_still_reported():
+    result = ENGINE.analyze(
+        investigation(events("Failed to pull image: pull access denied, 403 unauthorized"))
+    )
+
+    assert result.by_type(SignalType.IMAGE_PULL_UNAUTHORIZED)
+
+
+def test_an_unrelated_403_is_not_an_unauthorized_pull():
+    """The gate covers the unauthorized branch too — "403" is at least as easy
+    for an unrelated `Failed` event to contain as "not found"."""
+    result = ENGINE.analyze(
+        investigation(events("Error: failed to mount volume: server returned 403"))
+    )
+
+    assert not result.by_type(SignalType.IMAGE_PULL_UNAUTHORIZED)

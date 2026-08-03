@@ -237,6 +237,47 @@ class SchedulingEventRule:
         return signals
 
 
+# `FailedPull` and `ErrImagePull` name the image path unambiguously. `Failed`
+# does not: the kubelet emits it for config errors, mount errors and runtime
+# errors too, so it has to prove it is about an image before anything here
+# reads its message.
+UNAMBIGUOUS_IMAGE_EVENT_REASONS = frozenset({"FailedPull", "ErrImagePull"})
+
+# Phrasing that only appears on the image-pull path. Matched against the
+# message when the reason alone is not conclusive.
+IMAGE_PULL_PHRASES = (
+    "failed to pull",
+    "failed to resolve reference",
+    "pull access denied",
+    "manifest unknown",
+    "not found: manifest",
+    "errimagepull",
+    "imagepullbackoff",
+    "image pull",
+)
+
+
+def _is_image_event(reason: str, lowered: str) -> bool:
+    """Whether this event is about pulling an image at all.
+
+    Without this, `reason: Failed` plus the substring "not found" was enough to
+    emit a CRITICAL "image does not exist in the registry" — and a missing
+    ConfigMap produces exactly that pair (`Error: configmap "x" not found`).
+    The result was a confident diagnosis whose own sentence contradicted
+    itself, pointing an operator at the registry when the fix was to create a
+    ConfigMap. Worse than a miss, and the direct opposite of asserting nothing
+    without evidence. Found on a real cluster; see
+    `docs/QA_AUDIT_2026-08-03.md`.
+
+    The gate covers the unauthorized branch as well as the not-found one: "403"
+    and "authentication" are at least as easy for an unrelated `Failed` event
+    to contain.
+    """
+    if reason in UNAMBIGUOUS_IMAGE_EVENT_REASONS:
+        return True
+    return any(phrase in lowered for phrase in IMAGE_PULL_PHRASES)
+
+
 class ImagePullEventRule:
     """Distinguishes an authentication failure from a missing image."""
 
@@ -250,11 +291,15 @@ class ImagePullEventRule:
             evidence = _provenance(entry)
 
             for event in entry["data"].get("events", []):
-                if event.get("reason") not in {"Failed", "FailedPull", "ErrImagePull"}:
+                reason = event.get("reason")
+                if reason not in {"Failed", "FailedPull", "ErrImagePull"}:
                     continue
 
                 message = event.get("message", "")
                 lowered = message.lower()
+
+                if not _is_image_event(reason, lowered):
+                    continue
 
                 if "unauthorized" in lowered or "authentication" in lowered or "403" in lowered:
                     signals.append(

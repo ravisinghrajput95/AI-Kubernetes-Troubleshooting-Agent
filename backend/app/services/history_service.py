@@ -874,9 +874,26 @@ class InvestigationHistoryService:
 
         objects.extend(
             [
-                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-                "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>",
+                # `/Encoding /WinAnsiEncoding` is load-bearing, not decoration.
+                # Text is written below with `.encode("latin-1")`, and a Type1
+                # base-14 font with no `/Encoding` uses **StandardEncoding**,
+                # where byte 0xE9 is not `é` — it is `Ø`. Every accented
+                # character in a namespace, node label or log line therefore
+                # rendered as mojibake in the one artefact most likely to be
+                # attached to a customer's incident record, silently and with
+                # no error anywhere. WinAnsiEncoding agrees with latin-1 across
+                # the printable range, which is what makes that encode call
+                # correct rather than accidental.
+                #
+                # Characters outside latin-1 (CJK, emoji) still cannot be
+                # represented by a base-14 font and are transliterated or
+                # replaced by `_escape_pdf_text`. That is a real limit of
+                # having no font-embedding dependency, and it is stated here
+                # rather than left to be discovered in a report.
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold "
+                "/Encoding /WinAnsiEncoding >>",
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>",
             ]
         )
 
