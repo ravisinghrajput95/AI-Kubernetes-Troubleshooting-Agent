@@ -1,0 +1,93 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: obsfault
+---
+# Memory climbing toward a hard limit, then OOMKilled and restarted.
+# Exercises: container_memory_working_set_bytes, container_spec_memory_limit_bytes,
+#            max_over_time(...), kube_pod_container_status_restarts_total
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memory-hog
+  namespace: obsfault
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: memory-hog}
+  template:
+    metadata:
+      labels: {app: memory-hog}
+    spec:
+      containers:
+        - name: hog
+          image: python:3.12-alpine
+          command: ["python", "-u", "-c"]
+          args:
+            - |
+              import time
+              print("ERROR starting allocation loop", flush=True)
+              buf = []
+              while True:
+                  buf.append(bytearray(6 * 1024 * 1024))
+                  print(f"ERROR allocated {len(buf) * 6}MiB", flush=True)
+                  time.sleep(1.5)
+          resources:
+            limits: {memory: "96Mi", cpu: "200m"}
+            requests: {memory: "96Mi", cpu: "200m"}
+---
+# Busy loop against a very small CPU quota -> sustained CFS throttling.
+# Exercises: container_cpu_cfs_throttled_periods_total / container_cpu_cfs_periods_total
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cpu-throttled
+  namespace: obsfault
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: cpu-throttled}
+  template:
+    metadata:
+      labels: {app: cpu-throttled}
+    spec:
+      containers:
+        - name: spin
+          image: busybox:1.36
+          command: ["sh", "-c", "while true; do :; done"]
+          resources:
+            limits: {cpu: "20m", memory: "64Mi"}
+            requests: {cpu: "20m", memory: "64Mi"}
+---
+# Emits a steady stream of error-level lines, then exits non-zero.
+# Exercises: Loki retention of instances kubectl can no longer serve, restart rate.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: log-crasher
+  namespace: obsfault
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: log-crasher}
+  template:
+    metadata:
+      labels: {app: log-crasher}
+    spec:
+      containers:
+        - name: crasher
+          image: busybox:1.36
+          command: ["sh", "-c"]
+          args:
+            - |
+              i=0
+              while [ $i -lt 30 ]; do
+                echo "ERROR db connection refused attempt=$i"
+                echo "FATAL unable to reach postgres:5432 attempt=$i"
+                i=$((i+1))
+                sleep 0.4
+              done
+              echo "panic: giving up"
+              exit 1
+          resources:
+            limits: {cpu: "100m", memory: "64Mi"}

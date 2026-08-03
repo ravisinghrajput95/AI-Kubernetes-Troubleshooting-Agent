@@ -4,6 +4,22 @@ Queries use only metric names exported by cAdvisor and kube-state-metrics, which
 are standard across clusters. Application-level metrics (request latency, error
 rates) are deliberately not queried: their names are per-application, and a
 guessed name returns an empty result that looks like a healthy signal.
+
+**A standard metric name is not the same as a metric that is present.**
+kube-prometheus-stack — the most widely deployed Prometheus configuration for
+Kubernetes — drops `container_spec.*` wholesale in its kubelet ServiceMonitor
+for cardinality, so `container_spec_memory_limit_bytes` does not exist on the
+clusters this platform is most likely to meet. Sourcing the limit from there
+alone left `memory_limit_bytes` permanently `None`, which silently disabled
+*both* memory signals: a container OOMKilled every ninety seconds produced no
+memory finding at all, while the evidence still recorded `OK`. That is the
+failure this module's own docstring warns about, one level further down — the
+name was right and the series was absent.
+
+So every query that a real deployment can legitimately not answer names a
+**preferred source and a fallback** (`a or b`), and any query returning no data
+is listed in `absent_metrics` on the evidence. A gap has to be citable; a
+silent `None` reads as "measured, and fine".
 """
 
 import asyncio
@@ -26,9 +42,38 @@ class LokiKind:
     POD_LOGS = "loki.pod.logs"
 
 
+MAX_PLAUSIBLE_MEMORY_LIMIT_BYTES = 1 << 60
+"""Above an exbibyte is not a memory limit.
+
+A container with no limit set reports the cgroup sentinel
+(`9223372036854771712`) through `container_spec_memory_limit_bytes`, and
+dividing by it yields "0.0% of the container limit" — a wrong conclusion
+presented as a measurement. kube-state-metrics has no series at all for such a
+container, which is why it is the preferred source; this guards the fallback.
+"""
+
+
 def _escape(value: str) -> str:
     """Escape a PromQL/LogQL label value."""
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _absent(named: dict[str, QueryResult]) -> list[str]:
+    """Names of queries that ran successfully and matched no series.
+
+    `EMPTY` is a usable status — the query was answered — so without this the
+    caller cannot tell "the metric says zero" from "the metric is not there".
+    Only that distinction makes a dropped or renamed series visible instead of
+    arriving as a `None` that reads like a healthy measurement.
+    """
+    return sorted(name for name, result in named.items() if result.status is EvidenceStatus.EMPTY)
+
+
+def _plausible_limit(limit: float | None) -> float | None:
+    """Discard the cgroup 'no limit' sentinel, keep every real limit."""
+    if limit is None or limit <= 0 or limit >= MAX_PLAUSIBLE_MEMORY_LIMIT_BYTES:
+        return None
+    return limit
 
 
 class PodMetricsCollector(TargetedCollector):
@@ -54,9 +99,23 @@ class PodMetricsCollector(TargetedCollector):
 
         queries = {
             "memory_working_set_bytes": f"max(container_memory_working_set_bytes{{{selector}}})",
-            "memory_limit_bytes": f"max(container_spec_memory_limit_bytes{{{selector}}})",
+            # kube-state-metrics first: it reports the *declared* limit, which is
+            # what "% of the container limit" means, and it simply has no series
+            # for a container with no limit rather than a cgroup sentinel.
+            # cAdvisor's spec metric is the fallback for clusters running no
+            # kube-state-metrics — and is dropped outright by kube-prometheus-stack.
+            "memory_limit_bytes": (
+                f'max(kube_pod_container_resource_limits{{{selector},resource="memory"}}) '
+                f"or max(container_spec_memory_limit_bytes{{{selector}}})"
+            ),
+            # The outer max() is not decoration. max_over_time over a pod's
+            # selector returns one series per container *and* per restarted
+            # container instance — ten of them for a pod that had crashed six
+            # times — and `scalar()` takes the first, which Prometheus does not
+            # order. Unaggregated, the peak was whichever instance happened to
+            # come back first: 5.9 MB or 92 MB from the same query.
             "memory_peak_bytes": (
-                f"max_over_time(container_memory_working_set_bytes{{{selector}}}[{window}])"
+                f"max(max_over_time(container_memory_working_set_bytes{{{selector}}}[{window}]))"
             ),
             "cpu_cores": (f"sum(rate(container_cpu_usage_seconds_total{{{selector}}}[5m]))"),
             "cpu_throttled_ratio": (
@@ -64,8 +123,10 @@ class PodMetricsCollector(TargetedCollector):
                 f"/ clamp_min(sum(rate(container_cpu_cfs_periods_total{{{selector}}}[5m])), 1)"
             ),
             "restarts_total": (f"max(kube_pod_container_status_restarts_total{{{selector}}})"),
+            # Same reason: one series per container, so a pod with a sidecar
+            # reported whichever container Prometheus happened to return first.
             "restarts_in_window": (
-                f"increase(kube_pod_container_status_restarts_total{{{selector}}}[{window}])"
+                f"max(increase(kube_pod_container_status_restarts_total{{{selector}}}[{window}]))"
             ),
         }
 
@@ -85,6 +146,7 @@ class PodMetricsCollector(TargetedCollector):
 
         data = {name: self._value(result) for name, result in named.items()}
         data["queries"] = {name: result.query for name, result in named.items()}
+        data["absent_metrics"] = _absent(named)
         data.update(self._derive(data))
 
         return [
@@ -102,7 +164,7 @@ class PodMetricsCollector(TargetedCollector):
     def _derive(self, data: dict[str, Any]) -> dict[str, Any]:
         working_set = data.get("memory_working_set_bytes")
         peak = data.get("memory_peak_bytes")
-        limit = data.get("memory_limit_bytes")
+        limit = _plausible_limit(data.get("memory_limit_bytes"))
 
         derived: dict[str, Any] = {}
         if limit and limit > 0:
@@ -139,12 +201,20 @@ class NodeMetricsCollector(TargetedCollector):
     async def collect(self, context) -> Sequence[Evidence]:
         node = _escape(self.target.name)
         queries = {
-            "memory_available_bytes": f'node_memory_MemAvailable_bytes{{node="{node}"}}',
+            # Not node_exporter's `node_memory_MemAvailable_bytes`: its series
+            # carry `instance`/`job` and no `node` label, so filtering by node
+            # matched nothing on every deployment and this read `None` forever.
+            # cAdvisor's per-container series do carry `node`, and summing them
+            # is the usage figure a scheduling or eviction question wants.
+            "used_memory_bytes": f'sum(container_memory_working_set_bytes{{node="{node}"}})',
+            # Aggregated for the same reason as the pod queries: two
+            # kube-state-metrics replicas, or one mid-rollout, publish the same
+            # fact twice and `scalar()` would pick between them arbitrarily.
             "allocatable_memory_bytes": (
-                f'kube_node_status_allocatable{{node="{node}",resource="memory"}}'
+                f'max(kube_node_status_allocatable{{node="{node}",resource="memory"}})'
             ),
             "allocatable_cpu_cores": (
-                f'kube_node_status_allocatable{{node="{node}",resource="cpu"}}'
+                f'max(kube_node_status_allocatable{{node="{node}",resource="cpu"}})'
             ),
             "requested_memory_bytes": (
                 f'sum(kube_pod_container_resource_requests{{node="{node}",resource="memory"}})'
@@ -174,6 +244,7 @@ class NodeMetricsCollector(TargetedCollector):
         data: dict[str, Any] = {
             name: (result.scalar() if result.usable else None) for name, result in named.items()
         }
+        data["absent_metrics"] = _absent(named)
 
         allocatable = data.get("allocatable_memory_bytes")
         requested = data.get("requested_memory_bytes")

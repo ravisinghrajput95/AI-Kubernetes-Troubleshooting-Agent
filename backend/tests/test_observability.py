@@ -2,7 +2,19 @@
 
 Clients are exercised through httpx's MockTransport, so the real request
 building and response parsing run — only the network is faked.
+
+`TestAgainstCapturedRealBackends` at the foot of this file replays traffic
+captured from a live kube-prometheus-stack and Loki. It exists because the
+hand-written handlers here answer every query with the same value, which makes
+an absent metric and a metric reading zero indistinguishable — and that is
+precisely how three defects survived: the memory limit resolving to nothing on
+the most common Prometheus deployment there is, a node query filtering on a
+label node-exporter does not publish, and an unaggregated selector whose peak
+depended on Prometheus's result ordering.
 """
+
+import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -14,6 +26,7 @@ from app.collectors.observability import (
     NodeMetricsCollector,
     PodLogSearchCollector,
     PodMetricsCollector,
+    _plausible_limit,
 )
 from app.evidence.models import EvidenceStatus, ResourceRef
 from app.integrations.loki import LokiClient
@@ -314,6 +327,48 @@ class TestSignals:
         result = ENGINE.analyze({"health": {"status": "issues_found"}, "deep_evidence": {}})
         assert result.signals == ()
 
+    def test_a_pod_sampled_after_an_oom_kill_still_reports_its_peak(self):
+        """The restart that proves the fault must not erase the evidence for it.
+
+        Real numbers from a 96Mi container the kernel had killed eight times:
+        peak 91.6% of the limit, current 0.2% because the sample landed just
+        after a restart. The two thresholds used to be chained with `elif`, so
+        a low current skipped the peak check entirely and the OOM produced no
+        memory signal at all.
+        """
+        result = ENGINE.analyze(
+            deep(
+                "prometheus.pod.metrics",
+                {"memory_peak_percent": 91.6, "memory_utilisation_percent": 0.2},
+            )
+        )
+
+        signals = result.by_type(SignalType.METRICS_MEMORY_PEAKED_AT_LIMIT)
+        assert signals, "a container that peaked at 91.6% of its limit must be reported"
+        assert "91.6" in signals[0].summary
+
+    def test_a_peak_below_the_threshold_with_low_current_stays_silent(self):
+        """The fix must not turn every restarted pod into a memory finding."""
+        result = ENGINE.analyze(
+            deep(
+                "prometheus.pod.metrics",
+                {"memory_peak_percent": 40.0, "memory_utilisation_percent": 0.2},
+            )
+        )
+        assert result.signals == ()
+
+    def test_a_historical_peak_says_so_rather_than_quoting_the_current_value(self):
+        result = ENGINE.analyze(
+            deep(
+                "prometheus.pod.metrics",
+                {"memory_peak_percent": 87.0, "memory_utilisation_percent": 3.0},
+            )
+        )
+        signal = result.by_type(SignalType.METRICS_MEMORY_NEAR_LIMIT)[0]
+
+        assert "peaked at 87.0%" in signal.summary
+        assert "3.0% now" in signal.summary
+
     def test_metrics_corroborate_the_oom_hypothesis(self):
         payload = deep("prometheus.pod.metrics", {"memory_peak_percent": 99.0})
         payload["deep_evidence"]["k8s.pod.spec"] = [
@@ -341,3 +396,197 @@ class TestSignals:
         assert any(
             "metrics.memory_peaked_at_limit" in signal_id for signal_id in oom.supporting_signal_ids
         )
+
+
+FIXTURE = Path(__file__).parent / "fixtures" / "real_observability_kps_loki.json"
+REAL = json.loads(FIXTURE.read_text())
+
+EMPTY_VECTOR = {"status": "success", "data": {"resultType": "vector", "result": []}}
+
+
+@pytest.fixture
+def replay_real_backends(monkeypatch):
+    """Serve the captured responses of a live kube-prometheus-stack and Loki.
+
+    An unrecognised query returns an **empty vector**, because that is exactly
+    what the real Prometheus returned for the metric names this code used to
+    ask for. That makes the fixture a regression harness rather than a
+    recording: change a query back to a series the platform does not export and
+    the value goes missing here in the same way it went missing in the cluster.
+    """
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = request.url.params.get("query", "")
+        asked.append(query)
+        backend = "loki" if "loki" in request.url.path else "prometheus"
+        body = REAL[backend].get(query)
+        if body is None:
+            body = (
+                {"status": "success", "data": {"resultType": "streams", "result": []}}
+                if backend == "loki"
+                else EMPTY_VECTOR
+            )
+        return httpx.Response(200, json=body)
+
+    transport = httpx.MockTransport(handler)
+    real_init = httpx.AsyncClient.__init__
+
+    def patched_init(self, *args, **kwargs):
+        kwargs.setdefault("transport", transport)
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "__init__", patched_init)
+    return asked
+
+
+def real_pod(role: str) -> ResourceRef:
+    return ResourceRef(kind="Pod", name=REAL["pods"][role], namespace="obsfault")
+
+
+class TestAgainstCapturedRealBackends:
+    """Replays traffic captured from a live kube-prometheus-stack and Loki.
+
+    Every defect this class pins was invisible to the hand-written fixtures
+    above, and for one shared reason: those handlers answer every query with
+    the same value, so a metric that does not exist and a metric reading zero
+    are the same thing, and `peak` and `current` can never differ.
+    """
+
+    async def test_the_memory_limit_survives_kube_prometheus_stack(self, replay_real_backends):
+        """The signal this integration exists for, on the deployment it will meet.
+
+        kube-prometheus-stack drops `container_spec.*` in its kubelet
+        ServiceMonitor, so sourcing the limit from cAdvisor alone left
+        `memory_limit_bytes` permanently None — and with it both derived
+        percentages and both memory signals — while the evidence still said OK.
+        """
+        evidence = await PodMetricsCollector(
+            real_pod("oom"), PrometheusClient(base_url=CONFIGURED_PROMETHEUS)
+        ).collect(context())
+        data = evidence[0].data
+
+        assert data["memory_limit_bytes"] == 100663296.0, "96Mi, from kube-state-metrics"
+        assert data["memory_peak_percent"] == 91.6
+        assert evidence[0].status is EvidenceStatus.OK
+
+    async def test_the_metric_names_this_used_to_ask_for_really_are_absent(self):
+        """Not an assumption: both were queried against the live deployment."""
+        for record in REAL["known_absent"].values():
+            if not isinstance(record, dict):
+                continue
+            assert record["response"]["data"]["result"] == [], record["query"]
+
+    async def test_every_query_reduces_to_a_single_series(self, replay_real_backends):
+        """`scalar()` takes samples[0], and Prometheus does not order results.
+
+        An unaggregated selector over a pod returns one series per container and
+        per restarted instance — ten for a pod that had crashed six times — so
+        the peak was whichever the server happened to return first: 5.9 MB or
+        92 MB from the same query, the difference between a signal and silence.
+        """
+        for role in ("oom", "throttled", "crasher"):
+            await PodMetricsCollector(
+                real_pod(role), PrometheusClient(base_url=CONFIGURED_PROMETHEUS)
+            ).collect(context())
+        await NodeMetricsCollector(
+            ResourceRef(kind="Node", name=REAL["node"]),
+            PrometheusClient(base_url=CONFIGURED_PROMETHEUS),
+        ).collect(context())
+
+        assert replay_real_backends, "the collectors must actually have queried"
+        for query in replay_real_backends:
+            series = REAL["prometheus"][query]["data"]["result"]
+            assert len(series) <= 1, f"{len(series)} series returned for: {query}"
+
+    async def test_an_absent_series_is_named_rather_than_silently_none(self, replay_real_backends):
+        """A gap has to be citable; a None reads as a healthy measurement."""
+        pod = ResourceRef(kind="Pod", name="never-scraped", namespace="obsfault")
+        evidence = await PodMetricsCollector(
+            pod, PrometheusClient(base_url=CONFIGURED_PROMETHEUS)
+        ).collect(context())
+        data = evidence[0].data
+
+        assert data["memory_limit_bytes"] is None
+        assert "memory_limit_bytes" in data["absent_metrics"]
+        assert "memory_working_set_bytes" in data["absent_metrics"]
+
+    async def test_a_pod_with_real_metrics_lists_no_absent_ones(self, replay_real_backends):
+        evidence = await PodMetricsCollector(
+            real_pod("oom"), PrometheusClient(base_url=CONFIGURED_PROMETHEUS)
+        ).collect(context())
+
+        assert evidence[0].data["absent_metrics"] == []
+
+    async def test_node_metrics_read_a_label_that_exists(self, replay_real_backends):
+        """node-exporter series carry instance/job and never a node label."""
+        evidence = await NodeMetricsCollector(
+            ResourceRef(kind="Node", name=REAL["node"]),
+            PrometheusClient(base_url=CONFIGURED_PROMETHEUS),
+        ).collect(context())
+        data = evidence[0].data
+
+        assert data["used_memory_bytes"] is not None
+        assert data["absent_metrics"] == []
+        assert data["memory_committed_percent"] == 6.5
+
+    async def test_the_cgroup_no_limit_sentinel_is_not_treated_as_a_limit(self):
+        """cAdvisor reports 2^63-ish for a container with no limit set."""
+        assert _plausible_limit(9223372036854771712.0) is None
+        assert _plausible_limit(100663296.0) == 100663296.0
+        assert _plausible_limit(0.0) is None
+        assert _plausible_limit(None) is None
+
+    async def test_real_promtail_labels_and_entries_parse(self, replay_real_backends):
+        """Promtail's stream labels, Loki 3.x nanosecond strings, real lines."""
+        evidence = await PodLogSearchCollector(
+            real_pod("crasher"), LokiClient(base_url=CONFIGURED_LOKI)
+        ).collect(context())
+        data = evidence[0].data
+
+        assert evidence[0].status is EvidenceStatus.OK
+        assert data["matched_lines"] > 20
+        first = data["entries"][0]
+        assert first["labels"]["namespace"] == "obsfault"
+        assert first["timestamp"].startswith("2026-")
+        assert first["line"]
+
+    async def test_captured_logs_are_ordered_newest_first(self, replay_real_backends):
+        evidence = await PodLogSearchCollector(
+            real_pod("crasher"), LokiClient(base_url=CONFIGURED_LOKI)
+        ).collect(context())
+        stamps = [entry["timestamp"] for entry in evidence[0].data["entries"]]
+
+        assert stamps == sorted(stamps, reverse=True)
+
+    async def test_the_live_faults_produce_the_signals_they_should(self, replay_real_backends):
+        """End to end on real data: the OOM, the throttling and the log volume."""
+        records = []
+        for role in ("oom", "throttled", "crasher"):
+            target = real_pod(role)
+            for collector in (
+                PodMetricsCollector(target, PrometheusClient(base_url=CONFIGURED_PROMETHEUS)),
+                PodLogSearchCollector(target, LokiClient(base_url=CONFIGURED_LOKI)),
+            ):
+                for item in await collector.collect(context()):
+                    records.append(
+                        {
+                            "id": item.id,
+                            "target": target.to_dict(),
+                            "status": "ok",
+                            "data": item.data,
+                            "kind": item.kind,
+                        }
+                    )
+
+        grouped: dict[str, list] = {}
+        for record in records:
+            grouped.setdefault(record["kind"], []).append(record)
+
+        result = ENGINE.analyze({"health": {"status": "issues_found"}, "deep_evidence": grouped})
+        types = {signal.type for signal in result.signals}
+
+        assert SignalType.METRICS_MEMORY_PEAKED_AT_LIMIT in types
+        assert SignalType.METRICS_CPU_THROTTLED in types
+        assert SignalType.METRICS_RESTART_RATE in types
+        assert SignalType.LOGS_HISTORICAL_ERRORS in types

@@ -913,6 +913,54 @@ Queries use only cAdvisor/kube-state-metrics names. **Application-level metrics 
 
 Both are emitted by playbooks (CrashLoop → pod metrics + historical logs; Pending → node metrics), not baseline collection. Baseline usage still comes from `kubectl top`.
 
+**A standard metric name is not the same as a metric that is present**, and until
+M9.1 nothing here had been run against a real backend. Four defects, all of the
+same shape — a query that parses, returns `success`, and matches nothing. Full
+account in `docs/OBSERVABILITY_INTEGRATIONS.md`; the load-bearing parts:
+
+- **The memory limit came from `container_spec_memory_limit_bytes`, which
+  kube-prometheus-stack drops wholesale** (`{"action":"drop","regex":"container_spec.*"}`)
+  for cardinality. So the limit was `None` on the most common Prometheus
+  deployment there is, both derived percentages vanished with it, and **both**
+  memory signals were unreachable: a 96Mi container OOMKilled eight times
+  produced no memory finding while its evidence read `OK`. Now
+  kube-state-metrics first (`kube_pod_container_resource_limits`) with cAdvisor
+  as the fallback — preferred on merit too, since it reports the *declared*
+  limit and emits nothing for a container with no limit, where cAdvisor reports
+  the cgroup sentinel that divides every usage down to "0.0% of the limit"
+  (`_plausible_limit` discards it).
+- **`node_memory_MemAvailable_bytes{node=…}` never matched anything.**
+  node-exporter series carry `instance`/`job`, never `node`. Replaced with a
+  cAdvisor sum that does carry it, and renamed `used_memory_bytes` to say what
+  it measures.
+- **`max_over_time(...)` over a pod selector is not aggregated.** It returns one
+  series per container *and* per restarted instance — ten for a pod that had
+  crashed six times — and `scalar()` takes `samples[0]`, which Prometheus does
+  not order. The peak was 5.9 MB or 92 MB from the same query, by luck. Every
+  query is now wrapped; `test_every_query_reduces_to_a_single_series` pins the
+  property against captured responses rather than each query individually.
+- **`peak` and `current` were chained with `elif`, so the restart erased the
+  evidence for the restart.** A container sampled just after an OOM kill reads
+  0.2% current against a 91.6% peak, and the low current skipped the peak check
+  — discarding exactly the history `max_over_time` was queried to recover. Now
+  judged on the worst of the two. The 98% peak threshold was also unreachable:
+  working set is a *sampled* gauge and the kill happens between scrapes, so it
+  is 90%.
+
+**`tests/fixtures/real_observability_kps_loki.json` is captured, keyed by the
+query the collector actually issued** (recorded by intercepting httpx while the
+shipped collectors ran, so the keys cannot drift from the code). The replay
+fixture answers an **unrecognised query with an empty vector** — what the real
+Prometheus returned for the names this code used to ask for — which is what makes
+it a regression harness instead of a recording. The old hand-written handlers
+answer every query with the same value, which is exactly why they could not see
+any of this: an absent metric and a metric reading zero are the same thing, and
+`peak` can never differ from `current`. Do not add cases to those handlers;
+add them to the captured fixture.
+
+`docs/qa/observability-faults.yaml` induces the three faults, chosen to exercise
+distinct query shapes rather than distinct workloads.
+
 ### Reports (`app/reports/`)
 
 `IncidentReportComposer` builds a structured `IncidentReport`; the PDF, Markdown and JSON writers all render **that one composition**, so the formats cannot disagree and a new section is one change rather than three. The JSON report carries the composition under its `report` key.

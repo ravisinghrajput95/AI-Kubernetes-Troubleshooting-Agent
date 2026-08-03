@@ -1,0 +1,2585 @@
+{
+  "_source": "Captured from a live kind cluster running kube-prometheus-stack (chart 88.1.3, Prometheus v0.93.0, kube-state-metrics, node-exporter) and Grafana Loki 3.6.11 with promtail 3.5.1. Faults: a 96Mi container OOMKilled repeatedly, a 20m-CPU busy loop, and a crashlooping logger.",
+  "known_absent": {
+    "_why": "Metric names that are correct but resolve to nothing on a stock kube-prometheus-stack + node-exporter deployment. Captured so the defect stays documented: container_spec.* is dropped wholesale by the kubelet ServiceMonitor for cardinality, and node-exporter series carry instance/job but never a node label.",
+    "cadvisor_spec_memory_limit": {
+      "query": "max(container_spec_memory_limit_bytes{namespace=\"obsfault\",pod=\"memory-hog-85bc98bb94-ts7z4\"})",
+      "response": {
+        "data": {
+          "result": [],
+          "resultType": "vector"
+        },
+        "status": "success"
+      }
+    },
+    "node_exporter_memavailable_by_node": {
+      "query": "node_memory_MemAvailable_bytes{node=\"obs-control-plane\"}",
+      "response": {
+        "data": {
+          "result": [],
+          "resultType": "vector"
+        },
+        "status": "success"
+      }
+    }
+  },
+  "loki": {
+    "{namespace=\"obsfault\",pod=\"cpu-throttled-7dcbb979fc-pjk7l\"} |~ \"(?i)(error|fatal|panic|exception|failed)\"": {
+      "data": {
+        "result": [],
+        "resultType": "streams",
+        "stats": {
+          "cache": {
+            "chunk": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "index": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "instantMetricResult": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "labelResult": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "result": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "seriesResult": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "statsResult": {
+              "bytesReceived": 669,
+              "bytesSent": 0,
+              "downloadTime": 10917,
+              "entriesFound": 3,
+              "entriesRequested": 3,
+              "entriesStored": 1,
+              "queryLengthServed": 1832000000000,
+              "requests": 4
+            },
+            "volumeResult": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            }
+          },
+          "index": {
+            "postFilterChunks": 0,
+            "shardsDuration": 0,
+            "totalChunks": 0,
+            "usedBloomFilters": false
+          },
+          "ingester": {
+            "store": {
+              "chunk": {
+                "compressedBytes": 0,
+                "decompressedBytes": 0,
+                "decompressedLines": 0,
+                "decompressedStructuredMetadataBytes": 0,
+                "headChunkBytes": 0,
+                "headChunkLines": 0,
+                "headChunkStructuredMetadataBytes": 0,
+                "postFilterLines": 0,
+                "totalDuplicates": 0
+              },
+              "chunkRefsFetchTime": 283582,
+              "chunksDownloadTime": 0,
+              "congestionControlLatency": 0,
+              "dataobj": {
+                "pageBatches": 0,
+                "pagesDownloaded": 0,
+                "pagesDownloadedBytes": 0,
+                "pagesScanned": 0,
+                "postFilterRows": 0,
+                "postPredicateDecompressedBytes": 0,
+                "postPredicateRows": 0,
+                "postPredicateStructuredMetadataBytes": 0,
+                "prePredicateDecompressedBytes": 0,
+                "prePredicateDecompressedRows": 0,
+                "prePredicateDecompressedStructuredMetadataBytes": 0,
+                "totalPageDownloadTime": 0,
+                "totalRowsAvailable": 0
+              },
+              "pipelineWrapperFilteredLines": 0,
+              "queryReferencedStructuredMetadata": false,
+              "queryUsedV2Engine": false,
+              "totalChunksDownloaded": 0,
+              "totalChunksRef": 0
+            },
+            "totalBatches": 5,
+            "totalChunksMatched": 0,
+            "totalLinesSent": 0,
+            "totalReached": 5
+          },
+          "querier": {
+            "store": {
+              "chunk": {
+                "compressedBytes": 0,
+                "decompressedBytes": 0,
+                "decompressedLines": 0,
+                "decompressedStructuredMetadataBytes": 0,
+                "headChunkBytes": 0,
+                "headChunkLines": 0,
+                "headChunkStructuredMetadataBytes": 0,
+                "postFilterLines": 0,
+                "totalDuplicates": 0
+              },
+              "chunkRefsFetchTime": 0,
+              "chunksDownloadTime": 0,
+              "congestionControlLatency": 0,
+              "dataobj": {
+                "pageBatches": 0,
+                "pagesDownloaded": 0,
+                "pagesDownloadedBytes": 0,
+                "pagesScanned": 0,
+                "postFilterRows": 0,
+                "postPredicateDecompressedBytes": 0,
+                "postPredicateRows": 0,
+                "postPredicateStructuredMetadataBytes": 0,
+                "prePredicateDecompressedBytes": 0,
+                "prePredicateDecompressedRows": 0,
+                "prePredicateDecompressedStructuredMetadataBytes": 0,
+                "totalPageDownloadTime": 0,
+                "totalRowsAvailable": 0
+              },
+              "pipelineWrapperFilteredLines": 0,
+              "queryReferencedStructuredMetadata": false,
+              "queryUsedV2Engine": false,
+              "totalChunksDownloaded": 0,
+              "totalChunksRef": 0
+            }
+          },
+          "summary": {
+            "bytesProcessedPerSecond": 0,
+            "execTime": 0.001862,
+            "linesProcessedPerSecond": 0,
+            "queueTime": 0.000598,
+            "shards": 5,
+            "splits": 5,
+            "subqueries": 0,
+            "totalBytesProcessed": 0,
+            "totalEntriesReturned": 0,
+            "totalLinesProcessed": 0,
+            "totalPostFilterLines": 0,
+            "totalStructuredMetadataBytesProcessed": 0
+          }
+        }
+      },
+      "status": "success"
+    },
+    "{namespace=\"obsfault\",pod=\"log-crasher-6b56b54fd9-9n7zr\"} |~ \"(?i)(error|fatal|panic|exception|failed)\"": {
+      "data": {
+        "result": [
+          {
+            "stream": {
+              "app": "log-crasher",
+              "container": "crasher",
+              "detected_level": "unknown",
+              "filename": "/var/log/pods/obsfault_log-crasher-6b56b54fd9-9n7zr_53b13c63-e604-4a6f-adf3-4fe99ee2b942/crasher/8.log",
+              "job": "obsfault/log-crasher",
+              "namespace": "obsfault",
+              "node_name": "obs-control-plane",
+              "pod": "log-crasher-6b56b54fd9-9n7zr",
+              "service_name": "log-crasher",
+              "stream": "stdout"
+            },
+            "values": [
+              [
+                "1785768983374860930",
+                "panic: giving up"
+              ],
+              [
+                "1785768982974719263",
+                "FATAL unable to reach postgres:5432 attempt=29"
+              ],
+              [
+                "1785768982974681763",
+                "ERROR db connection refused attempt=29"
+              ],
+              [
+                "1785768982573782763",
+                "FATAL unable to reach postgres:5432 attempt=28"
+              ],
+              [
+                "1785768982573727763",
+                "ERROR db connection refused attempt=28"
+              ],
+              [
+                "1785768982173322763",
+                "FATAL unable to reach postgres:5432 attempt=27"
+              ],
+              [
+                "1785768982173271429",
+                "ERROR db connection refused attempt=27"
+              ],
+              [
+                "1785768981772766471",
+                "FATAL unable to reach postgres:5432 attempt=26"
+              ],
+              [
+                "1785768981772641346",
+                "ERROR db connection refused attempt=26"
+              ],
+              [
+                "1785768981370564304",
+                "FATAL unable to reach postgres:5432 attempt=25"
+              ],
+              [
+                "1785768981370449929",
+                "ERROR db connection refused attempt=25"
+              ],
+              [
+                "1785768980970099887",
+                "FATAL unable to reach postgres:5432 attempt=24"
+              ],
+              [
+                "1785768980970049262",
+                "ERROR db connection refused attempt=24"
+              ],
+              [
+                "1785768980569390512",
+                "FATAL unable to reach postgres:5432 attempt=23"
+              ],
+              [
+                "1785768980569346679",
+                "ERROR db connection refused attempt=23"
+              ],
+              [
+                "1785768980168957637",
+                "FATAL unable to reach postgres:5432 attempt=22"
+              ],
+              [
+                "1785768980168911387",
+                "ERROR db connection refused attempt=22"
+              ],
+              [
+                "1785768979768689637",
+                "FATAL unable to reach postgres:5432 attempt=21"
+              ],
+              [
+                "1785768979768636345",
+                "ERROR db connection refused attempt=21"
+              ],
+              [
+                "1785768979366895470",
+                "FATAL unable to reach postgres:5432 attempt=20"
+              ],
+              [
+                "1785768979366846928",
+                "ERROR db connection refused attempt=20"
+              ],
+              [
+                "1785768978965357136",
+                "FATAL unable to reach postgres:5432 attempt=19"
+              ],
+              [
+                "1785768978965295928",
+                "ERROR db connection refused attempt=19"
+              ],
+              [
+                "1785768978564710219",
+                "FATAL unable to reach postgres:5432 attempt=18"
+              ],
+              [
+                "1785768978564633719",
+                "ERROR db connection refused attempt=18"
+              ],
+              [
+                "1785768978163260428",
+                "FATAL unable to reach postgres:5432 attempt=17"
+              ],
+              [
+                "1785768978163212261",
+                "ERROR db connection refused attempt=17"
+              ],
+              [
+                "1785768977760059719",
+                "FATAL unable to reach postgres:5432 attempt=16"
+              ],
+              [
+                "1785768977760003844",
+                "ERROR db connection refused attempt=16"
+              ],
+              [
+                "1785768977357562719",
+                "FATAL unable to reach postgres:5432 attempt=15"
+              ],
+              [
+                "1785768977357515469",
+                "ERROR db connection refused attempt=15"
+              ],
+              [
+                "1785768976957400385",
+                "FATAL unable to reach postgres:5432 attempt=14"
+              ],
+              [
+                "1785768976957353427",
+                "ERROR db connection refused attempt=14"
+              ],
+              [
+                "1785768976558247760",
+                "FATAL unable to reach postgres:5432 attempt=13"
+              ],
+              [
+                "1785768976556342177",
+                "ERROR db connection refused attempt=13"
+              ],
+              [
+                "1785768976156174760",
+                "FATAL unable to reach postgres:5432 attempt=12"
+              ],
+              [
+                "1785768976156140927",
+                "ERROR db connection refused attempt=12"
+              ],
+              [
+                "1785768975752145801",
+                "FATAL unable to reach postgres:5432 attempt=11"
+              ],
+              [
+                "1785768975752088843",
+                "ERROR db connection refused attempt=11"
+              ],
+              [
+                "1785768975347042760",
+                "FATAL unable to reach postgres:5432 attempt=10"
+              ],
+              [
+                "1785768975347005801",
+                "ERROR db connection refused attempt=10"
+              ],
+              [
+                "1785768974943723426",
+                "FATAL unable to reach postgres:5432 attempt=9"
+              ],
+              [
+                "1785768974943653718",
+                "ERROR db connection refused attempt=9"
+              ],
+              [
+                "1785768974543060301",
+                "FATAL unable to reach postgres:5432 attempt=8"
+              ],
+              [
+                "1785768974542999801",
+                "ERROR db connection refused attempt=8"
+              ],
+              [
+                "1785768974142574426",
+                "FATAL unable to reach postgres:5432 attempt=7"
+              ],
+              [
+                "1785768974142507134",
+                "ERROR db connection refused attempt=7"
+              ],
+              [
+                "1785768973741982759",
+                "FATAL unable to reach postgres:5432 attempt=6"
+              ],
+              [
+                "1785768973741915925",
+                "ERROR db connection refused attempt=6"
+              ],
+              [
+                "1785768973340629592",
+                "FATAL unable to reach postgres:5432 attempt=5"
+              ],
+              [
+                "1785768973340568717",
+                "ERROR db connection refused attempt=5"
+              ],
+              [
+                "1785768972939059133",
+                "FATAL unable to reach postgres:5432 attempt=4"
+              ],
+              [
+                "1785768972939002217",
+                "ERROR db connection refused attempt=4"
+              ],
+              [
+                "1785768972537359800",
+                "FATAL unable to reach postgres:5432 attempt=3"
+              ],
+              [
+                "1785768972537308842",
+                "ERROR db connection refused attempt=3"
+              ],
+              [
+                "1785768972136189175",
+                "FATAL unable to reach postgres:5432 attempt=2"
+              ],
+              [
+                "1785768972136129383",
+                "ERROR db connection refused attempt=2"
+              ],
+              [
+                "1785768971735825633",
+                "FATAL unable to reach postgres:5432 attempt=1"
+              ],
+              [
+                "1785768971735734258",
+                "ERROR db connection refused attempt=1"
+              ],
+              [
+                "1785768971332552299",
+                "FATAL unable to reach postgres:5432 attempt=0"
+              ],
+              [
+                "1785768971332529299",
+                "ERROR db connection refused attempt=0"
+              ]
+            ]
+          },
+          {
+            "stream": {
+              "app": "log-crasher",
+              "container": "crasher",
+              "detected_level": "unknown",
+              "filename": "/var/log/pods/obsfault_log-crasher-6b56b54fd9-9n7zr_53b13c63-e604-4a6f-adf3-4fe99ee2b942/crasher/7.log",
+              "job": "obsfault/log-crasher",
+              "namespace": "obsfault",
+              "node_name": "obs-control-plane",
+              "pod": "log-crasher-6b56b54fd9-9n7zr",
+              "service_name": "log-crasher",
+              "stream": "stdout"
+            },
+            "values": [
+              [
+                "1785768663381882754",
+                "panic: giving up"
+              ],
+              [
+                "1785768662980986545",
+                "FATAL unable to reach postgres:5432 attempt=29"
+              ],
+              [
+                "1785768662980916670",
+                "ERROR db connection refused attempt=29"
+              ],
+              [
+                "1785768662580068003",
+                "FATAL unable to reach postgres:5432 attempt=28"
+              ],
+              [
+                "1785768662579995587",
+                "ERROR db connection refused attempt=28"
+              ],
+              [
+                "1785768662177496795",
+                "FATAL unable to reach postgres:5432 attempt=27"
+              ],
+              [
+                "1785768662177412295",
+                "ERROR db connection refused attempt=27"
+              ],
+              [
+                "1785768661777211836",
+                "FATAL unable to reach postgres:5432 attempt=26"
+              ],
+              [
+                "1785768661777147253",
+                "ERROR db connection refused attempt=26"
+              ],
+              [
+                "1785768661375987336",
+                "FATAL unable to reach postgres:5432 attempt=25"
+              ],
+              [
+                "1785768661375900461",
+                "ERROR db connection refused attempt=25"
+              ],
+              [
+                "1785768660974800336",
+                "FATAL unable to reach postgres:5432 attempt=24"
+              ],
+              [
+                "1785768660974736378",
+                "ERROR db connection refused attempt=24"
+              ],
+              [
+                "1785768660574305003",
+                "FATAL unable to reach postgres:5432 attempt=23"
+              ],
+              [
+                "1785768660574216711",
+                "ERROR db connection refused attempt=23"
+              ],
+              [
+                "1785768660173618044",
+                "FATAL unable to reach postgres:5432 attempt=22"
+              ],
+              [
+                "1785768660173519461",
+                "ERROR db connection refused attempt=22"
+              ],
+              [
+                "1785768659772914127",
+                "FATAL unable to reach postgres:5432 attempt=21"
+              ],
+              [
+                "1785768659772835127",
+                "ERROR db connection refused attempt=21"
+              ],
+              [
+                "1785768659370924960",
+                "FATAL unable to reach postgres:5432 attempt=20"
+              ],
+              [
+                "1785768659370849544",
+                "ERROR db connection refused attempt=20"
+              ],
+              [
+                "1785768658970919418",
+                "FATAL unable to reach postgres:5432 attempt=19"
+              ],
+              [
+                "1785768658970857293",
+                "ERROR db connection refused attempt=19"
+              ],
+              [
+                "1785768658568656835",
+                "FATAL unable to reach postgres:5432 attempt=18"
+              ],
+              [
+                "1785768658568588085",
+                "ERROR db connection refused attempt=18"
+              ],
+              [
+                "1785768658168180918",
+                "FATAL unable to reach postgres:5432 attempt=17"
+              ],
+              [
+                "1785768658168103585",
+                "ERROR db connection refused attempt=17"
+              ],
+              [
+                "1785768657766441793",
+                "FATAL unable to reach postgres:5432 attempt=16"
+              ],
+              [
+                "1785768657766354251",
+                "ERROR db connection refused attempt=16"
+              ],
+              [
+                "1785768657366031334",
+                "FATAL unable to reach postgres:5432 attempt=15"
+              ],
+              [
+                "1785768657366001959",
+                "ERROR db connection refused attempt=15"
+              ],
+              [
+                "1785768656964159292",
+                "FATAL unable to reach postgres:5432 attempt=14"
+              ],
+              [
+                "1785768656964106042",
+                "ERROR db connection refused attempt=14"
+              ],
+              [
+                "1785768656558930417",
+                "FATAL unable to reach postgres:5432 attempt=13"
+              ],
+              [
+                "1785768656558901751",
+                "ERROR db connection refused attempt=13"
+              ],
+              [
+                "1785768656155922417",
+                "FATAL unable to reach postgres:5432 attempt=12"
+              ],
+              [
+                "1785768656155895125",
+                "ERROR db connection refused attempt=12"
+              ],
+              [
+                "1785768655753453875",
+                "FATAL unable to reach postgres:5432 attempt=11"
+              ],
+              [
+                "1785768655753426917",
+                "ERROR db connection refused attempt=11"
+              ],
+              [
+                "1785768655352678667",
+                "FATAL unable to reach postgres:5432 attempt=10"
+              ],
+              [
+                "1785768655352596208",
+                "ERROR db connection refused attempt=10"
+              ],
+              [
+                "1785768654951065708",
+                "FATAL unable to reach postgres:5432 attempt=9"
+              ],
+              [
+                "1785768654950999833",
+                "ERROR db connection refused attempt=9"
+              ],
+              [
+                "1785768654550105708",
+                "FATAL unable to reach postgres:5432 attempt=8"
+              ],
+              [
+                "1785768654550045250",
+                "ERROR db connection refused attempt=8"
+              ],
+              [
+                "1785768654148517722",
+                "FATAL unable to reach postgres:5432 attempt=7"
+              ],
+              [
+                "1785768654148445055",
+                "ERROR db connection refused attempt=7"
+              ],
+              [
+                "1785768653744591347",
+                "FATAL unable to reach postgres:5432 attempt=6"
+              ],
+              [
+                "1785768653744535055",
+                "ERROR db connection refused attempt=6"
+              ],
+              [
+                "1785768653344225805",
+                "FATAL unable to reach postgres:5432 attempt=5"
+              ],
+              [
+                "1785768653344163972",
+                "ERROR db connection refused attempt=5"
+              ],
+              [
+                "1785768652943234347",
+                "FATAL unable to reach postgres:5432 attempt=4"
+              ],
+              [
+                "1785768652943172430",
+                "ERROR db connection refused attempt=4"
+              ],
+              [
+                "1785768652542772013",
+                "FATAL unable to reach postgres:5432 attempt=3"
+              ],
+              [
+                "1785768652542691721",
+                "ERROR db connection refused attempt=3"
+              ],
+              [
+                "1785768652139411846",
+                "FATAL unable to reach postgres:5432 attempt=2"
+              ],
+              [
+                "1785768652139349054",
+                "ERROR db connection refused attempt=2"
+              ],
+              [
+                "1785768651735905304",
+                "FATAL unable to reach postgres:5432 attempt=1"
+              ],
+              [
+                "1785768651735791971",
+                "ERROR db connection refused attempt=1"
+              ],
+              [
+                "1785768651332546387",
+                "FATAL unable to reach postgres:5432 attempt=0"
+              ],
+              [
+                "1785768651332352637",
+                "ERROR db connection refused attempt=0"
+              ]
+            ]
+          },
+          {
+            "stream": {
+              "app": "log-crasher",
+              "container": "crasher",
+              "detected_level": "unknown",
+              "filename": "/var/log/pods/obsfault_log-crasher-6b56b54fd9-9n7zr_53b13c63-e604-4a6f-adf3-4fe99ee2b942/crasher/6.log",
+              "job": "obsfault/log-crasher",
+              "namespace": "obsfault",
+              "node_name": "obs-control-plane",
+              "pod": "log-crasher-6b56b54fd9-9n7zr",
+              "service_name": "log-crasher",
+              "stream": "stdout"
+            },
+            "values": [
+              [
+                "1785768350417375970",
+                "panic: giving up"
+              ],
+              [
+                "1785768350015701679",
+                "FATAL unable to reach postgres:5432 attempt=29"
+              ],
+              [
+                "1785768350015665679",
+                "ERROR db connection refused attempt=29"
+              ],
+              [
+                "1785768349615617595",
+                "FATAL unable to reach postgres:5432 attempt=28"
+              ],
+              [
+                "1785768349615558262",
+                "ERROR db connection refused attempt=28"
+              ],
+              [
+                "1785768349214501803",
+                "FATAL unable to reach postgres:5432 attempt=27"
+              ],
+              [
+                "1785768349214431345",
+                "ERROR db connection refused attempt=27"
+              ],
+              [
+                "1785768348813506136",
+                "FATAL unable to reach postgres:5432 attempt=26"
+              ],
+              [
+                "1785768348813419761",
+                "ERROR db connection refused attempt=26"
+              ],
+              [
+                "1785768348412567969",
+                "FATAL unable to reach postgres:5432 attempt=25"
+              ],
+              [
+                "1785768348412536969",
+                "ERROR db connection refused attempt=25"
+              ],
+              [
+                "1785768348012205928",
+                "FATAL unable to reach postgres:5432 attempt=24"
+              ],
+              [
+                "1785768348012148678",
+                "ERROR db connection refused attempt=24"
+              ],
+              [
+                "1785768347610934344",
+                "FATAL unable to reach postgres:5432 attempt=23"
+              ],
+              [
+                "1785768347610864636",
+                "ERROR db connection refused attempt=23"
+              ],
+              [
+                "1785768347209716135",
+                "FATAL unable to reach postgres:5432 attempt=22"
+              ],
+              [
+                "1785768347209643094",
+                "ERROR db connection refused attempt=22"
+              ],
+              [
+                "1785768346809536885",
+                "FATAL unable to reach postgres:5432 attempt=21"
+              ],
+              [
+                "1785768346809480552",
+                "ERROR db connection refused attempt=21"
+              ],
+              [
+                "1785768346408010302",
+                "FATAL unable to reach postgres:5432 attempt=20"
+              ],
+              [
+                "1785768346407942135",
+                "ERROR db connection refused attempt=20"
+              ],
+              [
+                "1785768346003789552",
+                "FATAL unable to reach postgres:5432 attempt=19"
+              ],
+              [
+                "1785768346003718260",
+                "ERROR db connection refused attempt=19"
+              ],
+              [
+                "1785768345603230760",
+                "FATAL unable to reach postgres:5432 attempt=18"
+              ],
+              [
+                "1785768345603165593",
+                "ERROR db connection refused attempt=18"
+              ],
+              [
+                "1785768345199722385",
+                "FATAL unable to reach postgres:5432 attempt=17"
+              ],
+              [
+                "1785768345199640260",
+                "ERROR db connection refused attempt=17"
+              ],
+              [
+                "1785768344799344843",
+                "FATAL unable to reach postgres:5432 attempt=16"
+              ],
+              [
+                "1785768344799246301",
+                "ERROR db connection refused attempt=16"
+              ],
+              [
+                "1785768344395582134",
+                "FATAL unable to reach postgres:5432 attempt=15"
+              ],
+              [
+                "1785768344395503967",
+                "ERROR db connection refused attempt=15"
+              ],
+              [
+                "1785768343995447967",
+                "FATAL unable to reach postgres:5432 attempt=14"
+              ],
+              [
+                "1785768343995254676",
+                "ERROR db connection refused attempt=14"
+              ],
+              [
+                "1785768343594802884",
+                "FATAL unable to reach postgres:5432 attempt=13"
+              ],
+              [
+                "1785768343594729509",
+                "ERROR db connection refused attempt=13"
+              ],
+              [
+                "1785768343191160342",
+                "FATAL unable to reach postgres:5432 attempt=12"
+              ],
+              [
+                "1785768343191095050",
+                "ERROR db connection refused attempt=12"
+              ],
+              [
+                "1785768342788021425",
+                "FATAL unable to reach postgres:5432 attempt=11"
+              ],
+              [
+                "1785768342787947550",
+                "ERROR db connection refused attempt=11"
+              ]
+            ]
+          },
+          {
+            "stream": {
+              "app": "log-crasher",
+              "container": "crasher",
+              "detected_level": "unknown",
+              "filename": "/var/log/pods/obsfault_log-crasher-6b56b54fd9-9n7zr_53b13c63-e604-4a6f-adf3-4fe99ee2b942/crasher/5.log",
+              "job": "obsfault/log-crasher",
+              "namespace": "obsfault",
+              "node_name": "obs-control-plane",
+              "pod": "log-crasher-6b56b54fd9-9n7zr",
+              "service_name": "log-crasher",
+              "stream": "stdout"
+            },
+            "values": [
+              [
+                "1785767892964158837",
+                "panic: giving up"
+              ],
+              [
+                "1785767892562459878",
+                "FATAL unable to reach postgres:5432 attempt=29"
+              ],
+              [
+                "1785767892562375087",
+                "ERROR db connection refused attempt=29"
+              ],
+              [
+                "1785767892162218086",
+                "FATAL unable to reach postgres:5432 attempt=28"
+              ],
+              [
+                "1785767892162163045",
+                "ERROR db connection refused attempt=28"
+              ],
+              [
+                "1785767891761577711",
+                "FATAL unable to reach postgres:5432 attempt=27"
+              ],
+              [
+                "1785767891761559336",
+                "ERROR db connection refused attempt=27"
+              ],
+              [
+                "1785767891359817044",
+                "FATAL unable to reach postgres:5432 attempt=26"
+              ],
+              [
+                "1785767891359759044",
+                "ERROR db connection refused attempt=26"
+              ],
+              [
+                "1785767890958276502",
+                "FATAL unable to reach postgres:5432 attempt=25"
+              ],
+              [
+                "1785767890958212002",
+                "ERROR db connection refused attempt=25"
+              ],
+              [
+                "1785767890555947086",
+                "FATAL unable to reach postgres:5432 attempt=24"
+              ],
+              [
+                "1785767890555874669",
+                "ERROR db connection refused attempt=24"
+              ],
+              [
+                "1785767890153336085",
+                "FATAL unable to reach postgres:5432 attempt=23"
+              ],
+              [
+                "1785767890153286127",
+                "ERROR db connection refused attempt=23"
+              ],
+              [
+                "1785767889751944252",
+                "FATAL unable to reach postgres:5432 attempt=22"
+              ],
+              [
+                "1785767889751856502",
+                "ERROR db connection refused attempt=22"
+              ],
+              [
+                "1785767889350047502",
+                "FATAL unable to reach postgres:5432 attempt=21"
+              ],
+              [
+                "1785767889349975543",
+                "ERROR db connection refused attempt=21"
+              ],
+              [
+                "1785767888944761585",
+                "FATAL unable to reach postgres:5432 attempt=20"
+              ],
+              [
+                "1785767888944718418",
+                "ERROR db connection refused attempt=20"
+              ],
+              [
+                "1785767888543721460",
+                "FATAL unable to reach postgres:5432 attempt=19"
+              ],
+              [
+                "1785767888543656168",
+                "ERROR db connection refused attempt=19"
+              ],
+              [
+                "1785767888143440043",
+                "FATAL unable to reach postgres:5432 attempt=18"
+              ],
+              [
+                "1785767888143380001",
+                "ERROR db connection refused attempt=18"
+              ],
+              [
+                "1785767887743134543",
+                "FATAL unable to reach postgres:5432 attempt=17"
+              ],
+              [
+                "1785767887743053918",
+                "ERROR db connection refused attempt=17"
+              ],
+              [
+                "1785767887342668584",
+                "FATAL unable to reach postgres:5432 attempt=16"
+              ],
+              [
+                "1785767887342635792",
+                "ERROR db connection refused attempt=16"
+              ],
+              [
+                "1785767886942071417",
+                "FATAL unable to reach postgres:5432 attempt=15"
+              ],
+              [
+                "1785767886942022292",
+                "ERROR db connection refused attempt=15"
+              ],
+              [
+                "1785767886540938750",
+                "FATAL unable to reach postgres:5432 attempt=14"
+              ],
+              [
+                "1785767886540862750",
+                "ERROR db connection refused attempt=14"
+              ],
+              [
+                "1785767886139602417",
+                "FATAL unable to reach postgres:5432 attempt=13"
+              ],
+              [
+                "1785767886139553417",
+                "ERROR db connection refused attempt=13"
+              ],
+              [
+                "1785767885737401333",
+                "FATAL unable to reach postgres:5432 attempt=12"
+              ],
+              [
+                "1785767885737338750",
+                "ERROR db connection refused attempt=12"
+              ],
+              [
+                "1785767885335361166",
+                "FATAL unable to reach postgres:5432 attempt=11"
+              ],
+              [
+                "1785767885335306375",
+                "ERROR db connection refused attempt=11"
+              ]
+            ]
+          }
+        ],
+        "resultType": "streams",
+        "stats": {
+          "cache": {
+            "chunk": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "index": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "instantMetricResult": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "labelResult": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "result": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "seriesResult": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "statsResult": {
+              "bytesReceived": 221,
+              "bytesSent": 0,
+              "downloadTime": 3458,
+              "entriesFound": 1,
+              "entriesRequested": 1,
+              "entriesStored": 1,
+              "queryLengthServed": 30000000000,
+              "requests": 2
+            },
+            "volumeResult": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            }
+          },
+          "index": {
+            "postFilterChunks": 0,
+            "shardsDuration": 0,
+            "totalChunks": 0,
+            "usedBloomFilters": false
+          },
+          "ingester": {
+            "store": {
+              "chunk": {
+                "compressedBytes": 0,
+                "decompressedBytes": 0,
+                "decompressedLines": 0,
+                "decompressedStructuredMetadataBytes": 0,
+                "headChunkBytes": 27036,
+                "headChunkLines": 549,
+                "headChunkStructuredMetadataBytes": 4392,
+                "postFilterLines": 549,
+                "totalDuplicates": 0
+              },
+              "chunkRefsFetchTime": 129375,
+              "chunksDownloadTime": 0,
+              "congestionControlLatency": 0,
+              "dataobj": {
+                "pageBatches": 0,
+                "pagesDownloaded": 0,
+                "pagesDownloadedBytes": 0,
+                "pagesScanned": 0,
+                "postFilterRows": 0,
+                "postPredicateDecompressedBytes": 0,
+                "postPredicateRows": 0,
+                "postPredicateStructuredMetadataBytes": 0,
+                "prePredicateDecompressedBytes": 0,
+                "prePredicateDecompressedRows": 0,
+                "prePredicateDecompressedStructuredMetadataBytes": 0,
+                "totalPageDownloadTime": 0,
+                "totalRowsAvailable": 0
+              },
+              "pipelineWrapperFilteredLines": 0,
+              "queryReferencedStructuredMetadata": false,
+              "queryUsedV2Engine": false,
+              "totalChunksDownloaded": 0,
+              "totalChunksRef": 0
+            },
+            "totalBatches": 6,
+            "totalChunksMatched": 9,
+            "totalLinesSent": 383,
+            "totalReached": 3
+          },
+          "querier": {
+            "store": {
+              "chunk": {
+                "compressedBytes": 0,
+                "decompressedBytes": 0,
+                "decompressedLines": 0,
+                "decompressedStructuredMetadataBytes": 0,
+                "headChunkBytes": 0,
+                "headChunkLines": 0,
+                "headChunkStructuredMetadataBytes": 0,
+                "postFilterLines": 0,
+                "totalDuplicates": 0
+              },
+              "chunkRefsFetchTime": 0,
+              "chunksDownloadTime": 0,
+              "congestionControlLatency": 0,
+              "dataobj": {
+                "pageBatches": 0,
+                "pagesDownloaded": 0,
+                "pagesDownloadedBytes": 0,
+                "pagesScanned": 0,
+                "postFilterRows": 0,
+                "postPredicateDecompressedBytes": 0,
+                "postPredicateRows": 0,
+                "postPredicateStructuredMetadataBytes": 0,
+                "prePredicateDecompressedBytes": 0,
+                "prePredicateDecompressedRows": 0,
+                "prePredicateDecompressedStructuredMetadataBytes": 0,
+                "totalPageDownloadTime": 0,
+                "totalRowsAvailable": 0
+              },
+              "pipelineWrapperFilteredLines": 0,
+              "queryReferencedStructuredMetadata": false,
+              "queryUsedV2Engine": false,
+              "totalChunksDownloaded": 0,
+              "totalChunksRef": 0
+            }
+          },
+          "summary": {
+            "bytesProcessedPerSecond": 9295781,
+            "execTime": 0.002908,
+            "linesProcessedPerSecond": 188762,
+            "queueTime": 0.000677,
+            "shards": 3,
+            "splits": 3,
+            "subqueries": 0,
+            "totalBytesProcessed": 27036,
+            "totalEntriesReturned": 200,
+            "totalLinesProcessed": 549,
+            "totalPostFilterLines": 549,
+            "totalStructuredMetadataBytesProcessed": 4392
+          }
+        }
+      },
+      "status": "success"
+    },
+    "{namespace=\"obsfault\",pod=\"memory-hog-85bc98bb94-ts7z4\"} |~ \"(?i)(error|fatal|panic|exception|failed)\"": {
+      "data": {
+        "result": [
+          {
+            "stream": {
+              "app": "memory-hog",
+              "container": "hog",
+              "detected_level": "unknown",
+              "filename": "/var/log/pods/obsfault_memory-hog-85bc98bb94-ts7z4_be57257d-4ac4-4813-bc95-cb3747e89c29/hog/8.log",
+              "job": "obsfault/memory-hog",
+              "namespace": "obsfault",
+              "node_name": "obs-control-plane",
+              "pod": "memory-hog-85bc98bb94-ts7z4",
+              "service_name": "memory-hog",
+              "stream": "stdout"
+            },
+            "values": [
+              [
+                "1785769230342692002",
+                "ERROR allocated 90MiB"
+              ],
+              [
+                "1785769228840828210",
+                "ERROR allocated 84MiB"
+              ],
+              [
+                "1785769227334687168",
+                "ERROR allocated 78MiB"
+              ],
+              [
+                "1785769225831182125",
+                "ERROR allocated 72MiB"
+              ],
+              [
+                "1785769224329326208",
+                "ERROR allocated 66MiB"
+              ],
+              [
+                "1785769042854272513",
+                "ERROR allocated 60MiB"
+              ],
+              [
+                "1785769041352062804",
+                "ERROR allocated 54MiB"
+              ],
+              [
+                "1785769039847893220",
+                "ERROR allocated 48MiB"
+              ],
+              [
+                "1785769038346424219",
+                "ERROR allocated 42MiB"
+              ],
+              [
+                "1785769036845683802",
+                "ERROR allocated 36MiB"
+              ],
+              [
+                "1785769035337859218",
+                "ERROR allocated 30MiB"
+              ],
+              [
+                "1785769033836593092",
+                "ERROR allocated 24MiB"
+              ],
+              [
+                "1785769032334997591",
+                "ERROR allocated 18MiB"
+              ],
+              [
+                "1785769030829222841",
+                "ERROR allocated 12MiB"
+              ],
+              [
+                "1785769029326285923",
+                "ERROR allocated 6MiB"
+              ],
+              [
+                "1785769029325865423",
+                "ERROR starting allocation loop"
+              ]
+            ]
+          },
+          {
+            "stream": {
+              "app": "memory-hog",
+              "container": "hog",
+              "detected_level": "unknown",
+              "filename": "/var/log/pods/obsfault_memory-hog-85bc98bb94-ts7z4_be57257d-4ac4-4813-bc95-cb3747e89c29/hog/7.log",
+              "job": "obsfault/memory-hog",
+              "namespace": "obsfault",
+              "node_name": "obs-control-plane",
+              "pod": "memory-hog-85bc98bb94-ts7z4",
+              "service_name": "memory-hog",
+              "stream": "stdout"
+            },
+            "values": [
+              [
+                "1785768720395855877",
+                "ERROR allocated 90MiB"
+              ],
+              [
+                "1785768718893980418",
+                "ERROR allocated 84MiB"
+              ],
+              [
+                "1785768717391805751",
+                "ERROR allocated 78MiB"
+              ],
+              [
+                "1785768715889675709",
+                "ERROR allocated 72MiB"
+              ],
+              [
+                "1785768714388883375",
+                "ERROR allocated 66MiB"
+              ],
+              [
+                "1785768712886478805",
+                "ERROR allocated 60MiB"
+              ],
+              [
+                "1785768711384584012",
+                "ERROR allocated 54MiB"
+              ],
+              [
+                "1785768709882350845",
+                "ERROR allocated 48MiB"
+              ],
+              [
+                "1785768708380185303",
+                "ERROR allocated 42MiB"
+              ],
+              [
+                "1785768706879647260",
+                "ERROR allocated 36MiB"
+              ],
+              [
+                "1785768705378173593",
+                "ERROR allocated 30MiB"
+              ],
+              [
+                "1785768703874851051",
+                "ERROR allocated 24MiB"
+              ],
+              [
+                "1785768702371510091",
+                "ERROR allocated 18MiB"
+              ],
+              [
+                "1785768700866163216",
+                "ERROR allocated 12MiB"
+              ],
+              [
+                "1785768699360958757",
+                "ERROR allocated 6MiB"
+              ],
+              [
+                "1785768699360490882",
+                "ERROR starting allocation loop"
+              ]
+            ]
+          },
+          {
+            "stream": {
+              "app": "memory-hog",
+              "container": "hog",
+              "detected_level": "unknown",
+              "filename": "/var/log/pods/obsfault_memory-hog-85bc98bb94-ts7z4_be57257d-4ac4-4813-bc95-cb3747e89c29/hog/6.log",
+              "job": "obsfault/memory-hog",
+              "namespace": "obsfault",
+              "node_name": "obs-control-plane",
+              "pod": "memory-hog-85bc98bb94-ts7z4",
+              "service_name": "memory-hog",
+              "stream": "stdout"
+            },
+            "values": [
+              [
+                "1785768394344890171",
+                "ERROR allocated 90MiB"
+              ],
+              [
+                "1785768392842455087",
+                "ERROR allocated 84MiB"
+              ],
+              [
+                "1785768391340713461",
+                "ERROR allocated 78MiB"
+              ],
+              [
+                "1785768389839696919",
+                "ERROR allocated 72MiB"
+              ],
+              [
+                "1785768388335664835",
+                "ERROR allocated 66MiB"
+              ],
+              [
+                "1785768386833890376",
+                "ERROR allocated 60MiB"
+              ],
+              [
+                "1785768385332047792",
+                "ERROR allocated 54MiB"
+              ],
+              [
+                "1785768383828063889",
+                "ERROR allocated 48MiB"
+              ],
+              [
+                "1785768382323943263",
+                "ERROR allocated 42MiB"
+              ],
+              [
+                "1785768380820669554",
+                "ERROR allocated 36MiB"
+              ],
+              [
+                "1785768379319142470",
+                "ERROR allocated 30MiB"
+              ],
+              [
+                "1785768377815765927",
+                "ERROR allocated 24MiB"
+              ],
+              [
+                "1785768376313087385",
+                "ERROR allocated 18MiB"
+              ],
+              [
+                "1785768374807334468",
+                "ERROR allocated 12MiB"
+              ],
+              [
+                "1785768373303450300",
+                "ERROR allocated 6MiB"
+              ],
+              [
+                "1785768373302978800",
+                "ERROR starting allocation loop"
+              ]
+            ]
+          },
+          {
+            "stream": {
+              "app": "memory-hog",
+              "container": "hog",
+              "detected_level": "unknown",
+              "filename": "/var/log/pods/obsfault_memory-hog-85bc98bb94-ts7z4_be57257d-4ac4-4813-bc95-cb3747e89c29/hog/5.log",
+              "job": "obsfault/memory-hog",
+              "namespace": "obsfault",
+              "node_name": "obs-control-plane",
+              "pod": "memory-hog-85bc98bb94-ts7z4",
+              "service_name": "memory-hog",
+              "stream": "stdout"
+            },
+            "values": [
+              [
+                "1785767961952899341",
+                "ERROR allocated 90MiB"
+              ],
+              [
+                "1785767960449346590",
+                "ERROR allocated 84MiB"
+              ],
+              [
+                "1785767958945763006",
+                "ERROR allocated 78MiB"
+              ],
+              [
+                "1785767957443994547",
+                "ERROR allocated 72MiB"
+              ],
+              [
+                "1785767955941653005",
+                "ERROR allocated 66MiB"
+              ],
+              [
+                "1785767954439250171",
+                "ERROR allocated 60MiB"
+              ],
+              [
+                "1785767952932586378",
+                "ERROR allocated 54MiB"
+              ],
+              [
+                "1785767951430611961",
+                "ERROR allocated 48MiB"
+              ],
+              [
+                "1785767949929093919",
+                "ERROR allocated 42MiB"
+              ],
+              [
+                "1785767948422653168",
+                "ERROR allocated 36MiB"
+              ],
+              [
+                "1785767946917716292",
+                "ERROR allocated 30MiB"
+              ],
+              [
+                "1785767945416175333",
+                "ERROR allocated 24MiB"
+              ],
+              [
+                "1785767943911487013",
+                "ERROR allocated 18MiB"
+              ],
+              [
+                "1785767942409521013",
+                "ERROR allocated 12MiB"
+              ],
+              [
+                "1785767940905934387",
+                "ERROR allocated 6MiB"
+              ],
+              [
+                "1785767940905497929",
+                "ERROR starting allocation loop"
+              ]
+            ]
+          },
+          {
+            "stream": {
+              "app": "memory-hog",
+              "container": "hog",
+              "detected_level": "unknown",
+              "filename": "/var/log/pods/obsfault_memory-hog-85bc98bb94-ts7z4_be57257d-4ac4-4813-bc95-cb3747e89c29/hog/4.log",
+              "job": "obsfault/memory-hog",
+              "namespace": "obsfault",
+              "node_name": "obs-control-plane",
+              "pod": "memory-hog-85bc98bb94-ts7z4",
+              "service_name": "memory-hog",
+              "stream": "stdout"
+            },
+            "values": [
+              [
+                "1785767858910897168",
+                "ERROR allocated 90MiB"
+              ],
+              [
+                "1785767857407997876",
+                "ERROR allocated 84MiB"
+              ],
+              [
+                "1785767855906522417",
+                "ERROR allocated 78MiB"
+              ],
+              [
+                "1785767854402778764",
+                "ERROR allocated 72MiB"
+              ],
+              [
+                "1785767852900652930",
+                "ERROR allocated 66MiB"
+              ],
+              [
+                "1785767851396889929",
+                "ERROR allocated 60MiB"
+              ],
+              [
+                "1785767849894061887",
+                "ERROR allocated 54MiB"
+              ],
+              [
+                "1785767848389337552",
+                "ERROR allocated 48MiB"
+              ],
+              [
+                "1785767846887025218",
+                "ERROR allocated 42MiB"
+              ],
+              [
+                "1785767845384938926",
+                "ERROR allocated 36MiB"
+              ],
+              [
+                "1785767843883464842",
+                "ERROR allocated 30MiB"
+              ],
+              [
+                "1785767842380176925",
+                "ERROR allocated 24MiB"
+              ],
+              [
+                "1785767840877717382",
+                "ERROR allocated 18MiB"
+              ],
+              [
+                "1785767839375263382",
+                "ERROR allocated 12MiB"
+              ],
+              [
+                "1785767837873485464",
+                "ERROR allocated 6MiB"
+              ],
+              [
+                "1785767837873132714",
+                "ERROR starting allocation loop"
+              ]
+            ]
+          },
+          {
+            "stream": {
+              "app": "memory-hog",
+              "container": "hog",
+              "detected_level": "unknown",
+              "filename": "/var/log/pods/obsfault_memory-hog-85bc98bb94-ts7z4_be57257d-4ac4-4813-bc95-cb3747e89c29/hog/3.log",
+              "job": "obsfault/memory-hog",
+              "namespace": "obsfault",
+              "node_name": "obs-control-plane",
+              "pod": "memory-hog-85bc98bb94-ts7z4",
+              "service_name": "memory-hog",
+              "stream": "stdout"
+            },
+            "values": [
+              [
+                "1785767788943745803",
+                "ERROR allocated 90MiB"
+              ],
+              [
+                "1785767787441222927",
+                "ERROR allocated 84MiB"
+              ],
+              [
+                "1785767785939440718",
+                "ERROR allocated 78MiB"
+              ],
+              [
+                "1785767784435840551",
+                "ERROR allocated 72MiB"
+              ],
+              [
+                "1785767782934597217",
+                "ERROR allocated 66MiB"
+              ],
+              [
+                "1785767781433104383",
+                "ERROR allocated 60MiB"
+              ],
+              [
+                "1785767779932155007",
+                "ERROR allocated 54MiB"
+              ],
+              [
+                "1785767778428769798",
+                "ERROR allocated 48MiB"
+              ],
+              [
+                "1785767776927743130",
+                "ERROR allocated 42MiB"
+              ],
+              [
+                "1785767775425538088",
+                "ERROR allocated 36MiB"
+              ],
+              [
+                "1785767773922422629",
+                "ERROR allocated 30MiB"
+              ],
+              [
+                "1785767772421942253",
+                "ERROR allocated 24MiB"
+              ],
+              [
+                "1785767770919680627",
+                "ERROR allocated 18MiB"
+              ],
+              [
+                "1785767769416789293",
+                "ERROR allocated 12MiB"
+              ],
+              [
+                "1785767767913441126",
+                "ERROR allocated 6MiB"
+              ],
+              [
+                "1785767767912992376",
+                "ERROR starting allocation loop"
+              ]
+            ]
+          },
+          {
+            "stream": {
+              "app": "memory-hog",
+              "container": "hog",
+              "detected_level": "unknown",
+              "filename": "/var/log/pods/obsfault_memory-hog-85bc98bb94-ts7z4_be57257d-4ac4-4813-bc95-cb3747e89c29/hog/2.log",
+              "job": "obsfault/memory-hog",
+              "namespace": "obsfault",
+              "node_name": "obs-control-plane",
+              "pod": "memory-hog-85bc98bb94-ts7z4",
+              "service_name": "memory-hog",
+              "stream": "stdout"
+            },
+            "values": [
+              [
+                "1785767736950654542",
+                "ERROR allocated 90MiB"
+              ],
+              [
+                "1785767735449121750",
+                "ERROR allocated 84MiB"
+              ],
+              [
+                "1785767733948863638",
+                "ERROR allocated 78MiB"
+              ],
+              [
+                "1785767732445406346",
+                "ERROR allocated 72MiB"
+              ],
+              [
+                "1785767730943698262",
+                "ERROR allocated 66MiB"
+              ],
+              [
+                "1785767729440341678",
+                "ERROR allocated 60MiB"
+              ],
+              [
+                "1785767727939154302",
+                "ERROR allocated 54MiB"
+              ],
+              [
+                "1785767726436510885",
+                "ERROR allocated 48MiB"
+              ],
+              [
+                "1785767724934540593",
+                "ERROR allocated 42MiB"
+              ],
+              [
+                "1785767723433183758",
+                "ERROR allocated 36MiB"
+              ],
+              [
+                "1785767721931794299",
+                "ERROR allocated 30MiB"
+              ],
+              [
+                "1785767720429354299",
+                "ERROR allocated 24MiB"
+              ],
+              [
+                "1785767718927926048",
+                "ERROR allocated 18MiB"
+              ],
+              [
+                "1785767717426167506",
+                "ERROR allocated 12MiB"
+              ],
+              [
+                "1785767715924970713",
+                "ERROR allocated 6MiB"
+              ],
+              [
+                "1785767715924526255",
+                "ERROR starting allocation loop"
+              ]
+            ]
+          },
+          {
+            "stream": {
+              "app": "memory-hog",
+              "container": "hog",
+              "detected_level": "unknown",
+              "filename": "/var/log/pods/obsfault_memory-hog-85bc98bb94-ts7z4_be57257d-4ac4-4813-bc95-cb3747e89c29/hog/1.log",
+              "job": "obsfault/memory-hog",
+              "namespace": "obsfault",
+              "node_name": "obs-control-plane",
+              "pod": "memory-hog-85bc98bb94-ts7z4",
+              "service_name": "memory-hog",
+              "stream": "stdout"
+            },
+            "values": [
+              [
+                "1785767702457449513",
+                "ERROR allocated 90MiB"
+              ],
+              [
+                "1785767700954467512",
+                "ERROR allocated 84MiB"
+              ],
+              [
+                "1785767699452187720",
+                "ERROR allocated 78MiB"
+              ],
+              [
+                "1785767697949710302",
+                "ERROR allocated 72MiB"
+              ],
+              [
+                "1785767696447905468",
+                "ERROR allocated 66MiB"
+              ],
+              [
+                "1785767694945750884",
+                "ERROR allocated 60MiB"
+              ],
+              [
+                "1785767693441411800",
+                "ERROR allocated 54MiB"
+              ],
+              [
+                "1785767691938758633",
+                "ERROR allocated 48MiB"
+              ],
+              [
+                "1785767690438040132",
+                "ERROR allocated 42MiB"
+              ],
+              [
+                "1785767688936707215",
+                "ERROR allocated 36MiB"
+              ],
+              [
+                "1785767687435525047",
+                "ERROR allocated 30MiB"
+              ],
+              [
+                "1785767685934483922",
+                "ERROR allocated 24MiB"
+              ],
+              [
+                "1785767684428620837",
+                "ERROR allocated 18MiB"
+              ],
+              [
+                "1785767682927662795",
+                "ERROR allocated 12MiB"
+              ],
+              [
+                "1785767681421678336",
+                "ERROR allocated 6MiB"
+              ],
+              [
+                "1785767681421150711",
+                "ERROR starting allocation loop"
+              ]
+            ]
+          },
+          {
+            "stream": {
+              "app": "memory-hog",
+              "container": "hog",
+              "detected_level": "unknown",
+              "filename": "/var/log/pods/obsfault_memory-hog-85bc98bb94-ts7z4_be57257d-4ac4-4813-bc95-cb3747e89c29/hog/0.log",
+              "job": "obsfault/memory-hog",
+              "namespace": "obsfault",
+              "node_name": "obs-control-plane",
+              "pod": "memory-hog-85bc98bb94-ts7z4",
+              "service_name": "memory-hog",
+              "stream": "stdout"
+            },
+            "values": [
+              [
+                "1785767679301225210",
+                "ERROR allocated 90MiB"
+              ],
+              [
+                "1785767677798320834",
+                "ERROR allocated 84MiB"
+              ],
+              [
+                "1785767676295053875",
+                "ERROR allocated 78MiB"
+              ],
+              [
+                "1785767674787842083",
+                "ERROR allocated 72MiB"
+              ],
+              [
+                "1785767673286524221",
+                "ERROR allocated 66MiB"
+              ],
+              [
+                "1785767671784273679",
+                "ERROR allocated 60MiB"
+              ],
+              [
+                "1785767670282131345",
+                "ERROR allocated 54MiB"
+              ],
+              [
+                "1785767668780559636",
+                "ERROR allocated 48MiB"
+              ],
+              [
+                "1785767667279097677",
+                "ERROR allocated 42MiB"
+              ],
+              [
+                "1785767665776284510",
+                "ERROR allocated 36MiB"
+              ],
+              [
+                "1785767664275168926",
+                "ERROR allocated 30MiB"
+              ],
+              [
+                "1785767662773490300",
+                "ERROR allocated 24MiB"
+              ],
+              [
+                "1785767661272439466",
+                "ERROR allocated 18MiB"
+              ],
+              [
+                "1785767659768526382",
+                "ERROR allocated 12MiB"
+              ],
+              [
+                "1785767658266511339",
+                "ERROR allocated 6MiB"
+              ],
+              [
+                "1785767658266159131",
+                "ERROR starting allocation loop"
+              ]
+            ]
+          }
+        ],
+        "resultType": "streams",
+        "stats": {
+          "cache": {
+            "chunk": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "index": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "instantMetricResult": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "labelResult": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "result": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "seriesResult": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            },
+            "statsResult": {
+              "bytesReceived": 660,
+              "bytesSent": 0,
+              "downloadTime": 12583,
+              "entriesFound": 3,
+              "entriesRequested": 3,
+              "entriesStored": 1,
+              "queryLengthServed": 1832000000000,
+              "requests": 4
+            },
+            "volumeResult": {
+              "bytesReceived": 0,
+              "bytesSent": 0,
+              "downloadTime": 0,
+              "entriesFound": 0,
+              "entriesRequested": 0,
+              "entriesStored": 0,
+              "queryLengthServed": 0,
+              "requests": 0
+            }
+          },
+          "index": {
+            "postFilterChunks": 0,
+            "shardsDuration": 0,
+            "totalChunks": 0,
+            "usedBloomFilters": false
+          },
+          "ingester": {
+            "store": {
+              "chunk": {
+                "compressedBytes": 0,
+                "decompressedBytes": 0,
+                "decompressedLines": 0,
+                "decompressedStructuredMetadataBytes": 0,
+                "headChunkBytes": 4248,
+                "headChunkLines": 144,
+                "headChunkStructuredMetadataBytes": 1152,
+                "postFilterLines": 144,
+                "totalDuplicates": 0
+              },
+              "chunkRefsFetchTime": 245084,
+              "chunksDownloadTime": 0,
+              "congestionControlLatency": 0,
+              "dataobj": {
+                "pageBatches": 0,
+                "pagesDownloaded": 0,
+                "pagesDownloadedBytes": 0,
+                "pagesScanned": 0,
+                "postFilterRows": 0,
+                "postPredicateDecompressedBytes": 0,
+                "postPredicateRows": 0,
+                "postPredicateStructuredMetadataBytes": 0,
+                "prePredicateDecompressedBytes": 0,
+                "prePredicateDecompressedRows": 0,
+                "prePredicateDecompressedStructuredMetadataBytes": 0,
+                "totalPageDownloadTime": 0,
+                "totalRowsAvailable": 0
+              },
+              "pipelineWrapperFilteredLines": 0,
+              "queryReferencedStructuredMetadata": false,
+              "queryUsedV2Engine": false,
+              "totalChunksDownloaded": 0,
+              "totalChunksRef": 0
+            },
+            "totalBatches": 8,
+            "totalChunksMatched": 10,
+            "totalLinesSent": 144,
+            "totalReached": 5
+          },
+          "querier": {
+            "store": {
+              "chunk": {
+                "compressedBytes": 0,
+                "decompressedBytes": 0,
+                "decompressedLines": 0,
+                "decompressedStructuredMetadataBytes": 0,
+                "headChunkBytes": 0,
+                "headChunkLines": 0,
+                "headChunkStructuredMetadataBytes": 0,
+                "postFilterLines": 0,
+                "totalDuplicates": 0
+              },
+              "chunkRefsFetchTime": 0,
+              "chunksDownloadTime": 0,
+              "congestionControlLatency": 0,
+              "dataobj": {
+                "pageBatches": 0,
+                "pagesDownloaded": 0,
+                "pagesDownloadedBytes": 0,
+                "pagesScanned": 0,
+                "postFilterRows": 0,
+                "postPredicateDecompressedBytes": 0,
+                "postPredicateRows": 0,
+                "postPredicateStructuredMetadataBytes": 0,
+                "prePredicateDecompressedBytes": 0,
+                "prePredicateDecompressedRows": 0,
+                "prePredicateDecompressedStructuredMetadataBytes": 0,
+                "totalPageDownloadTime": 0,
+                "totalRowsAvailable": 0
+              },
+              "pipelineWrapperFilteredLines": 0,
+              "queryReferencedStructuredMetadata": false,
+              "queryUsedV2Engine": false,
+              "totalChunksDownloaded": 0,
+              "totalChunksRef": 0
+            }
+          },
+          "summary": {
+            "bytesProcessedPerSecond": 1549022,
+            "execTime": 0.002742,
+            "linesProcessedPerSecond": 52509,
+            "queueTime": 0.001205,
+            "shards": 5,
+            "splits": 5,
+            "subqueries": 0,
+            "totalBytesProcessed": 4248,
+            "totalEntriesReturned": 144,
+            "totalLinesProcessed": 144,
+            "totalPostFilterLines": 144,
+            "totalStructuredMetadataBytesProcessed": 1152
+          }
+        }
+      },
+      "status": "success"
+    }
+  },
+  "node": "obs-control-plane",
+  "pods": {
+    "crasher": "log-crasher-6b56b54fd9-9n7zr",
+    "oom": "memory-hog-85bc98bb94-ts7z4",
+    "throttled": "cpu-throttled-7dcbb979fc-pjk7l"
+  },
+  "prometheus": {
+    "max(container_memory_working_set_bytes{namespace=\"obsfault\",pod=\"cpu-throttled-7dcbb979fc-pjk7l\"})": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.505,
+              "581632"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(container_memory_working_set_bytes{namespace=\"obsfault\",pod=\"log-crasher-6b56b54fd9-9n7zr\"})": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.61,
+              "421888"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(container_memory_working_set_bytes{namespace=\"obsfault\",pod=\"memory-hog-85bc98bb94-ts7z4\"})": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.388,
+              "200704"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(increase(kube_pod_container_status_restarts_total{namespace=\"obsfault\",pod=\"cpu-throttled-7dcbb979fc-pjk7l\"}[60m]))": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.505,
+              "0"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(increase(kube_pod_container_status_restarts_total{namespace=\"obsfault\",pod=\"log-crasher-6b56b54fd9-9n7zr\"}[60m]))": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.61,
+              "8.04151920137628"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(increase(kube_pod_container_status_restarts_total{namespace=\"obsfault\",pod=\"memory-hog-85bc98bb94-ts7z4\"}[60m]))": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.389,
+              "8.040410350197531"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(kube_node_status_allocatable{node=\"obs-control-plane\",resource=\"cpu\"})": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.694,
+              "15"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(kube_node_status_allocatable{node=\"obs-control-plane\",resource=\"memory\"})": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.694,
+              "8320815104"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(kube_pod_container_resource_limits{namespace=\"obsfault\",pod=\"cpu-throttled-7dcbb979fc-pjk7l\",resource=\"memory\"}) or max(container_spec_memory_limit_bytes{namespace=\"obsfault\",pod=\"cpu-throttled-7dcbb979fc-pjk7l\"})": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.505,
+              "67108864"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(kube_pod_container_resource_limits{namespace=\"obsfault\",pod=\"log-crasher-6b56b54fd9-9n7zr\",resource=\"memory\"}) or max(container_spec_memory_limit_bytes{namespace=\"obsfault\",pod=\"log-crasher-6b56b54fd9-9n7zr\"})": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.61,
+              "67108864"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(kube_pod_container_resource_limits{namespace=\"obsfault\",pod=\"memory-hog-85bc98bb94-ts7z4\",resource=\"memory\"}) or max(container_spec_memory_limit_bytes{namespace=\"obsfault\",pod=\"memory-hog-85bc98bb94-ts7z4\"})": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.388,
+              "100663296"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(kube_pod_container_status_restarts_total{namespace=\"obsfault\",pod=\"cpu-throttled-7dcbb979fc-pjk7l\"})": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.505,
+              "0"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(kube_pod_container_status_restarts_total{namespace=\"obsfault\",pod=\"log-crasher-6b56b54fd9-9n7zr\"})": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.61,
+              "8"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(kube_pod_container_status_restarts_total{namespace=\"obsfault\",pod=\"memory-hog-85bc98bb94-ts7z4\"})": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.389,
+              "8"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(max_over_time(container_memory_working_set_bytes{namespace=\"obsfault\",pod=\"cpu-throttled-7dcbb979fc-pjk7l\"}[60m]))": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.505,
+              "6180864"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(max_over_time(container_memory_working_set_bytes{namespace=\"obsfault\",pod=\"log-crasher-6b56b54fd9-9n7zr\"}[60m]))": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.61,
+              "6410240"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "max(max_over_time(container_memory_working_set_bytes{namespace=\"obsfault\",pod=\"memory-hog-85bc98bb94-ts7z4\"}[60m]))": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.389,
+              "92164096"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "sum(container_memory_working_set_bytes{node=\"obs-control-plane\"})": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.694,
+              "2953273344"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "sum(kube_pod_container_resource_requests{node=\"obs-control-plane\",resource=\"cpu\"})": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.694,
+              "1.27"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "sum(kube_pod_container_resource_requests{node=\"obs-control-plane\",resource=\"memory\"})": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.694,
+              "538968064"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "sum(rate(container_cpu_cfs_throttled_periods_total{namespace=\"obsfault\",pod=\"cpu-throttled-7dcbb979fc-pjk7l\"}[5m])) / clamp_min(sum(rate(container_cpu_cfs_periods_total{namespace=\"obsfault\",pod=\"cpu-throttled-7dcbb979fc-pjk7l\"}[5m])), 1)": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.505,
+              "0.9596903636995607"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "sum(rate(container_cpu_cfs_throttled_periods_total{namespace=\"obsfault\",pod=\"log-crasher-6b56b54fd9-9n7zr\"}[5m])) / clamp_min(sum(rate(container_cpu_cfs_periods_total{namespace=\"obsfault\",pod=\"log-crasher-6b56b54fd9-9n7zr\"}[5m])), 1)": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.61,
+              "0"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "sum(rate(container_cpu_cfs_throttled_periods_total{namespace=\"obsfault\",pod=\"memory-hog-85bc98bb94-ts7z4\"}[5m])) / clamp_min(sum(rate(container_cpu_cfs_periods_total{namespace=\"obsfault\",pod=\"memory-hog-85bc98bb94-ts7z4\"}[5m])), 1)": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.389,
+              "0"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "sum(rate(container_cpu_usage_seconds_total{namespace=\"obsfault\",pod=\"cpu-throttled-7dcbb979fc-pjk7l\"}[5m]))": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.505,
+              "0.01441950979945699"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "sum(rate(container_cpu_usage_seconds_total{namespace=\"obsfault\",pod=\"log-crasher-6b56b54fd9-9n7zr\"}[5m]))": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.61,
+              "0.00004462974118343325"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    },
+    "sum(rate(container_cpu_usage_seconds_total{namespace=\"obsfault\",pod=\"memory-hog-85bc98bb94-ts7z4\"}[5m]))": {
+      "data": {
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1785769258.389,
+              "0.00015706402134663404"
+            ]
+          }
+        ],
+        "resultType": "vector"
+      },
+      "status": "success"
+    }
+  }
+}
