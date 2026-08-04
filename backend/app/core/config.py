@@ -301,6 +301,26 @@ class Settings(BaseSettings):
     # cluster sizes, not one to inherit from a changed default.
     job_max_concurrent: int = Field(default=4, ge=1, validation_alias="JOB_MAX_CONCURRENT")
 
+    # How long shutdown waits for in-flight investigations before cancelling
+    # them. 0 restores the pre-M9.2 behaviour: cancel immediately, record them
+    # as a lost worker, let another worker's reaper reach the same conclusion.
+    #
+    # 30s is chosen against the measured distribution rather than picked: a
+    # single investigation completes end to end in 0.223s at 500 pods, so this
+    # is two orders of magnitude of headroom and drains a full worker in
+    # practice. It is deliberately *below* a typical
+    # `terminationGracePeriodSeconds` of 60 — a drain the platform never
+    # finishes because SIGKILL arrives first is worse than no drain, since it
+    # spends the whole window not accepting traffic and then loses the work
+    # anyway.
+    #
+    # Draining does not mean "finish everything". Nothing waits on an
+    # investigation that is genuinely stuck; the deadline is a bound, and what
+    # is still running at the end is cancelled exactly as before.
+    shutdown_drain_seconds: float = Field(
+        default=30.0, ge=0, validation_alias="SHUTDOWN_DRAIN_SECONDS"
+    )
+
     # --- Cluster agents -----------------------------------------------------
     # 0 disables the gateway entirely, which is the default: an agent is opt-in
     # and the local kubeconfig path needs none of this.

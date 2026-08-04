@@ -263,6 +263,58 @@ class PostgresRedisJobStore:
     def enqueue(self, job_id: str, worker_id: str = "") -> None:
         self._bus.enqueue(job_id, worker_id)
 
+    def check_health(self) -> dict[str, str]:
+        """Probe both dependencies, and report rather than raise.
+
+        Deliberately outside `tenant_scope`: `SELECT 1` reads no row, so there
+        is no isolation to enforce, and a probe that needed a tenant would be a
+        probe an unauthenticated endpoint could not run.
+
+        **Postgres unavailable, Redis merely degraded**, and the asymmetry is
+        the same one that governs the rest of this module: Redis is the latency
+        layer, Postgres is the truth.
+
+        Without Postgres this worker cannot read an investigation, commit one,
+        or record an outcome — there is nothing it can usefully be sent.
+        Without Redis it cannot claim queued work or publish events, but every
+        read still resolves, because `get`, `get_summary`, `list` and the
+        report endpoints all go straight to Postgres.
+
+        Reporting Redis as `unavailable` was the first version, and it was
+        wrong in a way only the chaos run showed: every worker shares one
+        Redis, so every worker would fail readiness together and a degradation
+        that still served all the read traffic would present as a total
+        outage — the precise inversion of "if Redis drops everything the system
+        is slower, never wrong". `scripts/chaos_bench.py redis-loss` is what
+        caught it and is what stops it coming back.
+
+        Each is caught separately because the two are different incidents with
+        different responses. Failing the whole check on the first exception
+        would hide which.
+        """
+        checks: dict[str, str] = {}
+
+        try:
+            with self._db.cursor() as cursor:
+                cursor.execute("SELECT 1")
+            checks["postgres"] = "ok"
+        except Exception as exc:
+            logger.warning("Readiness: Postgres unreachable: {error}", error=str(exc))
+            checks["postgres"] = "unavailable"
+
+        try:
+            self._bus.ping()
+            checks["redis"] = "ok"
+        except Exception as exc:
+            logger.warning(
+                "Redis unreachable: this worker stays in rotation and serves reads, "
+                "but cannot claim queued work. {error}",
+                error=str(exc),
+            )
+            checks["redis"] = "degraded"
+
+        return checks
+
     def claim(self, job_id: str, worker: str, lease_seconds: int) -> InvestigationJob | None:
         """Take ownership of a pending job, or return None if someone else did.
 

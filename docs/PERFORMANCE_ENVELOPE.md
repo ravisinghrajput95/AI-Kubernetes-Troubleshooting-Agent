@@ -152,7 +152,10 @@ travel.
   so scale-out is expected to be close to linear — but *expected* is not
   *measured*, and the harness cannot generate enough load from one process to
   test it. **§12's scalability score should not move to 9 on the strength of
-  this document.**
+  this document.** Partially addressed below — see *Scale-out past two
+  workers*, which found the answer depends on which collection path is in use.
+- **Scale-out across hosts.** Everything below is co-located on one machine.
+  That turns out to matter more than expected.
 - **The Go agent.** Every agent here is a coroutine answering from a canned
   payload over the published protobuf contract. This measures the platform's
   side of the wire, not a real agent, a real API server, or a real cluster.
@@ -170,6 +173,53 @@ travel.
   event loop, GIL, or gRPC stream handling — was not isolated. Ruled out: CPU,
   the Postgres pool, platform slots and the synthetic fleet.
   Per-phase attribution *is* measured and is above.
+
+## Scale-out past two workers (Tier-5 item 44)
+
+```bash
+docker compose up -d postgres redis
+python scripts/scaleout_bench.py --workers 1,2,3,4 --investigations 150
+```
+
+Measured on the **local-kubeconfig** path, against a cluster that refuses
+connections so `collect` fails immediately and what is timed is the platform's
+own work — analysis, report rendering, persistence, queue round trip.
+
+| workers | throughput/s | per worker | vs 1 worker |
+|---|---|---|---|
+| 1 | 8.2 | 8.2 | 1.00x |
+| 2 | 9.4 | 4.7 | 1.14x |
+| 3 | 9.8 | 3.3 | 1.19x |
+| 4 | 9.8 | 2.4 | 1.19x |
+
+**Flat past two workers — and that is not the platform's ceiling.** The
+per-worker limit is real: at one worker, throughput rises 3.8 → 8.3/s as
+`JOB_MAX_CONCURRENT` goes 1 → 4 and then stops (8.6/s at 12), which by this
+document's own rule makes ~8.5/s a genuine per-worker figure for this workload.
+What does *not* follow is that adding workers cannot help.
+
+Every worker in this run shares one host, and on the local-kubeconfig path each
+investigation shells out to kubectl roughly fifteen times. **Process spawning
+is a host resource, not a per-worker one**, so four co-located workers compete
+for the same thing rather than adding capacity.
+
+That is why this does not contradict the 1 → 2 linear result above: that was
+measured on the **agent** path, where collection crosses a gRPC stream and
+spawns no subprocess at all. The two numbers describe different bottlenecks.
+
+The operational consequence is worth stating directly, because it changes
+deployment advice:
+
+- **Agent-reached clusters:** add workers, and expect them to help. Measured
+  linear 1 → 2.
+- **Kubeconfig-reached clusters:** adding workers *on the same host* buys
+  little. Add hosts, or move the fleet onto agents.
+
+Still unmeasured: workers on separate hosts, which is the configuration that
+would separate the platform's ceiling from this machine's. `scaleout_bench.py`
+prints that caveat with every run rather than leaving the table to be quoted
+alone — the throughput figure in this document has been wrong twice already,
+and both times a harness reported a limit it could not distinguish from its own.
 
 ## Known limits that are design, not measurement
 

@@ -12,6 +12,7 @@ because a leaking metric looks exactly like a working one.
 """
 
 import re
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -446,3 +447,71 @@ class TestPhaseTimingIsTotal:
             "protobuf was downgraded; the agent's generated bindings are "
             "validated against the runtime and this is how that breaks."
         )
+
+
+class TestTheShippedAlertRulesMatchTheShippedMetrics:
+    """`deploy/alerts/k8s-agent-alerts.yaml` must reference series that exist.
+
+    This is the Tier-4 Prometheus lesson pointed at our own metrics. A rule
+    naming a series the platform does not export is valid YAML, passes
+    `promtool check rules`, evaluates successfully forever and fires never —
+    the same shape as `container_spec_memory_limit_bytes` resolving to nothing
+    on kube-prometheus-stack. Nothing else in the repository would notice.
+
+    Asserted against the real exposition rather than against the metric
+    definitions, because seeding is what makes an alert correct from a cold
+    start: Prometheus does not create a labelled series until first use, so a
+    rule on `outcome="failed"` would read "no data" on a healthy platform and
+    fire on the *second* failure.
+    """
+
+    RULES = Path(__file__).resolve().parents[2] / "deploy" / "alerts" / "k8s-agent-alerts.yaml"
+
+    def _exposition(self, api) -> str:
+        return scrape(api)
+
+    def test_the_rules_file_ships(self):
+        assert self.RULES.exists(), "the alert rules are part of the deliverable"
+
+    def test_every_referenced_series_is_exported(self, api):
+        payload = self._exposition(api)
+        exported = {line.split()[2] for line in payload.splitlines() if line.startswith("# TYPE ")}
+        expanded = set(exported)
+        for name in exported:
+            expanded |= {f"{name}_bucket", f"{name}_sum", f"{name}_count", f"{name}_total"}
+
+        referenced = set(re.findall(r"k8sagent_[a-z_]+", self.RULES.read_text()))
+        assert referenced, "the rules must reference some metrics"
+
+        missing = sorted(referenced - expanded)
+        assert not missing, (
+            f"alert rules reference series this platform never exports: {missing}. "
+            f"Such a rule evaluates successfully and fires never."
+        )
+
+    def test_every_filtered_label_value_is_seeded(self, api):
+        """A rule on an unseeded label value reads 'no data' while healthy."""
+        payload = self._exposition(api)
+        pairs = re.findall(r'(k8sagent_[a-z_]+)\{(\w+)="([^"]+)"', self.RULES.read_text())
+        assert pairs, "the rules must filter on some label values"
+
+        missing = [
+            f'{metric}{{{label}="{value}"}}'
+            for metric, label, value in pairs
+            if not re.search(rf"{metric}\{{[^}}]*{label}=\"{value}\"", payload)
+        ]
+        assert not missing, f"alert rules filter on series that are never seeded: {missing}"
+
+    def test_no_rule_can_reference_an_identifying_label(self):
+        """The cardinality and disclosure rule, restated where it is easy to break.
+
+        A rule author reaching for `by (cluster)` would be asking for a label
+        that does not exist — but the failure is silent, so it is asserted here
+        rather than left to review.
+        """
+        text = self.RULES.read_text()
+        for forbidden in ("cluster=", "tenant=", "namespace=", "by (cluster)", "by (tenant)"):
+            assert forbidden not in text, (
+                f"{forbidden!r} appears in the alert rules; no series carries it, "
+                f"and adding one would publish the customer list to any scraper"
+            )

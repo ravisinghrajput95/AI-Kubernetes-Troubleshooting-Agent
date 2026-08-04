@@ -1,0 +1,370 @@
+# Alerting rules for the platform's own metrics.
+#
+# Tier-5 item 40. `docs/SLO.md` proposes the objectives; these are the rules
+# that page on them. A PrometheusRule, so `kubectl apply -f` works with the
+# prometheus-operator; the `groups:` block underneath is plain Prometheus rule
+# syntax and can be lifted into a standalone `rule_files:` entry unchanged.
+#
+# Three conventions, each of which is a decision rather than a style:
+#
+#   * **Burn rate, not instantaneous violation.** One failed investigation is
+#     not a page. Consuming a quarter of the monthly error budget in an hour
+#     is. The 14.4x multiplier is the standard fast-burn factor: at that rate a
+#     28-day budget is gone in roughly two days.
+#
+#   * **No cluster, tenant, namespace or user appears in any expression**,
+#     because no series carries them. That is deliberate in
+#     `app/observability/metrics.py` — one series per cluster across a
+#     1,000-cluster fleet is how a Prometheus falls over, and a scraper holds
+#     no tenant, so labelling by cluster would publish the customer list to
+#     anyone who can reach the port. When someone wants per-cluster rates the
+#     answer is the audit log, not a label here.
+#
+#   * **Every rule works from a cold start.** Prometheus does not create a
+#     labelled series until first use, so an alert on
+#     `investigations_total{outcome="failed"}` would read "no data" while the
+#     platform is healthy and fire on the *second* failure. The platform seeds
+#     every series to zero at import, which is only possible because every
+#     label set is closed. Do not add a rule whose series is not seeded.
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: k8s-agent
+  labels:
+    app.kubernetes.io/name: k8s-agent
+    # kube-prometheus-stack selects rules by this label by default.
+    release: kps
+spec:
+  groups:
+    - name: k8s-agent.slo
+      rules:
+        # --- SLO 1: investigation success rate (99.0%) -----------------------
+        - alert: InvestigationFailureBudgetBurningFast
+          expr: |
+            (
+              sum(rate(k8sagent_investigations_total{outcome="failed"}[1h]))
+              /
+              clamp_min(sum(rate(k8sagent_investigations_total[1h])), 0.001)
+            ) > (14.4 * 0.01)
+          for: 5m
+          labels:
+            severity: page
+            slo: investigation-success
+          annotations:
+            summary: Investigations are failing fast enough to exhaust the monthly budget in ~2 days
+            description: >-
+              {{ $value | humanizePercentage }} of investigations failed in the last hour
+              against a 1% budget. A failed investigation is often the customer's cluster
+              being unreachable or their RBAC refusing every read, so check
+              k8sagent_evidence_records_total by status before suspecting the platform.
+            runbook: docs/SLO.md#1-investigation-success-rate--990
+
+        # `cancelled` is a user action, not an error, and is excluded from the
+        # burn-rate numerator above. A spike still means something — usually
+        # investigations slow enough that people give up.
+        - alert: InvestigationCancellationSpike
+          expr: |
+            (
+              sum(rate(k8sagent_investigations_total{outcome="cancelled"}[30m]))
+              /
+              clamp_min(sum(rate(k8sagent_investigations_total[30m])), 0.001)
+            ) > 0.20
+          for: 15m
+          labels:
+            severity: ticket
+            slo: investigation-success
+          annotations:
+            summary: One investigation in five is being cancelled by its submitter
+            description: >-
+              Users abandoning investigations usually means latency, not errors.
+              Check the p95 before looking at failures.
+
+        # --- SLO 2: latency (p95 < 30s) --------------------------------------
+        - alert: InvestigationLatencyHigh
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (le) (rate(k8sagent_investigation_duration_seconds_bucket[30m]))
+            ) > 30
+          for: 15m
+          labels:
+            severity: ticket
+            slo: investigation-latency
+          annotations:
+            summary: p95 investigation latency is above the 30s objective
+            description: >-
+              30s is two orders of magnitude above the measured 0.223s at 500 pods, so
+              this is rarely the platform. Break it down by phase:
+              histogram_quantile(0.95, sum by (le, phase) (rate(k8sagent_investigation_phase_seconds_bucket[30m]))).
+              Expect roughly collect 65%, report 13%, analyse 11%, persist 10% — a shift
+              in that shape says more than the total does.
+            runbook: docs/SLO.md#2-investigation-latency--p95--30-s
+
+        # --- SLO 4: evidence completeness (95.0%) ----------------------------
+        # The leading indicator. A partial collection still succeeds, so
+        # degradation shows up here before it shows up in the success rate.
+        - alert: EvidenceCompletenessDegraded
+          expr: |
+            (
+              sum(rate(k8sagent_evidence_records_total{status=~"ok|empty"}[6h]))
+              /
+              clamp_min(
+                sum(rate(k8sagent_evidence_records_total{status!="not_applicable"}[6h])),
+                0.001
+              )
+            ) < 0.95
+          for: 30m
+          labels:
+            severity: ticket
+            slo: evidence-completeness
+          annotations:
+            summary: Investigations are getting thinner, not failing
+            description: >-
+              {{ $value | humanizePercentage }} of evidence records are usable, against a
+              95% objective. `not_applicable` is excluded, so an undeployed Prometheus is
+              not counted as a gap. A sustained drop here with a flat success rate is the
+              harder problem to notice and the reason this alert exists.
+            runbook: docs/SLO.md#4-evidence-completeness--950
+
+        - alert: ClusterReadsBeingRefused
+          expr: |
+            (
+              sum(rate(k8sagent_evidence_records_total{status="forbidden"}[1h]))
+              /
+              clamp_min(sum(rate(k8sagent_evidence_records_total[1h])), 0.001)
+            ) > 0.25
+          for: 20m
+          labels:
+            severity: ticket
+            slo: evidence-completeness
+          annotations:
+            summary: A quarter of cluster reads are being refused by Kubernetes RBAC
+            description: >-
+              With impersonation on, the platform reads as the caller, so this is usually
+              a user whose Kubernetes RBAC is narrower than the service account's rather
+              than a broken cluster. A low steady rate is invisible in the product and
+              visible only here.
+
+        # --- SLO 5: diagnosis soundness (<5% grounding rejections) ------------
+        # Gated on the model path being in use at all: without OPENAI_API_KEY
+        # every diagnosis is `fallback` by design and this would fire
+        # permanently on a completely healthy platform.
+        - alert: GroundingRejectionRateHigh
+          expr: |
+            (
+              sum(rate(k8sagent_diagnoses_total{path="fallback"}[6h]))
+              /
+              clamp_min(sum(rate(k8sagent_diagnoses_total[6h])), 0.001)
+            ) > 0.05
+            and
+            sum(rate(k8sagent_llm_calls_total{outcome!="skipped"}[6h])) > 0
+          for: 30m
+          labels:
+            severity: ticket
+            slo: diagnosis-soundness
+          annotations:
+            summary: The model is producing ungrounded diagnoses more often than the 5% objective
+            description: >-
+              Falling back is the correct response and users still get a complete
+              deterministic diagnosis, so this is not urgent — but it means the model is
+              fabricating citations or contradicting the signals it cites. Break down by
+              k8sagent_grounding_rejections_total, which is labelled by a closed category
+              set (never the raw reason, which quotes attacker-influenced cluster text).
+              Measured 0% false rejections over 10 live runs, so 5% has real headroom.
+            runbook: docs/SLO.md#5-diagnosis-soundness--grounding-rejection-rate--50
+
+        # The two-sided half. Zero rejections over a long window may mean the
+        # grounding checks have been weakened into inertness — a failure that is
+        # silent by construction, because an over-strict check is loud and an
+        # under-strict one simply accepts everything.
+        - alert: GroundingNeverRejectsAnything
+          expr: |
+            sum(increase(k8sagent_diagnoses_total{path="fallback"}[14d])) == 0
+            and
+            sum(increase(k8sagent_diagnoses_total{path="grounded"}[14d])) > 500
+          for: 1h
+          labels:
+            severity: info
+            slo: diagnosis-soundness
+          annotations:
+            summary: Grounding has rejected nothing in two weeks — verify it is still running
+            description: >-
+              Not necessarily wrong, and deliberately `info` rather than a page. But an
+              inert validator and a perfectly behaved model look identical from here, and
+              only one of them is good news. Check tests/test_grounding.py still passes
+              and that GroundingValidator is still on the path.
+
+    - name: k8s-agent.capacity
+      rules:
+        # --- SLO 7: queue depth ----------------------------------------------
+        - alert: QueueDepthExceedsCapacity
+          expr: sum(k8sagent_queue_depth) > sum(k8sagent_worker_capacity)
+          for: 10m
+          labels:
+            severity: ticket
+            slo: queue-latency
+          annotations:
+            summary: Investigations are waiting rather than running
+            description: >-
+              Add workers, not slots. The ceiling is per worker process — scaling
+              JOB_MAX_CONCURRENT, agent processes and the Postgres pool each left
+              throughput at ~12/s, while workers 1 to 2 gave 12.1 to 23.0/s, linear. A
+              saturated worker samples ~92% idle with every non-idle sample in a socket
+              wait.
+            runbook: docs/SLO.md#7-queue-latency--depth-below-one-workers-capacity-990
+
+        - alert: QueueBacklogSevere
+          expr: sum(k8sagent_queue_depth) > (4 * sum(k8sagent_worker_capacity))
+          for: 10m
+          labels:
+            severity: page
+            slo: queue-latency
+          annotations:
+            summary: Queue depth is four times fleet capacity
+            description: Four times the fleet's concurrent capacity is waiting. Scale out now.
+
+        - alert: WorkerQueueStranded
+          expr: |
+            max(k8sagent_queue_depth{queue!="shared"}) > 0
+            and
+            sum(k8sagent_queue_depth{queue="shared"}) == 0
+          for: 15m
+          labels:
+            severity: ticket
+          annotations:
+            summary: Work is stranded on a per-worker affinity queue
+            description: >-
+              Depth on a worker queue with an empty shared queue means routing is
+              concentrating work on the replica holding a busy cluster's agent stream, or
+              that worker has died. A dead worker's queue only drains because its
+              presence record lapses — PRESENCE_TTL_SECONDS (45) must stay below
+              UNCLAIMED_GRACE_SECONDS (60), or recovery becomes a permanent loop.
+
+        - alert: NoWorkersRunningInvestigations
+          expr: |
+            sum(k8sagent_worker_capacity) == 0
+          for: 5m
+          labels:
+            severity: page
+          annotations:
+            summary: No worker is reporting capacity
+            description: >-
+              Every replica has lost its queue consumer, or none started one. Submissions
+              will be accepted and never run, which looks healthy from the API.
+
+    - name: k8s-agent.fleet
+      rules:
+        # --- SLO 6: fleet visibility -----------------------------------------
+        # The denominator is not a metric, deliberately: a per-cluster series is
+        # exactly what the cardinality rule forbids. Set this to your enrolled
+        # cluster count from `agentctl list`, or record it as a recording rule.
+        - alert: AgentsDisconnected
+          expr: |
+            sum(k8sagent_agents_connected) < (0.99 * 100)
+          for: 15m
+          labels:
+            severity: ticket
+            slo: fleet-visibility
+          annotations:
+            summary: Fewer agents are connected than the fleet should have
+            description: >-
+              Replace the `100` in this expression with your enrolled cluster count.
+              "Online" is heartbeat-derived, not socket-derived: the gateway pings every
+              15s and AGENT_STALE_SECONDS (45) decides staleness, because an idle stream
+              and a half-open one look identical from the platform's side.
+            runbook: docs/SLO.md#6-fleet-visibility--990
+
+        - alert: AgentFleetCollapsed
+          expr: sum(k8sagent_agents_connected) == 0
+          for: 10m
+          labels:
+            severity: page
+            slo: fleet-visibility
+          annotations:
+            summary: No cluster agent is connected
+            description: >-
+              Every agent stream is gone. If this coincides with a platform restart it is
+              expected briefly — agents redial — but not for ten minutes. Check the
+              gateway port and whether certificates have expired; renewal happens at 2/3
+              of certificate life and never touches a running stream.
+
+        # A cluster reachable only through an agent has exactly one worker that
+        # can investigate it, and `select_provider` refuses rather than reading
+        # a same-named local kubeconfig context. A sustained rate of local
+        # fallback on an agent fleet means routing is not working.
+        - alert: InvestigationsFallingBackToLocalKubeconfig
+          expr: |
+            (
+              sum(rate(k8sagent_cluster_access_total{provider="kubeconfig"}[1h]))
+              /
+              clamp_min(sum(rate(k8sagent_cluster_access_total[1h])), 0.001)
+            ) > 0.10
+            and
+            sum(k8sagent_agents_connected) > 0
+          for: 30m
+          labels:
+            severity: ticket
+          annotations:
+            summary: Investigations are using the platform's own kubeconfig on an agent fleet
+            description: >-
+              Expected to be near zero once clusters are enrolled. Before M8a roughly
+              two thirds of agent-cluster investigations were answered by the platform's
+              own kubeconfig — and since that resolves a cluster *name* against whatever
+              contexts the platform holds and has no tenant, one tenant's `prod` could be
+              answered by another's.
+
+    - name: k8s-agent.ingress
+      rules:
+        - alert: EventSourceRejectingDeliveries
+          expr: |
+            (
+              sum(rate(k8sagent_events_rejected_total[30m]))
+              /
+              clamp_min(
+                sum(rate(k8sagent_events_rejected_total[30m]))
+                + sum(rate(k8sagent_events_triggered_total[30m])),
+                0.001
+              )
+            ) > 0.50
+          for: 20m
+          labels:
+            severity: ticket
+          annotations:
+            summary: More than half of inbound alert deliveries are being rejected
+            description: >-
+              Deduplication rejections are normal and expected — Alertmanager re-sends on
+              its repeat_interval — so check the rejection reason before acting. A rise in
+              *signature* rejections means a rotated secret; a rise in deduplication means
+              a flapping alert, which is what the cooldown exists to absorb.
+
+        - alert: RateLimitingSustained
+          expr: sum(rate(k8sagent_rate_limited_total[30m])) > 0.1
+          for: 30m
+          labels:
+            severity: info
+          annotations:
+            summary: Callers are being rate limited continuously
+            description: >-
+              The limiter is doing its job; this is informational. Note it fails *open* by
+              design — it is availability protection against a noisy caller, not a
+              security control — so a Redis outage silently removes it rather than
+              refusing every investigation.
+
+        - alert: NotificationsFailing
+          expr: |
+            (
+              sum(rate(k8sagent_notifications_total{outcome="failed"}[1h]))
+              /
+              clamp_min(sum(rate(k8sagent_notifications_total[1h])), 0.001)
+            ) > 0.50
+          for: 30m
+          labels:
+            severity: info
+          annotations:
+            summary: Most outbound notifications are failing
+            description: >-
+              Deliberately informational. Delivery is detached, exceptions are dropped and
+              announce() returns nothing to await, precisely so nothing comes to depend on
+              it — a notification can never fail an investigation. Fix the destination at
+              your leisure.

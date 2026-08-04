@@ -141,3 +141,27 @@ class JobStore(Protocol):
         stream that worker holds. Empty means anyone may take it.
         """
         ...
+
+    def check_health(self) -> dict[str, str]:
+        """Name each backing dependency, and how badly its loss hurts.
+
+        Three values, and the middle one is the point:
+
+        - `ok`
+        - `degraded` — reachable service, reduced capability. **Still ready.**
+        - `unavailable` — this worker cannot do its job. Not ready.
+
+        The store decides which, because the store is the only thing that knows
+        what it needs; the handler applies one rule and never learns which
+        deployment it is in. That is the same seam discipline as everywhere
+        else, and it is what stopped the readiness probe from converting a
+        Redis outage into a total one — see `PostgresRedisJobStore`.
+
+        The in-process store returns `{}`: it has no dependency to be unready
+        about, and reporting a Postgres it does not use as failed would make
+        the supported single-process default permanently unready.
+
+        Blocking, and called from a thread. Raising is not the contract —
+        a probe reports a dependency's failure, it does not become one.
+        """
+        ...

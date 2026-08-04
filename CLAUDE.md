@@ -1010,6 +1010,93 @@ Response shapes are typed in `src/types/investigation.ts`, but the backend retur
 
 `vite.config.ts` imports `defineConfig` from `vitest/config`, not `vite` — vitest owns the merged config type. Tests need `IS_REACT_ACT_ENVIRONMENT` from `src/test/setup.ts`. Avoid Testing Library's `waitFor` in fake-timer tests: it polls on timers and will hang; advance timers explicitly instead.
 
+### Operability (`app/core/correlation.py`, `app/core/readiness.py`, M9.2)
+
+**Liveness and readiness are different questions and must stay separate.**
+`/health/live` never consults a dependency — a liveness probe that checks
+Postgres restarts every worker in the fleet on a blip, turning a recoverable
+dependency failure into an outage. `/health/ready` consults the store and fails
+while starting, while draining, or when something it cannot work without is
+gone. `/health` is unchanged for backward compatibility: the console reads it
+for `auth_mode` before it can authenticate.
+
+**`check_health()` returns three values and the *store* picks which**: `ok`,
+`degraded` (reduced capability, stays in rotation), `unavailable` (leaves
+rotation). Postgres unavailable, **Redis only degraded** — every worker shares
+one Redis, so failing readiness on it takes the whole fleet out at once while
+every read still resolves from Postgres. That inverts "if Redis drops
+everything the system is slower, never wrong". The first implementation got
+this wrong and `scripts/chaos_bench.py redis-loss` is what caught it.
+
+**Shutdown order is the whole of graceful shutdown** (`StateBackend.shutdown`):
+readiness false → consumer stops claiming → drain up to
+`SHUTDOWN_DRAIN_SECONDS` (30) → cancel the rest. Each is wrong without the
+others: readiness last means the pod drains while still receiving traffic
+(SIGTERM and Endpoints removal race), and draining before the consumer stops
+refills the worker as fast as it empties. Keep `SHUTDOWN_DRAIN_SECONDS` below
+`terminationGracePeriodSeconds`; a drain SIGKILLed halfway is worse than none.
+
+**The correlation id is the investigation id wherever one exists**, which is
+what makes it span workers — the job id already *is* the investigation id, so a
+job claimed on another worker re-establishes the same id from the row.
+`_execute` opens the scope; `submit` binds it so the request and its
+`X-Correlation-ID` response header adopt it too.
+
+Two things here are load-bearing and both fail silently:
+
+- **`logger.configure` must set no `correlation_id` in `extra`.** loguru merges
+  the configured extra into every record *before* the patcher runs, so a
+  default there means `setdefault` never fires and every line logs the
+  placeholder while looking exactly like a working correlation id. It shipped
+  that way for one commit. A test calling `_inject_correlation({"extra": {}})`
+  passes with the bug present — assert on records loguru actually produced, and
+  specifically that **two scopes yield two different ids**.
+- **The `ContextVar` holds a mutable holder, not a string.** Starlette runs the
+  route handler in a child task, so `bind()` there lands in a context copy and
+  the middleware would still return the inbound `req-…`. Mutating a shared
+  holder crosses that boundary; `correlation_scope()` installs a *new* holder
+  so a background investigation cannot rename the request that started it.
+  Same family as `require_principal` having to stay `async`.
+
+### Chaos and scale-out (`scripts/chaos_bench.py`, `scripts/scaleout_bench.py`)
+
+Opt-in, needs Docker, not in CI — same precedent as `K8S_AGENT_INTEGRATION`.
+
+```bash
+docker compose up -d postgres redis
+python scripts/chaos_bench.py all          # worker death, redis loss, postgres loss, drain
+python scripts/scaleout_bench.py --workers 1,2,3,4
+```
+
+Three harness lessons worth keeping, because each produced a *passing* run:
+
+- **A scenario needs a control.** The workers point at a cluster that is not
+  there, so every investigation fails on collection regardless; the Redis
+  scenario now compares status *and* error against a control run with Redis up.
+- **Assert the scenario did something.** The drain scenario reported PASS while
+  the process exited 0.2s after SIGTERM with nothing in flight. It now requires
+  a logged drain and a shutdown longer than a second.
+- **Making an investigation slow enough to interrupt took three attempts.** An
+  unroutable IP returns `error: EOF` in milliseconds; a stalling listener makes
+  kubectl prompt `Please enter Username:` and die on EOF just as fast. A
+  stalling listener **plus a token in the kubeconfig** is what blocks.
+
+**Scale-out is flat past two workers on the kubeconfig path, and that is the
+host rather than the platform.** Each investigation shells out to kubectl ~15
+times and process spawning is a host resource, so co-located workers compete
+rather than add. It does not contradict the envelope's linear 1→2, which was
+measured on the **agent** path where collection spawns nothing. Add workers on
+an agent fleet; add hosts on a kubeconfig fleet. Cross-host is still unmeasured.
+
+### Alerting (`deploy/alerts/k8s-agent-alerts.yaml`)
+
+17 rules on burn rate rather than instantaneous violation. `tests/test_metrics.py`
+asserts every series and every filtered label value in the shipped rules
+appears in the **real exposition** — a rule naming a series the platform does
+not export is valid YAML, passes `promtool`, evaluates forever and fires never,
+which is exactly the Prometheus defect class from M9.1. A fourth test refuses
+any rule mentioning a cluster, tenant or namespace label.
+
 ### Deployment and operations docs
 
 Written in Tier 4 of the audit backlog. They record decisions, not just

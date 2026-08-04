@@ -191,26 +191,24 @@ BOB_AUTH = {"Authorization": "Bearer bob-tok"}
 
 # Unauthenticated by design. Everything else must reject an anonymous caller.
 #
-# `/health` is reached by container probes before any credential exists; the
-# docs routes are FastAPI's own and carry no data.
-PUBLIC = {
-    "/health",
-    "/docs",
-    "/redoc",
-    "/openapi.json",
-    "/docs/oauth2-redirect",
-    # Scraped by infrastructure, which holds no user credential. Safe only
-    # because no series identifies a cluster, tenant or user — asserted in
-    # `test_metrics.py`, not assumed here.
-    "/metrics",
-    # Not unauthenticated: authenticated by an HMAC signature over the body and
-    # a timestamp, and authorised as the source's *configured* identity, which
-    # the investigation is then impersonated as. It rejects an unsigned caller
-    # with 401 like everything else — it simply does not offer a Bearer
-    # challenge, because a bearer token is not what it accepts.
-    # `test_event_ingress.py` covers it.
-    "/events/{source_name}",
-}
+# **Imported, not restated.** This was a second copy of `app/authz/routes.py`'s
+# set, and a second copy is the promise-someone-will-remember that
+# `_protected_routes` exists to eliminate — the two had to be edited together,
+# and adding a public route to the application while forgetting the test copy
+# fails here with a message about authentication rather than about the list
+# being stale. Importing means the decision to leave a route open is recorded
+# in exactly one place, where `test_authz.py` also asserts on it.
+#
+# What each entry is doing there is argued at the definition:
+# `/health*` is reached by container probes before any credential exists;
+# `/metrics` is scraped by infrastructure holding no user credential and is
+# safe only because no series identifies a cluster, tenant or user (asserted in
+# `test_metrics.py`, not assumed here); `/events/{source_name}` is not
+# unauthenticated at all but authenticated by an HMAC signature over the body
+# and a timestamp, and rejects an unsigned caller with 401 like everything else
+# — it simply does not offer a Bearer challenge, because a bearer token is not
+# what it accepts (`test_event_ingress.py` covers it).
+from app.authz.routes import PUBLIC  # noqa: E402
 
 
 def _protected_routes() -> list[tuple[str, str]]:

@@ -27,6 +27,13 @@ from app.authz.models import Permission
 PUBLIC: frozenset[str] = frozenset(
     {
         "/health",
+        # Kubelet probes carry no credential and never will. They are also the
+        # one caller that must still get an answer when authentication itself
+        # is misconfigured — a probe that 401s restarts a pod whose only fault
+        # is a typo'd issuer, turning a fixable configuration error into a
+        # crashloop across the fleet.
+        "/health/live",
+        "/health/ready",
         "/docs",
         "/redoc",
         "/openapi.json",

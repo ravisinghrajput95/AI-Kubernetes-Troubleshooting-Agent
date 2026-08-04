@@ -154,6 +154,10 @@ class InMemoryJobStore:
         is exactly one worker, so affinity is already satisfied and the caller
         should not have to know which store it has."""
 
+    def check_health(self) -> dict[str, str]:
+        """Nothing to check. This process is the whole deployment."""
+        return {}
+
     def _notify_cancel(self, job_id: str) -> None:
         for listener in self._cancel_listeners:
             try:

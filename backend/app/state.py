@@ -20,6 +20,7 @@ from typing import Any
 from loguru import logger
 
 from app.core.config import settings
+from app.core.readiness import get_readiness
 from app.jobs.runner import InvestigationJobRunner, set_job_runner
 from app.jobs.store import InMemoryJobStore, set_job_store
 from app.services.report_store import set_report_store
@@ -77,23 +78,46 @@ class StateBackend:
     async def shutdown(self) -> None:
         """Tear down in dependency order, and un-install what startup installed.
 
-        In-flight investigations stop first: they use the store, and closing a
-        connection pool underneath a running job turns a clean shutdown into a
-        burst of errors.
+        The order of the first three steps is the whole of graceful shutdown,
+        and each one is wrong without the others:
+
+        1. **Readiness goes false**, before anything is torn down. SIGTERM and
+           removal from Endpoints race, so for the propagation window the pod
+           is still receiving requests; failing readiness immediately is what
+           gets it out of rotation while it still works.
+        2. **The queue consumer stops claiming.** Draining while the consumer
+           is still popping ids would refill the worker as fast as it emptied,
+           and on a busy queue the drain would never finish.
+        3. **In-flight investigations are given time to finish.** Only then,
+           and only up to `SHUTDOWN_DRAIN_SECONDS`.
+
+        Then the old behaviour: whatever is still running is cancelled and
+        recorded as a lost worker, before the pool it depends on goes away —
+        closing a connection pool underneath a running job turns a clean
+        shutdown into a burst of errors.
 
         Clearing the process-wide singletons last matters because startup set
         them. A closed pool that is still reachable through a module global is
         a trap for anything that outlives the application — the next `get_*`
         call would hand out a store whose connections are gone.
         """
+        get_readiness().begin_drain()
+
+        if self.consumer is not None:
+            await self.consumer.stop()
+
+        if settings.shutdown_drain_seconds > 0:
+            await self.runner.drain(settings.shutdown_drain_seconds)
+
         await self.runner.shutdown()
         if self.retention is not None:
             self.retention.cancel()
             self.retention = None
         if self.gateway is not None:
             await self.gateway.stop()
-        if self.consumer is not None:
-            await self.consumer.stop()
+        # The consumer was already stopped above, before the drain. `stop()` is
+        # idempotent, but calling it twice would suggest the first call was
+        # incidental rather than the thing that makes draining terminate.
         if self.bus is not None:
             await self.bus.close()
         if self.database is not None:

@@ -50,6 +50,10 @@ class RedisBus:
         self._sync.ping()
         logger.info("Redis bus ready (prefix {prefix})", prefix=prefix)
 
+    def ping(self) -> None:
+        """Raise if Redis is not answering. For the readiness probe."""
+        self._sync.ping()
+
     # --- key layout ---------------------------------------------------------
 
     @property

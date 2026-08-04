@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
@@ -12,7 +12,14 @@ from app.api.mcp import router as mcp_router
 from app.api.members import router as members_router
 from app.api.session import router as session_router
 from app.core.config import settings
+from app.core.correlation import (
+    correlation_id,
+    correlation_scope,
+    new_request_id,
+    sanitise,
+)
 from app.core.logging import configure_logging
+from app.core.readiness import get_readiness, reset_readiness
 from app.state import build_state, start_agent_gateway, start_retention
 
 
@@ -24,10 +31,14 @@ async def lifespan(app: FastAPI):
     and the only place either is named. In the distributed case this also runs
     migrations and starts the queue, control and reaper loops.
     """
+    reset_readiness()
     state = build_state()
     state.gateway = await start_agent_gateway(state)
     start_retention(state)
     app.state.backend = state
+    # Last, and only on the success path: everything above can raise, and a
+    # worker that failed to wire its store must not report itself ready.
+    get_readiness().mark_started()
     logger.info("{service} started", service=settings.service_name)
     try:
         yield
@@ -53,6 +64,27 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def correlate(request: Request, call_next):
+        """Give every request an id, and hand it back on the response.
+
+        An inbound `X-Correlation-ID` is honoured so a trace can start at the
+        caller's gateway, but it is sanitised first: the value lands in every
+        log line this request writes, so an unbounded one pads the aggregator
+        and an embedded newline forges a line.
+
+        The response header matters more than it looks — it is what lets a user
+        reporting "my investigation hung" quote an id that finds the worker's
+        logs, without the platform having to correlate by timestamp.
+        """
+        incoming = sanitise(request.headers.get("X-Correlation-ID"))
+        with correlation_scope(incoming or new_request_id()):
+            response = await call_next(request)
+            # Read back rather than reusing `incoming`: the submit path rebinds
+            # to the investigation id, and that is the id worth returning.
+            response.headers["X-Correlation-ID"] = correlation_id()
+            return response
 
     app.include_router(health_router)
     app.include_router(investigate_router)

@@ -15,3 +15,16 @@ class HealthResponse(BaseModel):
     service: str
     auth_mode: str = "disabled"
     insecure: bool = False
+
+
+class ReadinessResponse(BaseModel):
+    """Whether this worker should be sent traffic.
+
+    `checks` names each dependency and whether it answered, so a 503 says which
+    one — "not ready" with no detail sends an operator to the logs of a process
+    that is, by definition, not serving.
+    """
+
+    status: str
+    reason: str
+    checks: dict[str, str] = {}
