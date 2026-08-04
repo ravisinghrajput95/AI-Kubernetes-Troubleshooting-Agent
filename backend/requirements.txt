@@ -17,7 +17,7 @@ PyJWT[crypto]==2.13.0
 # certificates, and the parsing that turns a peer certificate into a cluster.
 # Already present transitively via PyJWT[crypto], but pinned here because M4b
 # depends on it directly — a transitive pin is not a contract.
-cryptography==49.0.0
+cryptography==50.0.0
 # Wire contract for the cluster-agent protocol (/proto). The runtime version
 # must match the grpcio-tools that generated app/wire/gen — protobuf 7 validates
 # gencode against the runtime and fails loudly on a mismatch, which is why both
