@@ -14,7 +14,9 @@ asserts every tool carries one so the deeper check cannot be skipped.
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 
 from app.auth.dependencies import require_principal
 from app.auth.models import Principal
@@ -31,20 +33,36 @@ async def mcp_endpoint(
 ) -> Any:
     """One JSON-RPC message, or a batch of them.
 
-    A batch containing only notifications produces no response body, which the
-    spec requires and which a client will otherwise treat as a malformed reply.
+    **A notification produces `204 No Content`, not a body.** Returning `None`
+    from this handler was not the same thing: FastAPI serialises it as the JSON
+    literal `null`, so a client that had just sent `notifications/initialized`
+    received four bytes where the spec says it should receive nothing, and a
+    strict client parsing that as a response object finds `null` is not one.
+
+    The tests could not see the difference — `response.json() is None` is true
+    both for an empty body and for a body that literally is `null` — which is
+    why the docstring claimed one behaviour while the wire did the other for as
+    long as it did.
     """
     try:
         message = await request.json()
     except Exception:
-        return {
-            "jsonrpc": "2.0",
-            "id": None,
-            "error": {"code": -32700, "message": "Parse error"},
-        }
+        return _json(
+            {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}
+        )
 
     if isinstance(message, list):
         replies = [reply for reply in [await handle(one, principal) for one in message] if reply]
-        return replies or None
+        return _json(replies) if replies else Response(status_code=204)
 
-    return await handle(message, principal)
+    reply = await handle(message, principal)
+    return _json(reply) if reply is not None else Response(status_code=204)
+
+
+def _json(payload: Any) -> Response:
+    """Serialise explicitly, so the notification path can return no body at all.
+
+    A plain `return payload` would let FastAPI's default response model turn
+    `None` into `null`, which is the bug this shape exists to avoid.
+    """
+    return JSONResponse(content=jsonable_encoder(payload))

@@ -1112,6 +1112,8 @@ procedures, so read them before changing the thing they describe:
 | `docs/TENANT_USAGE_REPORTING.md` | Chargeback needs a `BYPASSRLS` role; the application role produces a clean empty report instead of an error |
 | `docs/UPGRADE.md` | Forward-only migrations, no drain on shutdown, and the per-milestone behaviour changes |
 | `deploy/helm/k8s-agent/README.md` | The chart reproduces the platform's startup refusals at render time |
+| `docs/MCP.md` | The **named** JSON-RPC subset, the four tools and their permissions, and what is deliberately not exposed |
+| `docs/DEPENDENCY_GRAPH.md` | The `relation` set is closed and directional; no rule invents a node |
 
 Two conventions worth keeping:
 
@@ -1125,6 +1127,15 @@ Two conventions worth keeping:
 ## Notes
 
 - Prompts are inline in `app/ai/prompt_builder.py`. The former `prompts/` directory described a loading convention that was never implemented and has been removed.
+- **`.get(key, default)` does not defend against `null`.** Three instances so far.
+  `EndpointSlice.endpoints` is `null` for a Service whose selector matches
+  nothing, so `item.get("endpoints", [])` iterated `None`; the scheduler's fault
+  boundary caught it and the investigation *succeeded* with the endpoint
+  evidence missing on exactly the Service that had the fault. Note the sibling
+  is **not** the same: `Endpoints` *omits* `subsets` rather than nulling it, and
+  a probe using `.get()` cannot tell the two apart — which is how that one was
+  briefly misdiagnosed as a bug. Check with `"key" in payload`, and write
+  `or []` regardless.
 - **`.get(key, default)` does not defend against `null`.** `kubectl config view
   -o json` succeeds on a kubeconfig with no contexts and returns
   `"contexts": null`, so the key is present, the default never applies, and the
@@ -1132,4 +1143,4 @@ Two conventions worth keeping:
   any agent-only fleet, and the console showed "Loading clusters…" forever.
   1,167 tests passed with it present; it was found by opening the page. Use
   `config.get(key) or []` wherever kubectl JSON is read.
-- Dead code with no importers: `app/ai/client.py`, `app/kubernetes/inspector.py` (its `inspect_nodes()` is a hardcoded stub, unrelated to the real `node_inspector.py`), and `start_investigation()` at the bottom of `investigation_service.py`. The live entry points are `LLMClient`, the per-resource inspectors, and `InvestigationService.run()`.
+- **The dead code is gone** (`app/ai/client.py`, and `start_investigation()` at the bottom of `investigation_service.py`); the live entry points are `LLMClient` and `InvestigationService.run()`. This note previously also listed **`app/kubernetes/inspector.py` as dead, and that was wrong** — it is the `Inspector` protocol plus `failure()`/`items()`/`usable()`, imported by eight modules, and deleting it on the strength of that note would have broken the collector layer. The `inspect_nodes()` stub it referred to no longer exists. Stale "this is dead" notes are worse than no note: they invite a deletion nobody re-checks.

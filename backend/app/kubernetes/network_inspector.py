@@ -111,13 +111,23 @@ class NetworkInspector:
         counts = {}
 
         for endpoint in endpoints:
-            metadata = endpoint.get("metadata", {})
+            metadata = endpoint.get("metadata") or {}
             namespace = metadata.get("namespace", "default")
             name = metadata.get("name", "unknown")
             ready_addresses = 0
 
-            for subset in endpoint.get("subsets", []):
-                ready_addresses += len(subset.get("addresses", []))
+            # `or []` is hardening here, not a fix: measured against a live
+            # cluster, an Endpoints object for a Service matching no pods
+            # *omits* `subsets` entirely, so the default did apply and this was
+            # already safe. Written this way for consistency with
+            # `EndpointSliceCollector`, where the sibling field genuinely is
+            # `null` and did crash.
+            #
+            # Worth stating because the first pass assumed both were null —
+            # from a probe using `.get()`, which cannot tell an absent key from
+            # a null one. The same mistake as the bug, in the check for it.
+            for subset in endpoint.get("subsets") or []:
+                ready_addresses += len(subset.get("addresses") or [])
 
             counts[(namespace, name)] = ready_addresses
 

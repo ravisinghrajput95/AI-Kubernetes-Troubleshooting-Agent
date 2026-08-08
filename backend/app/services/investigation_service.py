@@ -1,4 +1,3 @@
-import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -695,8 +694,3 @@ class InvestigationService:
 
     def _scope(self) -> dict[str, Any]:
         return self.scope.to_dict()
-
-
-def start_investigation(context: str | None = None) -> dict[str, Any]:
-    """Synchronous entry point retained for non-async callers."""
-    return asyncio.run(InvestigationService(context=context).run())

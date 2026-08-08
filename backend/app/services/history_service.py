@@ -853,6 +853,25 @@ class InvestigationHistoryService:
         return self._pdf_bytes(pages)
 
     def _pdf_bytes(self, pages: list[list[str]]) -> bytes:
+        """Emit a PDF by hand, with no PDF dependency.
+
+        **The character set is latin-1, and that is a hard limit rather than a
+        default.** The base-14 Type1 fonts used here carry no embedded glyphs,
+        so anything outside latin-1 — CJK, Cyrillic, Greek, emoji — cannot be
+        represented at all. `TRANSLITERATIONS` maps the punctuation this
+        platform actually emits (em dashes, curly quotes, arrows, check marks)
+        down to ASCII, and `errors="replace"` turns whatever survives into `?`.
+
+        Accented latin text is fine and renders correctly; a Japanese namespace
+        name or an emoji in a log line does not. If that ever needs to work it
+        means embedding a font, which means a font file and a real PDF library,
+        which is the dependency this writer exists to avoid — so it is a
+        decision to revisit, not a bug to fix in place.
+
+        The three font dictionaries below must keep `/Encoding /WinAnsiEncoding`;
+        the reason is argued where they are declared, and it is the difference
+        between `é` and `Ø`.
+        """
         page_count = len(pages)
         page_ids = list(range(3, 3 + page_count))
         font_regular_id = 3 + page_count
@@ -965,5 +984,15 @@ class InvestigationHistoryService:
     )
 
     def _escape_pdf_text(self, value: str) -> str:
+        """Transliterate to latin-1, then escape PDF string syntax.
+
+        Two separate jobs in one pass. The transliteration is the **character
+        set** limit described on `_pdf_bytes`: anything not in latin-1 either
+        maps to an ASCII stand-in above or becomes `?` at encode time. The
+        backslash and parenthesis escaping is PDF **syntax** — an unescaped `)`
+        in a pod name or a log line closes the string literal early and corrupts
+        every byte offset in the cross-reference table after it, producing a
+        file no reader will open.
+        """
         readable = str(value).translate(self.TRANSLITERATIONS)
         return readable.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")

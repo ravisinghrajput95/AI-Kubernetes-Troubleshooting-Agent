@@ -190,13 +190,21 @@ class TestTheProtocol:
 
     def test_a_notification_gets_no_reply(self, api):
         """Replying to a notification is a protocol violation some clients
-        treat as fatal."""
+        treat as fatal.
+
+        Asserted on the *bytes*, not on `response.json() is None`, which was
+        the original assertion and is true both for an empty body and for a
+        body that literally is `null`. The endpoint returned `null` — four
+        bytes where the spec says none — and this test passed throughout.
+        """
         response = api.post(
             "/mcp",
             json={"jsonrpc": "2.0", "method": "notifications/initialized"},
             headers=ADMIN,
         )
-        assert response.json() is None
+
+        assert response.status_code == 204
+        assert response.content == b""
 
     def test_a_batch_is_answered_as_a_batch(self, api):
         replies = api.post(
@@ -211,12 +219,14 @@ class TestTheProtocol:
         assert [reply["id"] for reply in replies] == [1, 2]
 
     def test_a_batch_of_only_notifications_answers_with_nothing(self, api):
-        replies = api.post(
+        response = api.post(
             "/mcp",
             json=[{"jsonrpc": "2.0", "method": "notifications/initialized"}],
             headers=ADMIN,
-        ).json()
-        assert replies is None
+        )
+
+        assert response.status_code == 204
+        assert response.content == b""
 
     def test_an_unknown_method_is_method_not_found(self, api):
         assert rpc(api, "resources/list", ADMIN)["error"]["code"] == -32601

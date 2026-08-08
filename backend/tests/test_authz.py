@@ -756,6 +756,39 @@ class TestYouCannotGrantARoleYouDoNotHold:
         with pytest.raises(MemberError):
             set_suspended(SUBJECTS["owner"], True, actor_role=Role.ADMIN, store=members)
 
+    def test_the_refusal_names_the_action_the_caller_actually_attempted(self, members):
+        """BUG-06. One guard serves grant, remove, suspend and restore.
+
+        It named only the first, so an admin suspending an owner was told "you
+        cannot **grant** 'owner'" — a correct security decision that reads like
+        a bug and sends the reader hunting for a grant they never attempted.
+        The rule and the 403 are unchanged; only the sentence.
+        """
+        attempts = {
+            "grant": lambda: assign_role(
+                "new@example.com", Role.OWNER, actor_role=Role.ADMIN, store=members
+            ),
+            "remove": lambda: remove_role(SUBJECTS["owner"], actor_role=Role.ADMIN, store=members),
+            "suspend": lambda: set_suspended(
+                SUBJECTS["owner"], True, actor_role=Role.ADMIN, store=members
+            ),
+            "restore": lambda: set_suspended(
+                SUBJECTS["owner"], False, actor_role=Role.ADMIN, store=members
+            ),
+        }
+
+        for verb, attempt in attempts.items():
+            with pytest.raises(MemberError) as raised:
+                attempt()
+            message = str(raised.value)
+            assert f"cannot {verb} " in message, f"{verb}: got {message!r}"
+            assert raised.value.status_code == 403
+            # The other three verbs must not appear — a message naming two
+            # actions is no clearer than one naming the wrong action.
+            for other in attempts:
+                if other != verb:
+                    assert f"cannot {other} " not in message
+
 
 class TestTheLastOwnerIsProtected:
     """Otherwise ownership is a state you can leave and cannot re-enter."""

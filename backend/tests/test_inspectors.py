@@ -14,6 +14,8 @@ Two things these cover that nothing else does:
   check is the only one, and it was unreachable for as long as it existed.
 """
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -338,3 +340,58 @@ class TestJobFailuresNameTheirReason:
     def test_a_failed_condition_that_is_not_true_is_ignored(self):
         conditions = [{"type": "Failed", "status": "False", "reason": "DeadlineExceeded"}]
         assert self.issues(self.job(conditions=conditions)) == []
+
+
+class TestNullIsNotAnEmptyList:
+    """`.get(key, default)` does not defend against `null`.
+
+    A Service whose selector matches no pods produces `"endpoints": null` on
+    its EndpointSlice and `"subsets": null` on its Endpoints. The key is
+    *present*, so the default never applies and the loop iterates `None`.
+
+    Both collectors crashed on exactly that input — which is the one input that
+    matters, because a Service with no endpoints is the fault being looked for.
+    The scheduler's fault boundary contained it, so the investigation succeeded
+    with the endpoint evidence silently missing rather than failing loudly.
+
+    Third instance of this shape in the repository, after `contexts: null` from
+    `kubectl config view` 500'ing `GET /clusters`. Payloads here are **captured
+    from a live cluster**, not hand-written, because a hand-written fixture
+    would have used `[]` — which is precisely why nothing caught it.
+    """
+
+    FIXTURE = json.loads(
+        (Path(__file__).parent / "fixtures" / "real_empty_endpoints.json").read_text()
+    )
+
+    def test_an_endpointslice_with_null_endpoints_summarises(self):
+        from app.collectors.targeted import EndpointSliceCollector
+        from app.evidence.models import ResourceRef
+
+        item = self.FIXTURE["endpointslice_no_endpoints"]
+        assert item["endpoints"] is None, "the fixture must still carry the null"
+
+        collector = EndpointSliceCollector(ResourceRef(kind="Namespace", name="payments"))
+        summary = collector.summarize(item)
+
+        assert summary["address_count"] == 0
+        assert summary["ready_count"] == 0
+        assert summary["service"] == "checkout-svc"
+
+    def test_endpoints_omits_subsets_rather_than_nulling_it(self):
+        """The sibling case, and it is *not* the same shape.
+
+        Endpoints omits `subsets` entirely where EndpointSlice nulls
+        `endpoints`, so `.get("subsets", [])` was already correct here. Pinned
+        because the first pass assumed both were null — from a probe using
+        `.get()`, which cannot tell an absent key from a null one, which is the
+        same mistake as the bug being hunted.
+        """
+        from app.kubernetes.network_inspector import NetworkInspector
+
+        item = self.FIXTURE["endpoints_no_subsets"]
+        assert "subsets" not in item, "absent, not null — that is the point"
+
+        counts = NetworkInspector()._endpoints_by_key([item])
+
+        assert counts[("payments", "checkout-svc")] == 0

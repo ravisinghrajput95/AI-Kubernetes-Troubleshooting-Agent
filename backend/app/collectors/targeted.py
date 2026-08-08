@@ -644,13 +644,25 @@ class EndpointSliceCollector(NamespacedListCollector):
     label = "Checked Endpoint Slices"
 
     def summarize(self, item: dict[str, Any]) -> dict[str, Any]:
-        endpoints = item.get("endpoints", [])
-        ready = sum(1 for entry in endpoints if (entry.get("conditions", {}) or {}).get("ready"))
+        # `or []`, not `.get("endpoints", [])`. An EndpointSlice for a Service
+        # whose selector matches nothing serialises `"endpoints": null` — the
+        # key is *present*, so the default never applies and the loop iterates
+        # `None`. This raised `TypeError: 'NoneType' object is not iterable`,
+        # the collector's fault boundary caught it, and the investigation
+        # succeeded with the endpoint evidence silently missing on exactly the
+        # Service that had the fault worth seeing.
+        #
+        # Third instance of this shape in the repository, after `contexts: null`
+        # from `kubectl config view` 500'ing `GET /clusters`. The inner
+        # `conditions` guard here was already written `or {}`; only the outer
+        # one was missed. Use `or []` / `or {}` wherever kubectl JSON is read.
+        endpoints = item.get("endpoints") or []
+        metadata = item.get("metadata") or {}
+        labels = metadata.get("labels") or {}
+        ready = sum(1 for entry in endpoints if (entry.get("conditions") or {}).get("ready"))
         return {
             **super().summarize(item),
-            "service": item.get("metadata", {})
-            .get("labels", {})
-            .get("kubernetes.io/service-name", ""),
+            "service": labels.get("kubernetes.io/service-name", ""),
             "address_count": len(endpoints),
             "ready_count": ready,
         }

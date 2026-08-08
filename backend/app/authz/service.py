@@ -40,13 +40,25 @@ def _store(store: MemberStore | None) -> MemberStore:
     return store if store is not None else get_member_store()
 
 
-def _refuse_escalation(actor_role: Role | None, target_role: Role) -> None:
+def _refuse_escalation(actor_role: Role | None, target_role: Role, verb: str = "grant") -> None:
+    """Refuse an action on a role the actor does not hold.
+
+    The `verb` exists because this one guard serves three different actions and
+    the refusal used to name only the first: an admin suspending an owner was
+    told *"you cannot grant 'owner'"*, which makes a correct security decision
+    read like a bug and sends the reader looking for a grant they never
+    attempted. `_refuse_last_owner` below already took a verb for exactly this
+    reason; this is the same fix applied one function up.
+
+    The rule itself is unchanged, and so is the status code — only the sentence
+    describing it.
+    """
     if actor_role is None:
         raise MemberError("You hold no role in this tenant.", status_code=403)
     if target_role.rank > actor_role.rank:
         raise MemberError(
-            f"You cannot grant '{target_role}' while holding '{actor_role}'. "
-            f"A role may only be granted by someone who holds it.",
+            f"You cannot {verb} '{target_role}' while holding '{actor_role}'. "
+            f"A role may only be acted on by someone who holds it.",
             status_code=403,
         )
 
@@ -117,7 +129,7 @@ def remove_role(
 
     if enforce_escalation and existing is not None and existing.role is not None:
         # Removing someone more powerful than you is escalation by subtraction.
-        _refuse_escalation(actor_role, existing.role)
+        _refuse_escalation(actor_role, existing.role, verb="remove")
 
     _refuse_last_owner(subject, store, "removed")
     return store.remove(subject)
@@ -136,7 +148,9 @@ def set_suspended(
         raise MemberError(f"{subject} is not a member of this tenant.", status_code=404)
 
     if enforce_escalation and existing.role is not None:
-        _refuse_escalation(actor_role, existing.role)
+        # Restoring is not suspending, and telling someone they "cannot suspend"
+        # while they are lifting a suspension is the same defect one step over.
+        _refuse_escalation(actor_role, existing.role, verb="suspend" if suspended else "restore")
 
     if suspended:
         _refuse_last_owner(subject, store, "suspended")
