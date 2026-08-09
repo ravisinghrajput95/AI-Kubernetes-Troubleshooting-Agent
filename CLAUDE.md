@@ -1111,7 +1111,7 @@ procedures, so read them before changing the thing they describe:
 | `docs/SLO.md` | Proposed targets, **not measured attainment**; soundness is two-sided and queue depth means "add workers, not slots" |
 | `docs/TENANT_USAGE_REPORTING.md` | Chargeback needs a `BYPASSRLS` role; the application role produces a clean empty report instead of an error |
 | `docs/UPGRADE.md` | Forward-only migrations, no drain on shutdown, and the per-milestone behaviour changes |
-| `deploy/helm/k8s-agent/README.md` | The chart reproduces the platform's startup refusals at render time |
+| `deploy/helm/k8s-agent/README.md` | The chart reproduces the platform's startup refusals at render time; **the kubeconfig identity needs the `impersonate` verb** or every investigation fails pointing at the user's RBAC |
 | `docs/MCP.md` | The **named** JSON-RPC subset, the four tools and their permissions, and what is deliberately not exposed |
 | `docs/DEPENDENCY_GRAPH.md` | The `relation` set is closed and directional; no rule invents a node |
 

@@ -16,6 +16,7 @@ data:
   OIDC_ROLE_MAPPINGS: {{ .Values.auth.oidc.roleMappings | quote }}
   {{- end }}
   RBAC_DEFAULT_ROLE: {{ .Values.rbac.defaultRole | quote }}
+  IMPERSONATE_USERS: {{ .Values.impersonateUsers | quote }}
   TENANCY_MODE: {{ .Values.tenancy.mode | quote }}
   OPENAI_MODEL: {{ .Values.openai.model | quote }}
   METRICS_ENABLED: {{ .Values.metrics.enabled | quote }}

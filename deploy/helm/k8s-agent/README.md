@@ -101,6 +101,42 @@ kubectl create secret generic k8s-agent-redis --from-literal=REDIS_URL='rediss:/
 kubectl create secret generic k8s-agent-ca --from-file=ca.crt --from-file=ca.key
 ```
 
+## The kubeconfig identity needs `impersonate`
+
+**The most likely way a first install fails**, and it was found by installing
+this chart rather than by reading it.
+
+Every cluster read runs as the *calling user* — that is what makes "the platform
+cannot see more than you can" true. It requires the identity in your mounted
+kubeconfig to hold the `impersonate` verb. Without it every read is refused and
+every investigation fails with:
+
+> No cluster read succeeded. Investigations run as the calling user, so this is
+> usually their Kubernetes RBAC rather than a broken cluster.
+
+That message is accurate and still sends you to the wrong place, because the
+missing permission is the *platform's*, not the user's.
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: k8s-agent-impersonator}
+rules:
+  - apiGroups: [""]
+    resources: ["users", "groups", "serviceaccounts"]
+    verbs: ["impersonate"]
+```
+
+Bind it to whatever identity your kubeconfig authenticates as. Your **users**
+then need their own read access — the platform grants them nothing.
+
+Set `impersonateUsers: false` to turn it off, which makes every read run as the
+kubeconfig's own identity. Correct only where that credential is already scoped
+to exactly what its users may see.
+
+Agent-reached clusters are unaffected: the agent's own ServiceAccount bounds
+what can be read there.
+
 ## Sizing
 
 Peak heap is about **5× the stored result**, measured flat across cluster sizes:

@@ -100,6 +100,22 @@ kubeconfig:
   secretName: ""
   key: config
 
+# Every cluster read runs as the *calling user*, so the cluster applies their
+# RBAC rather than the platform's. That is what makes "the platform cannot see
+# more than you can" true, and it is on by default.
+#
+# **It requires the kubeconfig identity to hold the `impersonate` verb**, and
+# nothing tells you that until every investigation fails. Discovered by
+# installing this chart: without it the platform reports "No cluster read
+# succeeded. Investigations run as the calling user…", which is an accurate
+# message about a permission the operator did not know to grant. See the chart
+# README for the ClusterRole.
+#
+# Setting this false makes every read run as the kubeconfig's own identity —
+# correct only where the platform's credential is already scoped to exactly
+# what its users may see, which is rare.
+impersonateUsers: true
+
 # The gateway agents dial into. Port 0 disables it, and app/gateway/ is imported
 # lazily, so a kubeconfig-only deployment never loads grpc.
 agentGateway:
@@ -182,10 +198,16 @@ autoscaling:
 podAnnotations: {}
 podLabels: {}
 
+# 10001 is the uid `backend/Dockerfile` creates and chowns `/app` to. The chart
+# said 1000, which worked only by accident: the root filesystem is read-only so
+# nothing needs to own `/app`, and `fsGroup` made the writable mounts reachable
+# anyway. Naming a uid the image does not define is a trap for the first change
+# that depends on file ownership.
 podSecurityContext:
   runAsNonRoot: true
-  runAsUser: 1000
-  fsGroup: 1000
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
   seccompProfile:
     type: RuntimeDefault
 
