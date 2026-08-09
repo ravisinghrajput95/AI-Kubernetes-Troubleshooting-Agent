@@ -80,16 +80,29 @@ job path.
 
 Three things to know.
 
-**In-flight investigations are not drained.** Graceful shutdown draining is
-backlog item 43 and is not built. A terminated worker's job is reaped to
-`failed` by lease expiry rather than being resumed — mid-run resumption is
-explicitly out of scope (it would be a re-run, and needs ADR-007's state
-machine). So a rolling upgrade fails whatever was running on each pod as it goes.
+**In-flight investigations are drained, up to a deadline.** On SIGTERM the
+worker fails readiness, stops claiming new work, waits up to
+`SHUTDOWN_DRAIN_SECONDS` (30) for what is already running, then cancels the
+rest. Verified live: a 30-second investigation ran to its own conclusion under
+SIGTERM rather than being recorded as a lost worker.
 
-At default concurrency (4 per worker) and sub-second investigations this is
-usually invisible. If it is not acceptable, drain first: stop submitting, wait
-for `k8sagent_investigations_running` to reach zero across the fleet, then
-upgrade.
+What is *not* built is mid-run resumption — anything still running when the
+deadline expires is reaped to `failed` by lease expiry rather than resumed,
+because resuming would be a re-run and needs ADR-007's state machine.
+
+Keep `SHUTDOWN_DRAIN_SECONDS` below `terminationGracePeriodSeconds`, and
+remember the Helm chart's `preStop` sleep is consecutive with it: preStop plus
+drain must fit inside the grace period, or the pod is SIGKILLed part-way
+through a drain, which is worse than not draining.
+
+**A rolling upgrade still drops the occasional request**, and the honest number
+is measured rather than assumed: over five rolling upgrades under continuous
+load, 4 of 5 dropped requests before the chart wired `/health/ready` and a
+`preStop` hook, and 1 of 5 after. Readiness cannot close that window on its own
+— the probe is polled, and the listener is gone before the next poll.
+
+If neither is acceptable, drain first: stop submitting, wait for
+`k8sagent_investigations_running` to reach zero across the fleet, then upgrade.
 
 ```promql
 sum(k8sagent_investigations_running)

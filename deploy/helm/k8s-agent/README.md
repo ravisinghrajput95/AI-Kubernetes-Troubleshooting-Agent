@@ -168,10 +168,11 @@ a fleet that has finished enrolling can firewall it off.
 - **No `NetworkPolicy` template.** Egress rules depend on where your Postgres,
   Redis, OpenAI endpoint and notification destinations are, and a wrong default
   here silently breaks collection.
-- **Liveness and readiness are the same endpoint.** The platform has one
-  `/health` and does not yet distinguish them (backlog item 42).
-- **No graceful drain.** In-flight investigations fail on pod termination and
-  are reaped by lease expiry (backlog item 43). See `docs/UPGRADE.md`.
+- **A rolling upgrade still drops the occasional request.** Measured over five
+  rolling upgrades under load: 4 of 5 dropped requests before
+  `/health/ready` + `preStop` were wired, 1 of 5 after. Raise
+  `probes.preStopSeconds` if that matters to you; eliminating it entirely needs
+  a load balancer that drains connections, not a longer sleep.
 - **No Terraform module.** Item 35 named "Terraform/Helm"; this is the Helm
   half. The Terraform half is the managed Postgres, Redis, DNS and secrets
   around it, which is provider-specific and not written.

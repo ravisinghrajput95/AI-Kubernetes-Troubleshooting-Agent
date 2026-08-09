@@ -231,8 +231,9 @@ podDisruptionBudget:
   enabled: true
   minAvailable: 1
 
-# Liveness is deliberately the same endpoint as readiness today: the platform
-# has one /health and does not yet distinguish them (backlog item 42).
+# `/health/live` never consults a dependency; `/health/ready` consults the store
+# and fails while starting, while draining, and when Postgres is gone. Pointing
+# liveness at a dependency check would restart the fleet on a database blip.
 probes:
   liveness:
     initialDelaySeconds: 10
@@ -240,6 +241,14 @@ probes:
   readiness:
     initialDelaySeconds: 5
     periodSeconds: 10
+  # Seconds to keep serving after SIGTERM, before the process begins shutting
+  # down. Covers the window where the pod has been signalled but kube-proxy has
+  # not finished removing it from every node's rules. 0 disables the hook.
+  #
+  # Must stay comfortably below `terminationGracePeriodSeconds` alongside
+  # `SHUTDOWN_DRAIN_SECONDS`: preStop and the drain are consecutive, and a pod
+  # SIGKILLed part-way through either is worse than one that never tried.
+  preStopSeconds: 5
 
 # In-flight investigations are not drained on shutdown (backlog item 43); a
 # killed worker's job is reaped to `failed` via lease expiry instead. The grace
