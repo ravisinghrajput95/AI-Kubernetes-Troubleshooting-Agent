@@ -133,6 +133,23 @@ agentGateway:
     certKey: ca.crt
     keyKey: ca.key
 
+  # Names the gateway's **serving** certificate must cover.
+  #
+  # The chart always includes this release's Service DNS names, so an agent
+  # inside the same cluster works with no configuration. Add the address agents
+  # actually dial from *outside* — an ingress hostname, a load balancer name —
+  # or their TLS handshake fails before enrolment begins.
+  #
+  # `AGENT_GATEWAY_DNS_NAMES` defaults to `localhost` in the platform, and the
+  # chart did not set it at all. Every chart-deployed gateway therefore served a
+  # certificate valid only for `localhost`, and the first real agent failed
+  # with: *certificate is valid for localhost, not
+  # k8s-agent-gateway.k8s-agent.svc.cluster.local*. The knob existed; nothing
+  # turned it.
+  dnsNames: []
+  # Only needed where agents dial an IP rather than a name.
+  ipAddresses: []
+
 # --- Observability ------------------------------------------------------------
 metrics:
   enabled: true

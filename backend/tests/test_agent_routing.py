@@ -42,6 +42,19 @@ from app.tenancy import tenant_scope
 from tests.test_agent_presence import FakeBus, FakeSession
 
 
+class RegisteredSession(FakeSession):
+    """A `FakeSession` the real `AgentRegistry` will accept.
+
+    Uses the genuine registry rather than a stub, because the property under
+    test is "affinity asks the local registry first" — a stubbed registry would
+    pass whether or not it was consulted the way `select_provider` consults it.
+    """
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return (self.tenant, self.cluster_id)
+
+
 @pytest.fixture
 def gateway(monkeypatch):
     """A deployment with the agent gateway switched on."""
@@ -85,6 +98,28 @@ class TestWorkRoutesToTheWorkerHoldingTheStream:
         presence("worker-a")
 
         assert agent_affinity(InvestigationRequest(context="prod-eu")) == "worker-b"
+
+    def test_the_worker_holding_the_stream_pins_the_job_to_itself(
+        self, gateway, presence, registry
+    ):
+        """The case that was inverted, and the one a two-replica fleet hits half the time.
+
+        `holder()` returns nothing when the presence record names *this*
+        worker — right for `select_provider`, which only consults it after the
+        local registry has said no, so a self-record there is stale. Affinity
+        had no such check, so a submission landing on the worker that actually
+        holds the stream fell through to the **shared** queue and could be
+        claimed by anyone.
+
+        Found in-cluster, not here: on two replicas one investigation in three
+        reached the agent and the rest were refused naming the worker that had
+        just accepted the submission.
+        """
+        index = presence("worker-a")
+        index.announce(FakeSession("prod-eu"))
+        registry.register(RegisteredSession("prod-eu"))
+
+        assert agent_affinity(InvestigationRequest(context="prod-eu")) == "worker-a"
 
     def test_a_cluster_with_no_agent_goes_to_the_shared_queue(self, gateway, presence):
         """A kubeconfig cluster can be collected anywhere, so it should be."""

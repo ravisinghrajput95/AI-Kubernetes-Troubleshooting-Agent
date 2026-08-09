@@ -82,6 +82,17 @@ class AgentPresence:
         except Exception as exc:  # pragma: no cover
             logger.debug("Could not withdraw agent presence: {error}", error=exc)
 
+    @property
+    def worker_id(self) -> str:
+        """This worker's routing identity.
+
+        Exposed because `agent_affinity` needs to pin a job to *this* worker
+        when the stream is held here — the one case `holder()` deliberately
+        refuses to answer, since for its other caller a record naming us is a
+        stale record rather than a destination.
+        """
+        return self._worker
+
     def holder(self, tenant: str, cluster_id: str) -> str | None:
         """Which worker holds the agent for this cluster, if any does.
 

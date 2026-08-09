@@ -657,6 +657,14 @@ Two mechanisms, and the split is the design:
   path — because the generic detail says "check your kubeconfig", which is
   exactly the wrong instruction here.
 
+**`agent_affinity` must ask the local registry before `holder()`**, exactly as
+`select_provider` does. `holder()` returns nothing when the presence record
+names *this* worker — right for `select_provider`, which only reaches it after
+the local registry said no — and affinity had no such check, so a submission
+landing on the worker holding the stream fell through to the *shared* queue.
+Landing on the right worker was the case that un-pinned the job: measured
+in-cluster at 1 investigation in 3 reaching the agent, 8 of 8 after.
+
 **Nothing about correctness rests on routing being right.** The row stays
 `pending` and the claim stays the conditional `UPDATE`, so a mis-route is a
 scheduling miss, never a double run.
@@ -716,6 +724,13 @@ Five things here are load-bearing:
 - **Revocation is swept, not just checked at connect.** A transport built around a stream that stays open for weeks makes revocation-at-reconnect close to meaningless, so `AgentGateway._sweep_revocations()` ends live sessions whose serial was revoked. Both this and the connect-time check are pinned by tests.
 
 Two listeners, because gRPC's Python bindings offer only "never request a client certificate" or "require and verify one" — there is no request-but-don't-require mode. The **gateway** port requires a certificate and serves `Connect` plus renewals; the **enrolment** port (default: gateway + 1) requests none and serves only token bootstrap. A fleet that has finished enrolling can firewall the enrolment port off.
+
+**The gateway's serving certificate must name every address an agent dials.**
+`AGENT_GATEWAY_DNS_NAMES` defaults to `localhost`, which is the one address an
+agent never uses — it is in another cluster. The Helm chart derives the Service
+DNS names automatically and takes `agentGateway.dnsNames` for external ones;
+before it did, every chart-deployed gateway failed the agent's TLS verification
+before enrolment began.
 
 `AGENT_GATEWAY_TLS=disabled` keeps the M4a plaintext path as an explicit, logged opt-in for local development — same discipline as the single-process job store. Sessions established that way report `identity_source: "declared"`, so a deployment that left it on cannot look like one that did not. An agent must pass `--insecure` to match, and an mTLS gateway refuses it outright rather than downgrading.
 

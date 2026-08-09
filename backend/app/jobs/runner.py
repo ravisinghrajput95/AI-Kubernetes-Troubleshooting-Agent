@@ -50,6 +50,7 @@ def agent_affinity(request: InvestigationRequest | None) -> str:
         return ""
 
     from app.gateway.presence import get_agent_presence
+    from app.gateway.session import get_agent_registry
     from app.tenancy import current_tenant
 
     presence = get_agent_presence()
@@ -57,6 +58,24 @@ def agent_affinity(request: InvestigationRequest | None) -> str:
         # Single-process, or no Redis: this worker is the fleet, so affinity is
         # already satisfied and naming it would only add a queue.
         return ""
+
+    # **Ask the local registry first, exactly as `select_provider` does.**
+    #
+    # `holder()` deliberately returns nothing when the presence record names
+    # *this* worker — for `select_provider` that is right, because it only
+    # reaches `holder()` after the local registry has said no, so a record
+    # still claiming us is stale. This function had no such check, so a submit
+    # that landed on the worker actually holding the stream got "" and went to
+    # the **shared** queue, where any worker could claim it.
+    #
+    # Measured in-cluster on two replicas: one investigation in three reached
+    # the agent, the rest were refused with "attached to worker X, not this
+    # one" — where X was the worker that had accepted the submission. The
+    # refusal is correct and the routing that should make it rare was
+    # inverted: landing on the right worker was precisely the case that
+    # un-pinned the job.
+    if get_agent_registry().get(context) is not None:
+        return presence.worker_id
 
     return presence.holder(current_tenant(), context) or ""
 

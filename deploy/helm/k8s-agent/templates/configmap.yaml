@@ -35,6 +35,14 @@ data:
   {{- end }}
   {{- if .Values.agentGateway.enabled }}
   AGENT_GATEWAY_PORT: {{ .Values.agentGateway.port | quote }}
+  {{- $svc := printf "%s-gateway" (include "k8s-agent.fullname" .) }}
+  {{- $ns := .Release.Namespace }}
+  {{- $names := list $svc (printf "%s.%s" $svc $ns) (printf "%s.%s.svc" $svc $ns) (printf "%s.%s.svc.cluster.local" $svc $ns) }}
+  {{- $names = concat $names .Values.agentGateway.dnsNames }}
+  AGENT_GATEWAY_DNS_NAMES: {{ join "," $names | quote }}
+  {{- with .Values.agentGateway.ipAddresses }}
+  AGENT_GATEWAY_IP_ADDRESSES: {{ join "," . | quote }}
+  {{- end }}
   {{- if .Values.agentGateway.caSecret.name }}
   AGENT_CA_CERT_FILE: /etc/agent-ca/{{ .Values.agentGateway.caSecret.certKey }}
   AGENT_CA_KEY_FILE: /etc/agent-ca/{{ .Values.agentGateway.caSecret.keyKey }}
