@@ -150,11 +150,11 @@ Apache-2.0 added. Without it the work was legally unusable by any enterprise.
 
 | # | Finding | Effort |
 |---|---|---|
-| F17 | No audit logging (actor/action/target/outcome). Disqualifying for SOC2. | 2d |
+| — | ~~No audit logging~~ **fixed** (F17): append-only JSON lines recording actor, action, target, outcome, source IP and auth method, on a separate sink from application logging so a log-level change cannot silence it. Exercised in the live audit (§2, row 14). | done |
 | F5 | ~~Unbounded all-namespace reads~~ **partially fixed**: API-server paging via `--chunk-size`, retained items capped, truncation recorded as an evidence gap. Peak *parse* memory is still proportional to cluster size — kubectl assembles the whole list before writing it, so removing that ceiling needs a streaming client. | 3d done, 5d remaining |
 | — | ~~In-process job store: no HA, single worker mandated~~ **fixed** (M3): setting `DATABASE_URL` and `REDIS_URL` moves jobs, events and reports to Postgres and Redis, so any worker can serve any investigation and a crashed worker's job is reaped to a terminal state instead of hanging. The in-process store remains the default for single-process deployments. Not delivered: mid-run resumption — a lost worker's investigation is failed, not resumed. | done |
-| — | ~~No platform self-observability~~ **partially fixed**: `/metrics` in Prometheus format, with the metric set chosen from `docs/PERFORMANCE_ENVELOPE.md` so every number that document tells an operator to act on is observable. No cluster, tenant, namespace or user is ever a label — cardinality and disclosure both forbid it — which is what makes the endpoint safe to leave unauthenticated. Traces are still absent. | 2d done, 1d remaining |
-| F11 | ~~No LLM eval harness~~ **partially fixed**: a golden corpus of 21 cases gates reasoning accuracy and grounding behaviour in CI (`docs/EVALUATION.md`). No provider abstraction yet, and no live-model evaluation. | 3d done, 2d remaining |
+| — | ~~No platform self-observability~~ **partially fixed**: `/metrics` in Prometheus format, with the metric set chosen from `docs/PERFORMANCE_ENVELOPE.md` so every number that document tells an operator to act on is observable. No cluster, tenant, namespace or user is ever a label — cardinality and disclosure both forbid it — which is what makes the endpoint safe to leave unauthenticated. **Phase timing and 17 burn-rate alert rules followed** (`deploy/alerts/`), with every series and filtered label asserted against the real exposition. OTLP export is deliberately not built: `opentelemetry-proto` requires `protobuf<7.0` against this project's load-bearing 7.x pin, and cross-worker trace correlation is the stated casualty. | done, less OTLP |
+| F11 | ~~No LLM eval harness~~ **largely fixed**: a golden corpus of 20 investigation cases plus 11 grounding cases gates reasoning accuracy, **detection recall** and grounding behaviour in CI (`docs/EVALUATION.md`). The model path has since been exercised live against a real cluster (10/10 grounded, 0 fabricated citations). Still missing: a provider abstraction, and live-model evaluation in CI rather than by hand. | 4d done, 1d remaining |
 
 ## P2 — blocks scale and adoption
 
@@ -163,13 +163,13 @@ Apache-2.0 added. Without it the work was legally unusable by any enterprise.
 | F1 | ~~Mark model-authored prose as untrusted in the UI~~ **done**: `ReportDocument` styles the model-authored sections distinctly and labels them; commands render as commands. |  done |
 | F6 | ~~No RBAC preflight~~ **answered, not as asked**: the preflight described needs `kubectl auth can-i`, which is a *command*, and `ResourceRequest` deliberately cannot carry one — that closed verb set is what makes a request safe to send to a customer's cluster. The reads are cheap anyway (a 403 is immediate); what was expensive was the explanation. `app/kubernetes/access.py` recognises "nothing usable, refusals dominate" from evidence status and says whose RBAC is at fault, identically through both providers. | done |
 | F18 | No caching; every investigation re-reads the whole cluster. | 1.5d |
-| F19 | Reports embed full investigations; report files are never pruned. | 2d |
+| F19 | ~~Report files are never pruned~~ **partially fixed**: `ReportStore.prune()` deletes rendered artefacts past `REPORT_RETENTION_DAYS` (14); the history entry survives marked `expired`, because deleting it would make an investigation that happened look like one that never did. **Still open:** `investigations.result` is not pruned, and it is the larger copy — see `docs/DATA_PROTECTION.md`. | 1d remaining |
 | F7 | API version assumptions (EndpointSlice, Ingress) with no discovery. | 1d |
 | — | README documents a roadmap as if implemented; `docs/` is orphaned. | 1d |
 
 ## P3 — quality
 
-`App.tsx` still ~1,500 lines · `FixRecommendationEngine` vestigial ·
+`App.tsx` still ~1,050 lines · `FixRecommendationEngine` vestigial ·
 `history_service.py` ~900 lines doing three jobs · kubectl subprocess-per-call ·
 no frontend component tests · no runtime plugin discovery (entry points).
 
@@ -177,15 +177,20 @@ no frontend component tests · no runtime plugin discovery (entry points).
 
 ## Testing gaps
 
-Present: 560 backend + 47 frontend tests covering unit, integration, API,
+Present: 1,337 backend + 225 frontend tests covering unit, integration, API,
 fault-injection, safety-property, contract, and opt-in live-transport — plus
-39 backend tests that run only against real Postgres and Redis
-(`K8S_AGENT_INTEGRATION=1`, and a dedicated CI job).
+backend tests that run only against real Postgres and Redis
+(`K8S_AGENT_INTEGRATION=1`, and a dedicated CI job). **Reusable live-cluster
+fault fixtures** now ship at `docs/qa/audit-faults.yaml` (nine faults plus a
+healthy control) and `docs/qa/observability-faults.yaml`, and several test
+fixtures are **captured from real clusters and backends** rather than
+hand-written — which is what caught the defects hand-written ones could not.
 
-Missing: real
-cluster fixtures (kind/envtest, multi-version) · snapshot tests for the PDF and
-Markdown renderers · load tests (no test exceeds one pod) · frontend component
-tests · automated mutation testing.
+Missing: envtest / multi-version cluster fixtures · snapshot tests for the PDF
+and Markdown renderers · load tests inside the suite (throughput and chaos are
+opt-in scripts, not tests) · **automated** mutation testing — every invariant
+added since the audit was mutation-tested by hand, which does not survive
+inattention.
 
 ---
 

@@ -26,3 +26,34 @@ def single_process_state(monkeypatch):
     """
     monkeypatch.setattr(settings, "database_url", "")
     monkeypatch.setattr(settings, "redis_url", "")
+
+
+@pytest.fixture(autouse=True)
+def fresh_authenticator():
+    """No test inherits the authenticator another test built.
+
+    The authenticator is a **process singleton constructed on first use**, so
+    `monkeypatch.setattr(settings, "auth_mode", …)` changes the setting and
+    leaves the cached object alone — and restoring the setting at teardown does
+    not rebuild it either. A test that ran under `AUTH_MODE=token` therefore
+    hands a `StaticTokenAuthenticator` to every test after it, whatever those
+    tests believe they configured.
+
+    Fixed here rather than in each fixture because the failure does not look
+    like an authentication failure. `test_metrics.py` configures
+    `AUTH_MODE=disabled`, inherited a token authenticator from
+    `test_tenancy.py`, had every investigation 401 — and reported *missing
+    instrumentation*, because counters that never move look exactly like
+    counters that were never wired.
+
+    It survived because pytest collects alphabetically and `test_metrics`
+    sorts before `test_tenancy`, so a full run never hit the bad order. The
+    security-relevant subset named in `SECURITY.md` lists them the other way
+    round, which is how it surfaced. Predates the audit remediation entirely —
+    reproduced at `9c55017`.
+    """
+    from app.auth.dependencies import reset_authenticator
+
+    reset_authenticator()
+    yield
+    reset_authenticator()

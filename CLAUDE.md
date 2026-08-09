@@ -85,7 +85,7 @@ this repository — a `docker compose up` that publishes a port, authenticates
 nobody, and supplies its own acknowledgement. Compose now refuses to start
 until an operator chooses, and the refusal names the variable.
 
-**Security status:** authentication (F13) and per-tenant authorisation are built — see *Authorisation* below. What remains is in `SECURITY.md` and `docs/PRODUCTION_READINESS.md`, chiefly no rate limiting and `AUTH_MODE=disabled` still being the shipped default.
+**Security status:** authentication (F13), per-tenant authorisation, tenancy under row-level security, rate limiting and an append-only audit log are all built — see the sections below. What remains is in `SECURITY.md` (*Known gaps*) and `docs/PRODUCTION_READINESS.md`, chiefly `AUTH_MODE=disabled` still being the shipped **default**, a development agent CA unless one is supplied, and redaction being best-effort on free text. This line said "chiefly no rate limiting" for several milestones after rate limiting shipped; a stale status line is the same failure as a stale "this is dead" note.
 
 `PyYAML` is a runtime dependency: generated patches are applied to production clusters, so YAML is serialised properly rather than string-formatted.
 

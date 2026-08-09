@@ -19,6 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.kubernetes.kubectl_executor as executor_module
+from app.auth.dependencies import reset_authenticator
 from app.core.config import settings
 from app.main import app
 from app.observability import metrics
@@ -27,6 +28,15 @@ from tests.test_investigation_service import FakeKubectl
 
 @pytest.fixture
 def api(monkeypatch, tmp_path):
+    """Metrics against a real investigation, authenticated as nobody.
+
+    The `disabled` mode set here only takes effect because `conftest.py` resets
+    the authenticator singleton around every test — without that this fixture
+    inherits whatever authenticator ran last, every investigation 401s, and the
+    counters read as *missing instrumentation* rather than as an auth failure.
+    That is argued at `fresh_authenticator`; it is noted here because this is
+    the fixture it was found through.
+    """
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(executor_module.KubectlExecutor, "run", FakeKubectl.run)
     monkeypatch.setattr(executor_module.KubectlExecutor, "failing_resources", set(), raising=False)
@@ -312,8 +322,6 @@ class TestTheEndpoint:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(settings, "auth_mode", "token")
         monkeypatch.setattr(settings, "api_tokens", "tok:alice@example.com")
-        from app.auth.dependencies import reset_authenticator
-
         reset_authenticator()
         try:
             with TestClient(app) as client:
