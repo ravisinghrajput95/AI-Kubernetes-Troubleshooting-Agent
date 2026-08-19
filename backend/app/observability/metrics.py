@@ -34,8 +34,8 @@ public function here is total: it records or it does nothing.
 from collections.abc import Callable
 
 from loguru import logger
-from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
-from prometheus_client.openmetrics.exposition import CONTENT_TYPE_LATEST
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
+from prometheus_client.openmetrics.exposition import CONTENT_TYPE_LATEST, generate_latest
 
 # A registry of our own rather than the process-global default.
 #
@@ -343,5 +343,22 @@ def rate_limited(scope: str) -> None:
 
 
 def render() -> tuple[bytes, str]:
-    """The exposition payload and its content type."""
+    """The exposition payload and its content type.
+
+    **Both come from the same module, and that is the whole of this function.**
+    The generator and the content type were imported from *different* ones —
+    the Prometheus text-format `generate_latest` paired with the OpenMetrics
+    content type — so every response advertised OpenMetrics and carried a body
+    that is not. OpenMetrics requires a terminating `# EOF`; text format has
+    none, so Prometheus selected its OpenMetrics parser on the strength of the
+    header and rejected the whole scrape with `data does not end with # EOF`.
+
+    Nothing local could see it. `curl /metrics` returned 200 and 16 KB of
+    correct exposition, every series was present and correctly labelled, and
+    the test asserted the *header* said openmetrics — which it did. Only a real
+    Prometheus, parsing what the header promised, disagreed: both targets
+    `down`, no series stored, and all 17 rules in `deploy/alerts/` evaluating
+    against nothing forever. Import both names from one module so the pair
+    cannot drift again.
+    """
     return generate_latest(REGISTRY), CONTENT_TYPE_LATEST

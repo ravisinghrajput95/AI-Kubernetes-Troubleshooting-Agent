@@ -17,6 +17,7 @@ from typing import ClassVar
 
 import pytest
 from fastapi.testclient import TestClient
+from prometheus_client.openmetrics import parser as openmetrics_parser
 
 import app.kubernetes.kubectl_executor as executor_module
 from app.auth.dependencies import reset_authenticator
@@ -334,8 +335,34 @@ class TestTheEndpoint:
         monkeypatch.setattr(settings, "metrics_enabled", False)
         assert api.get("/metrics").status_code == 404
 
-    def test_it_is_openmetrics(self, api):
-        assert "openmetrics-text" in api.get("/metrics").headers["content-type"]
+    def test_the_body_parses_as_what_the_header_promises(self, api):
+        """A scraper picks its parser from the content type, so a header that
+        disagrees with the body fails the **entire** scrape — not one series.
+
+        This asserted only the header, and the header was true: the response
+        said `application/openmetrics-text` while carrying a Prometheus
+        text-format body, because the generator and the content type were
+        imported from different modules. OpenMetrics requires a terminating
+        `# EOF` and text format has none, so a real Prometheus rejected every
+        scrape with `data does not end with # EOF` — both targets down, no
+        series stored, and all 17 rules in `deploy/alerts/` evaluating against
+        nothing. `curl` saw 200 and 16 KB of correct exposition throughout.
+
+        So parse the payload with the parser the header selects, which is the
+        thing the scraper actually does.
+        """
+        response = api.get("/metrics")
+
+        assert "openmetrics-text" in response.headers["content-type"]
+
+        body = response.text
+        assert body.endswith("# EOF\n"), (
+            "OpenMetrics requires a terminating `# EOF`; without it Prometheus "
+            "discards the whole scrape"
+        )
+
+        families = list(openmetrics_parser.text_string_to_metric_families(body))
+        assert families, "the exposition parsed to no metric families"
 
     def test_it_exposes_only_this_platforms_series(self, api):
         """A registry of our own, not the process-global default — which
