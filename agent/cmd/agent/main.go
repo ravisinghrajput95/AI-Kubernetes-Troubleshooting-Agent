@@ -34,6 +34,18 @@ import (
 
 var version = "0.2.0-m4b"
 
+// API-server rate limits this agent applies to itself.
+//
+// client-go's own defaults are 5 QPS / burst 10, which throttle a single
+// investigation: it issues on the order of twenty reads, so everything past
+// the tenth waits about a second. 50/100 keeps one investigation unthrottled
+// with room for a few concurrent ones, and is still an order of magnitude
+// below what an API server serves comfortably.
+const (
+	defaultAPIQPS   = 50.0
+	defaultAPIBurst = 100
+)
+
 // How often to check whether the certificate has reached its renewal point.
 // Cheap enough to be irrelevant — the check is a clock comparison, not a
 // network call — and an hour is fine against a 90-day certificate.
@@ -71,6 +83,8 @@ func main() {
 	caFile := flag.String("ca-file", envOr("AGENT_CA_FILE", ""), "platform CA bundle, for verifying the gateway during enrolment")
 	insecureMode := flag.Bool("insecure", envOr("AGENT_INSECURE", "") == "1", "plaintext, no certificate; local development only")
 	kubeconfig := flag.String("kubeconfig", envOr("KUBECONFIG", ""), "kubeconfig path; in-cluster config when empty")
+	apiQPS := flag.Float64("api-qps", envOrFloat("AGENT_API_QPS", defaultAPIQPS), "sustained API-server requests per second this agent allows itself")
+	apiBurst := flag.Int("api-burst", envOrInt("AGENT_API_BURST", defaultAPIBurst), "burst above --api-qps before client-side throttling kicks in")
 	renewalCheck := flag.Duration("renewal-check", defaultRenewalCheck, "how often to check whether the certificate has reached its renewal point")
 	once := flag.Bool("once", false, "exit when the stream closes instead of reconnecting")
 	flag.Parse()
@@ -85,12 +99,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	config, err := loadConfig(*kubeconfig)
+	config, err := loadConfig(*kubeconfig, *apiQPS, *apiBurst)
 	if err != nil {
 		log.Error("could not build a Kubernetes client", "error", err)
 		os.Exit(1)
 	}
-
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		log.Error("could not build a Kubernetes client", "error", err)
@@ -278,7 +291,26 @@ func (errNoIdentity) Error() string {
 		" issue-token --cluster <id>`, or pass --insecure for local development."
 }
 
-func loadConfig(kubeconfig string) (*rest.Config, error) {
+// loadConfig builds this agent's rest.Config — and applies its rate limits,
+// because there is no other way to obtain one.
+//
+// The limits are applied *here* rather than at the call site on purpose. As a
+// separate step in main() they were correct, tested, and deletable without a
+// single test noticing: main() is not under test, so `applyRateLimits` could
+// stop being called and every assertion about it would still pass. Folding it
+// into the only constructor makes "a config from this program is rate limited"
+// structural rather than remembered — the same reason the platform puts its
+// authorisation check in one router dependency instead of on every route.
+func loadConfig(kubeconfig string, qps float64, burst int) (*rest.Config, error) {
+	config, err := discoverConfig(kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+	applyRateLimits(config, qps, burst)
+	return config, nil
+}
+
+func discoverConfig(kubeconfig string) (*rest.Config, error) {
 	if kubeconfig != "" {
 		return clientcmd.BuildConfigFromFlags("", kubeconfig)
 	}
@@ -293,6 +325,47 @@ func loadConfig(kubeconfig string) (*rest.Config, error) {
 
 func envOr(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+// applyRateLimits sets the agent's client-side ceiling on API-server traffic.
+//
+// **A rest.Config that leaves these at zero is not unlimited — it is 5 QPS with
+// a burst of 10**, client-go's defaults, applied silently. One investigation
+// issues on the order of twenty reads, so everything past the tenth waits about
+// a second and the agent logs "Waited before sending request ... client-side
+// throttling". Collection time becomes a function of the rate limiter rather
+// than of the cluster: invisible at test size, dominant on a large one. It was
+// noted as an observation during the §21 in-cluster run and is fixed here.
+//
+// These are still limits, not the absence of one. An agent that can flood its
+// own API server is a worse neighbour than one that is slow, so the defaults
+// are raised only to where a single investigation does not queue behind itself
+// — and they are flags, because the right ceiling belongs to whoever owns the
+// cluster rather than to us.
+//
+// A non-positive value leaves client-go's default in place rather than
+// disabling the limiter, which is what a zero would mean if assigned directly.
+func applyRateLimits(config *rest.Config, qps float64, burst int) {
+	if qps > 0 {
+		config.QPS = float32(qps)
+	}
+	if burst > 0 {
+		config.Burst = burst
+	}
+}
+
+func envOrInt(key string, fallback int) int {
+	if value, err := strconv.Atoi(os.Getenv(key)); err == nil && value > 0 {
+		return value
+	}
+	return fallback
+}
+
+func envOrFloat(key string, fallback float64) float64 {
+	if value, err := strconv.ParseFloat(os.Getenv(key), 64); err == nil && value > 0 {
 		return value
 	}
 	return fallback
