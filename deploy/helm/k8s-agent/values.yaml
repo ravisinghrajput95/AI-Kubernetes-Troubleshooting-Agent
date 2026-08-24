@@ -156,6 +156,20 @@ metrics:
   serviceMonitor:
     enabled: false
     interval: 30s
+    # **`enabled: true` alone scrapes nothing on a default
+    # kube-prometheus-stack.** It ships
+    # `serviceMonitorSelectorNilUsesHelmValues: true`, so its Prometheus selects
+    # only ServiceMonitors carrying its release name — and a ServiceMonitor
+    # nobody selects is created, valid, accepted, and never looked at. No
+    # symptom, no error, no series.
+    #
+    #   labels:
+    #     release: kube-prometheus-stack
+    #
+    # Check yours: kubectl -n monitoring get prometheus \
+    #   -o jsonpath='{.items[*].spec.serviceMonitorSelector}'
+    # Then check the target is up, not merely that the object exists — see the
+    # chart README.
     labels: {}
 
 # Optional backends. See docs/OBSERVABILITY_INTEGRATIONS.md — the queries need
@@ -163,6 +177,13 @@ metrics:
 # not_applicable rather than inventing a healthy reading.
 prometheusUrl: ""
 lokiUrl: ""
+# `X-Scope-OrgID`, for a multi-tenant Loki / Mimir / Cortex / Thanos. Those
+# refuse a query without it, so leaving these empty against a tenanted backend
+# means every observability query fails — recorded honestly as `unavailable`,
+# but never succeeding. Leave empty for a plain Loki or Prometheus, which
+# rejects a header it did not expect.
+prometheusTenantId: ""
+lokiTenantId: ""
 
 # --- Behaviour ----------------------------------------------------------------
 config:

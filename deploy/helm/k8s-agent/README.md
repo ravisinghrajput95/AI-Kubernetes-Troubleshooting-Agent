@@ -80,6 +80,9 @@ agentGateway:
 metrics:
   serviceMonitor:
     enabled: true
+    # Required by a default kube-prometheus-stack. See below.
+    labels:
+      release: kube-prometheus-stack
 
 ingress:
   enabled: true
@@ -137,6 +140,57 @@ to exactly what its users may see.
 Agent-reached clusters are unaffected: the agent's own ServiceAccount bounds
 what can be read there.
 
+## A ServiceMonitor nobody selects scrapes nothing, silently, forever
+
+`metrics.serviceMonitor.enabled: true` is **not enough on a default
+kube-prometheus-stack**, and the failure has no symptom: the object is created,
+valid, and accepted, and no Prometheus ever looks at it.
+
+kube-prometheus-stack ships `serviceMonitorSelectorNilUsesHelmValues: true`,
+which makes its Prometheus select only ServiceMonitors labelled with its own
+release name:
+
+```yaml
+# what the stack's Prometheus is actually configured with
+serviceMonitorSelector:
+  matchLabels:
+    release: kube-prometheus-stack   # or whatever you called the release
+```
+
+So set the matching label:
+
+```yaml
+metrics:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+```
+
+Confirm it rather than assuming — the label is the release name, and yours may
+differ:
+
+```bash
+kubectl -n monitoring get prometheus -o jsonpath='{.items[*].spec.serviceMonitorSelector}'
+```
+
+And confirm the result, because that is the only check that distinguishes a
+working scrape from a plausible one:
+
+```bash
+# the target must exist AND be up. Zero targets is not "no unhealthy targets".
+kubectl -n monitoring port-forward svc/prometheus-operated 9090 &
+curl -s localhost:9090/api/v1/targets \
+  | jq '.data.activeTargets[] | select(.scrapePool | test("k8s-agent"))
+        | {scrapeUrl, health, lastError}'
+```
+
+This is exercised on every CI run — `deploy/verify/prometheus.yaml` reproduces
+the stack's *restrictive* default rather than the permissive
+`serviceMonitorSelector: {}` a harness reaches for when it wants to go green,
+and the assertion fails if no target appears. See
+`docs/INTEGRATION_VERIFICATION.md`.
+
 ## Sizing
 
 Peak heap is about **5× the stored result**, measured flat across cluster sizes:
@@ -176,3 +230,7 @@ a fleet that has finished enrolling can firewall it off.
 - **No Terraform module.** Item 35 named "Terraform/Helm"; this is the Helm
   half. The Terraform half is the managed Postgres, Redis, DNS and secrets
   around it, which is provider-specific and not written.
+- **The `agentGateway` path is not in the CI verification job.** The chart is
+  installed, upgraded and asserted against on every run, but kubeconfig-only:
+  the gateway, mTLS enrolment and M8a routing were exercised by hand in §21 of
+  the audit and would need a Go agent build and a second image in the job.

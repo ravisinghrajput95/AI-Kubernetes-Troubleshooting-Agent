@@ -22,6 +22,8 @@ data:
   METRICS_ENABLED: {{ .Values.metrics.enabled | quote }}
   PROMETHEUS_URL: {{ .Values.prometheusUrl | quote }}
   LOKI_URL: {{ .Values.lokiUrl | quote }}
+  PROMETHEUS_TENANT_ID: {{ .Values.prometheusTenantId | quote }}
+  LOKI_TENANT_ID: {{ .Values.lokiTenantId | quote }}
   JOB_MAX_CONCURRENT: {{ .Values.config.jobMaxConcurrent | quote }}
   RATE_LIMIT_PER_MINUTE: {{ .Values.config.rateLimitPerMinute | quote }}
   RATE_LIMIT_TENANT_PER_MINUTE: {{ .Values.config.rateLimitTenantPerMinute | quote }}
