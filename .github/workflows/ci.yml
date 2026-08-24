@@ -115,6 +115,59 @@ jobs:
           REDIS_URL: redis://localhost:6379/1
         run: python -m pytest -q
 
+  # Stand the platform up on kind and assert it works against the real things
+  # it talks to. `scripts/integration_verify.sh` and `scripts/verify_deployment.py`.
+  #
+  # **Required, not opt-in, and that is a deliberate cost.** Every significant
+  # defect in this project's last seven tiers was found by a human standing
+  # something up, never by a test and never by CI. The most recent shipped to
+  # main with 1,338 tests green: /metrics advertised OpenMetrics and emitted
+  # Prometheus text format, so a real Prometheus rejected every scrape and all
+  # 17 alert rules evaluated against nothing. A job allowed to fail is the same
+  # as no job — it becomes noise inside a week and then nobody reads it — and a
+  # class of defect that has reached main four times is not one to detect
+  # optionally. The price is ~12 minutes of wall clock, in parallel with jobs
+  # that already take five.
+  #
+  # What belongs here rather than in `backend-integration`: that job runs *our
+  # code* against real Postgres and Redis in one process, and its assertions are
+  # about our own contracts. Everything here needs a *second product* to agree
+  # with us — Prometheus's parser, nginx's buffering, the kubelet's probe path,
+  # the operator's label selector — and can only be observed from outside the
+  # pod.
+  integration-verify:
+    name: Integration (kind + Helm + Prometheus)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: helm/kind-action@v1
+        with:
+          version: v0.24.0
+          # The script owns cluster creation, so that the thing CI runs is the
+          # thing a laptop runs. This step is here only to put the binary on
+          # PATH.
+          install_only: true
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.1
+
+      - name: Stand the platform up and verify it
+        run: scripts/integration_verify.sh
+
+      - name: Cluster state on failure
+        if: failure()
+        run: |
+          kubectl --context kind-k8s-agent-verify get pods -A -o wide || true
+          kubectl --context kind-k8s-agent-verify -n k8s-agent logs \
+            -l app.kubernetes.io/name=k8s-agent --tail=200 --all-containers || true
+
   agent:
     name: Cluster agent (Go)
     runs-on: ubuntu-latest

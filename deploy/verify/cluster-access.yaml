@@ -1,0 +1,80 @@
+# What the platform needs to read the cluster, and what the caller needs to be
+# allowed to see.
+#
+# These are two different subjects and that is the whole point. The platform's
+# ServiceAccount holds `impersonate` and **no read permission of its own**; the
+# reads run as `ci@example.com`, and that user's own binding decides what comes
+# back. "The platform cannot see more than you can", asserted by construction.
+#
+# §21 found this the hard way: the chart granted no `impersonate` verb, every
+# read was refused, and the platform correctly reported a permissions problem —
+# pointing at the *caller's* RBAC, when the missing permission was its own.
+# Remove the impersonate rule below and every investigation here fails.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-agent-reader
+  namespace: k8s-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-agent-impersonator
+rules:
+  - apiGroups: [""]
+    resources: [users, groups, serviceaccounts]
+    verbs: [impersonate]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-agent-impersonator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8s-agent-impersonator
+subjects:
+  - kind: ServiceAccount
+    name: k8s-agent-reader
+    namespace: k8s-agent
+---
+# The caller. `view` plus node and metrics reads — an SRE persona rather than
+# cluster-admin, because a harness running as the identity that can do
+# everything cannot tell a working impersonation path from an absent one.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-agent-caller-extras
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes, pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-agent-caller-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: User
+    name: ci@example.com
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-agent-caller-extras
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8s-agent-caller-extras
+subjects:
+  - kind: User
+    name: ci@example.com
+    apiGroup: rbac.authorization.k8s.io

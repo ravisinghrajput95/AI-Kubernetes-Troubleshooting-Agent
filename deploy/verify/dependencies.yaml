@@ -1,0 +1,78 @@
+# Postgres and Redis, deployed *beside* the chart rather than by it.
+#
+# The chart bundles neither, deliberately (values.yaml rule 2: "a subchart
+# database is a database nobody backs up"). Verifying the chart therefore means
+# supplying them out of band, exactly as an operator does — which is also what
+# keeps this harness honest about what the chart is responsible for.
+#
+# Ephemeral on purpose: emptyDir, no PVC, no resource requests. This is a
+# throwaway cluster and a PVC that never binds is the single most common way a
+# kind-based harness hangs.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: k8s-agent
+spec:
+  selector: {app: postgres}
+  ports: [{port: 5432, targetPort: 5432}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: k8s-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          env:
+            - {name: POSTGRES_USER, value: k8sagent}
+            - {name: POSTGRES_PASSWORD, value: k8sagent}
+            - {name: POSTGRES_DB, value: k8sagent}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports: [{containerPort: 5432}]
+          readinessProbe:
+            exec: {command: ["pg_isready", "-U", "k8sagent"]}
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
+      volumes: [{name: data, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: k8s-agent
+spec:
+  selector: {app: redis}
+  ports: [{port: 6379, targetPort: 6379}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: k8s-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis}
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports: [{containerPort: 6379}]
+          readinessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+            initialDelaySeconds: 2
+            periodSeconds: 3

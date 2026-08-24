@@ -1,0 +1,87 @@
+# Chart values for the integration-verification install.
+#
+# Everything §21 listed as "still not exercised" is turned **on** here: the
+# ServiceMonitor, the HPA, the Ingress. Those three were created and correct in
+# a rendered template and served nobody, which is the same shape as every defect
+# this harness exists to catch.
+#
+# Nothing here weakens a refusal to make the install easier. Real token auth,
+# real Postgres and Redis, two replicas, impersonation on.
+
+image:
+  repository: k8s-agent-backend
+  tag: test
+  # The image is `kind load`ed, so there is nothing to pull and a pull attempt
+  # would fail. IfNotPresent would also work; Never fails loudly if the load
+  # step was skipped, rather than falling back to a registry that has no such
+  # tag and reporting ImagePullBackOff several minutes later.
+  pullPolicy: Never
+
+# Overridden by the HPA's minReplicas once autoscaling is on, but the chart's
+# `replicaCount > 1 needs shared state` refusal reads this value.
+replicaCount: 2
+
+auth:
+  mode: token
+  tokensSecret:
+    name: k8s-agent-tokens
+    key: API_TOKENS
+
+# `operator` is the least role that may run an investigation. Deliberately not
+# `owner`: a harness running as the role that can do everything cannot tell a
+# working permission table from an absent one.
+rbac:
+  defaultRole: operator
+
+database:
+  urlSecret:
+    name: k8s-agent-state
+    key: DATABASE_URL
+redis:
+  urlSecret:
+    name: k8s-agent-state
+    key: REDIS_URL
+
+# Reads the kind cluster it is running in, through a ServiceAccount kubeconfig
+# holding `view` **and `impersonate`**. Impersonation stays on, so the ClusterRole
+# the chart README names as the most likely first-install failure is exercised
+# rather than documented.
+kubeconfig:
+  enabled: true
+  secretName: k8s-agent-kubeconfig
+  key: config
+impersonateUsers: true
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    # 30s is the chart default and would make every Prometheus assertion wait
+    # for it. The interval is not what is under test.
+    interval: 5s
+    # The label kube-prometheus-stack's default selector requires. Without it
+    # the ServiceMonitor is created, valid, and selected by nothing.
+    labels:
+      release: kube-prometheus-stack
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: k8s-agent.local
+      paths:
+        - path: /
+          pathType: Prefix
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi

@@ -1,0 +1,107 @@
+# A real Prometheus that selects ServiceMonitors, and the RBAC it needs.
+#
+# The point of this file is the *selector*, which is the one thing a rendered
+# template cannot check. `kube-prometheus-stack` ships
+# `serviceMonitorSelectorNilUsesHelmValues=true`, so its Prometheus selects only
+# ServiceMonitors labelled `release: <its release name>`. The chart's own
+# ServiceMonitor carries no such label unless `metrics.serviceMonitor.labels`
+# sets one — and a ServiceMonitor that no Prometheus selects produces no target,
+# no error, and no series. Forever.
+#
+# So this deliberately reproduces the restrictive default rather than the
+# permissive `serviceMonitorSelector: {}` an author reaches for when they want
+# their harness to pass. `deploy/verify/values.yaml` supplies the matching
+# label, and `scripts/verify_deployment.py` asserts a target actually appeared.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+  - apiGroups: [""]
+    resources: [nodes, nodes/metrics, services, endpoints, pods]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - nonResourceURLs: ["/metrics"]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: monitoring
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  name: verify
+  namespace: monitoring
+spec:
+  serviceAccountName: prometheus
+  replicas: 1
+  scrapeInterval: 5s
+  # The kube-prometheus-stack default, reproduced. Not `{}`.
+  serviceMonitorSelector:
+    matchLabels:
+      release: kube-prometheus-stack
+  # Cross-namespace, because the platform is not installed beside Prometheus.
+  serviceMonitorNamespaceSelector: {}
+  podMonitorSelector: {}
+  probeSelector: {}
+  scrapeConfigSelector: {}
+  ruleSelector: {}
+  resources:
+    requests:
+      memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  selector:
+    prometheus: verify
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+---
+# Reached through the same ingress-nginx the platform is, on a Host header, so
+# the harness needs no port-forward. A port-forward is a background process that
+# can die silently and take an assertion's meaning with it.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: prometheus.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus
+                port:
+                  number: 9090
