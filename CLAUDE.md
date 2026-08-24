@@ -708,6 +708,7 @@ Four things here are load-bearing:
 - **Raw JSON, not typed objects.** client-go's typed structs drop unknown fields and reorder keys, which would make an agent's evidence differ from the same read performed locally. Raw reads keep the two comparable and still avoid subprocess-per-call.
 - **Correlation is on the envelope, not the record.** `EvidenceEnvelope` carries `request_id`; `EvidenceRecord` stays the storage and audit format, which has no such thing.
 - **kubectl rewrites list envelopes.** `kubectl get pods -o json` returns `kind: List`; the API server returns `PodList`. Evidence is therefore compared on objects, never bytes — see `tests/test_agent_transport.py`.
+- **A `rest.Config` that leaves QPS and Burst at zero is not unlimited — it is client-go's 5/10.** One investigation issues ~20 reads, so everything past the tenth waited about a second and the agent logged `client-side throttling`; collection time tracked the rate limiter rather than the cluster. `--api-qps`/`--api-burst` (50/100) are applied **inside `loadConfig`, the only constructor**, not at the call site: as a separate step in `main()` they were correct, tested, and deletable without a single test noticing, because `main()` is not under test. Mutation-tested both ways — removing the call site survived until it was folded in.
 
 `K8S_AGENT_CLUSTER_INTEGRATION=1` runs the differential suite against a real cluster (`kind create cluster --name m4b`); it skips otherwise, so `python -m pytest` still needs nothing.
 
@@ -926,6 +927,20 @@ Prometheus and Loki are **optional**: unset `PROMETHEUS_URL`/`LOKI_URL` means th
 
 Queries use only cAdvisor/kube-state-metrics names. **Application-level metrics are deliberately not queried** — their names are per-application, and a guessed name returns an empty result indistinguishable from a healthy one.
 
+`PROMETHEUS_TENANT_ID` / `LOKI_TENANT_ID` send `X-Scope-OrgID`. Multi-tenant
+Loki, Mimir, Cortex and Thanos all refuse a query without it, so a deployment
+pointed at one saw every query fail; the client recorded that correctly as
+`unavailable`, which made the failure legible while leaving no way to succeed.
+**Configuration, never the ambient platform tenant** — there is one `LOKI_URL`
+for the deployment and the platform's tenant ids are its own namespace, so
+mapping them onto a customer's org ids would be the platform guessing at
+someone else's tenancy scheme. Same reasoning that makes `EVENT_SOURCES` carry
+the tenant in configuration rather than read it from the payload. Unset sends
+no header at all, because a single-tenant backend rejects one it did not
+expect. Asserted on the header that reached the wire through `MockTransport`: a
+`headers` property that is correct and never passed to `AsyncClient` reads
+identically to a working one in a test that inspects the object.
+
 Both are emitted by playbooks (CrashLoop → pod metrics + historical logs; Pending → node metrics), not baseline collection. Baseline usage still comes from `kubectl top`.
 
 **A standard metric name is not the same as a metric that is present**, and until
@@ -999,6 +1014,17 @@ Sections with nothing behind them are **omitted, not padded** — same rule as t
 ### Report retention
 
 `ReportStore.prune()` deletes rendered artefacts older than `REPORT_RETENTION_DAYS` (14), swept every `REPORT_RETENTION_SWEEP_HOURS` (6) by a task started in `app/state.py`. **The history entry survives and is marked `expired`** — deleting it too would make an investigation that happened look like one that never did. 0 disables pruning.
+
+**It nulls `investigations.result` in the same transaction, and that is the
+larger copy.** Retention used to delete only the blobs, so the JSON payload they
+were rendered *from* — 2.7 MB against a couple of hundred kilobytes — survived
+indefinitely: `/investigations/{id}/pdf` 404'd on an expired investigation while
+`GET /investigations/{id}` still served its whole contents. The same data
+deleted on one path and kept on another, under a setting an operator reads as a
+deletion schedule. `docs/DATA_PROTECTION.md` recorded it as a gap and offered a
+hand-run `UPDATE`; the gap was that `prune()` did not run it. Nulled rather than
+deleted, for the same reason the history entry survives. **This deletes payloads
+on upgrade that were previously kept** — see `docs/UPGRADE.md`.
 
 ### Frontend
 
@@ -1111,6 +1137,39 @@ appears in the **real exposition** — a rule naming a series the platform does
 not export is valid YAML, passes `promtool`, evaluates forever and fires never,
 which is exactly the Prometheus defect class from M9.1. A fourth test refuses
 any rule mentioning a cluster, tenant or namespace label.
+
+### Integration verification (`scripts/integration_verify.sh`, `deploy/verify/`, CI)
+
+The `integration-verify` CI job stands the chart up on kind — ingress-nginx,
+metrics-server, a prometheus-operator Prometheus, and Postgres and Redis
+deployed *beside* the chart because it bundles neither — then asserts 32
+properties against the live deployment. **Required, not opt-in**: a job allowed
+to fail is the same as no job, and this defect class has reached `main` four
+times with a green suite.
+
+**The dividing line against `K8S_AGENT_INTEGRATION`**: that suite runs *our
+code* against real Postgres and Redis in one process and asserts *our*
+contracts. Everything here needs a **second product to agree with us** —
+Prometheus's parser, nginx's buffering, the kubelet's probe path, the
+operator's label selector — and is only observable from outside the pod. If an
+assertion can be made by importing `app`, it is a pytest and belongs there.
+
+It is a script rather than workflow steps so **the thing CI runs is the thing a
+laptop runs** (`scripts/integration_verify.sh --keep`); every defect it exists
+to catch was found by hand. `--kube-context` is pinned on every command.
+
+Every check carries a guard against its own subject being absent, because the
+recurring failure in this repository's harnesses is a *vacuous* assertion, not
+a wrong one: **zero scrape targets is not "no unhealthy targets"**, the
+alert-series check refuses fewer than 13 referenced series, an SSE stream under
+0.75s reports that it cannot answer the buffering question rather than passing,
+and a `succeeded` investigation that collected nothing is refused.
+
+`deploy/verify/prometheus.yaml` reproduces kube-prometheus-stack's
+**restrictive** `serviceMonitorSelector` (`release:`) rather than the permissive
+`{}` — so `metrics.serviceMonitor.labels` is on the path under test. Mutation
+tested by reverting `2f60f76` into a rebuilt image: 32/0 healthy, **27/4 and
+exit 1** on the mutant, 32/0 restored. See `docs/INTEGRATION_VERIFICATION.md`.
 
 ### Deployment and operations docs
 
