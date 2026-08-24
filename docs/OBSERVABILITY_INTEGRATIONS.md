@@ -17,8 +17,18 @@ match nothing.
 |---|---|---|
 | `PROMETHEUS_URL` | *(unset)* | Base URL, no path. `http://prometheus-operated.monitoring:9090` |
 | `LOKI_URL` | *(unset)* | Base URL, no path. `http://loki.monitoring:3100` |
+| `PROMETHEUS_TENANT_ID` | *(unset)* | `X-Scope-OrgID`, for Mimir / Cortex / Thanos behind a multi-tenant gateway |
+| `LOKI_TENANT_ID` | *(unset)* | `X-Scope-OrgID`, for a Loki with `auth_enabled: true` |
 | `OBSERVABILITY_TIMEOUT_SECONDS` | 15 | Per-query timeout |
 | `METRICS_LOOKBACK_MINUTES` | 60 | Window for `max_over_time` and `increase` |
+
+**Leave the tenant ids unset for a plain Loki or Prometheus**, which rejects a
+header it did not expect. Set them against a tenanted backend, which rejects a
+query that omits one — Loki with `401 no org id`. They come from configuration
+and never from the platform's own tenant: there is one `LOKI_URL` per
+deployment, and the platform's tenant ids are its own namespace, so mapping
+them onto a customer's org ids would be the platform guessing at someone else's
+tenancy scheme.
 
 Neither client raises for an operational problem: an unreachable, slow or
 unconfigured backend becomes a result carrying the reason, which the collector
@@ -214,13 +224,19 @@ assertion.
 
 ## Not verified
 
-- **Multi-tenant Loki** (`auth_enabled: true`). The client sends no
-  `X-Scope-OrgID`; a tenanted Loki would reject or misroute every query.
+- **Multi-tenant Loki** (`auth_enabled: true`) — `X-Scope-OrgID` is now sent
+  when `LOKI_TENANT_ID` is set, and asserted on the header that reaches the
+  wire rather than on the client object, but it has **not been run against a
+  tenanted Loki**. What is verified is that the platform sends the right header
+  with the right value; what is not is that a real multi-tenant Loki accepts it
+  and returns the same shape.
 - **Grafana Alloy** as the log shipper. Promtail only. Alloy's Kubernetes
   defaults produce the same `namespace`/`pod` labels, but this was not run.
 - **Prometheus behind auth** — no credential is sent, and none is configurable.
 - **Remote-write / Thanos / Mimir** query frontends, which differ in how they
-  answer `query_range` and in retention semantics.
+  answer `query_range` and in retention semantics. `PROMETHEUS_TENANT_ID` sends
+  them the org id they require, on the same unverified-against-the-real-thing
+  footing as Loki above.
 - **Multi-container pods.** The aggregation fix is correct by construction and
   is asserted against captured data, but every fault pod here had one container.
 - Single-node `kind` only, so node overcommitment (`METRICS_NODE_OVERCOMMITTED`,

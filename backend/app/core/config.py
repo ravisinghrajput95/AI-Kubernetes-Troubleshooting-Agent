@@ -35,6 +35,19 @@ class Settings(BaseSettings):
     # investigation degrades instead of breaking.
     prometheus_url: str = Field(default="", validation_alias="PROMETHEUS_URL")
     loki_url: str = Field(default="", validation_alias="LOKI_URL")
+    # Multi-tenant Loki, Mimir, Cortex and Thanos identify the tenant with an
+    # `X-Scope-OrgID` header and **reject** a query that omits it — Loki with a
+    # 401 and the message "no org id", which the client records as unavailable.
+    # Empty means single-tenant, which is what a plain Loki or Prometheus is.
+    #
+    # Configuration rather than the platform's own tenant, deliberately. There
+    # is one `LOKI_URL` for the deployment, and the platform's tenant ids are
+    # its own namespace — mapping them onto a customer's Loki org ids would be
+    # the platform guessing at someone else's tenancy scheme. Same reasoning
+    # that makes `EVENT_SOURCES` carry the tenant in configuration rather than
+    # read it from the payload.
+    prometheus_tenant_id: str = Field(default="", validation_alias="PROMETHEUS_TENANT_ID")
+    loki_tenant_id: str = Field(default="", validation_alias="LOKI_TENANT_ID")
     observability_timeout_seconds: int = 15
     metrics_lookback_minutes: int = 60
 

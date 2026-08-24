@@ -30,9 +30,28 @@ class LogQueryResult:
 
 
 class LokiClient:
-    def __init__(self, base_url: str | None = None, timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str | None = None,
+        timeout: float | None = None,
+        tenant_id: str | None = None,
+    ) -> None:
         self.base_url = (base_url if base_url is not None else settings.loki_url).rstrip("/")
         self.timeout = timeout or settings.observability_timeout_seconds
+        self.tenant_id = tenant_id if tenant_id is not None else settings.loki_tenant_id
+
+    @property
+    def headers(self) -> dict[str, str]:
+        """`X-Scope-OrgID` when configured, nothing when not.
+
+        A multi-tenant Loki rejects a query with no org id — 401, "no org id" —
+        which this client correctly records as `unavailable` and an
+        investigation correctly reports as a backend it could not reach. So the
+        failure is legible; what was missing was any way to succeed. Absent the
+        setting the header is not sent at all, because single-tenant Loki
+        rejects an unexpected one.
+        """
+        return {"X-Scope-OrgID": self.tenant_id} if self.tenant_id else {}
 
     @property
     def configured(self) -> bool:
@@ -55,7 +74,7 @@ class LokiClient:
         start = end - timedelta(minutes=lookback_minutes or settings.metrics_lookback_minutes)
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, headers=self.headers) as client:
                 response = await client.get(
                     f"{self.base_url}/loki/api/v1/query_range",
                     params={

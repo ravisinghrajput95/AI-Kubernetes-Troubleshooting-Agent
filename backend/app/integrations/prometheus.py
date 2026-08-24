@@ -37,9 +37,28 @@ class QueryResult:
 
 
 class PrometheusClient:
-    def __init__(self, base_url: str | None = None, timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str | None = None,
+        timeout: float | None = None,
+        tenant_id: str | None = None,
+    ) -> None:
         self.base_url = (base_url if base_url is not None else settings.prometheus_url).rstrip("/")
         self.timeout = timeout or settings.observability_timeout_seconds
+        self.tenant_id = tenant_id if tenant_id is not None else settings.prometheus_tenant_id
+
+    @property
+    def headers(self) -> dict[str, str]:
+        """`X-Scope-OrgID` when configured, nothing when not.
+
+        Plain Prometheus has no tenancy and needs none. Mimir, Cortex and
+        Thanos behind a multi-tenant gateway all use the same header as Loki,
+        and refuse a query without it — so a deployment pointing
+        `PROMETHEUS_URL` at one saw every query fail and every metric signal
+        silently absent, which is the M9.1 defect shape arriving by a different
+        route.
+        """
+        return {"X-Scope-OrgID": self.tenant_id} if self.tenant_id else {}
 
     @property
     def configured(self) -> bool:
@@ -55,7 +74,7 @@ class PrometheusClient:
             )
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, headers=self.headers) as client:
                 response = await client.get(
                     f"{self.base_url}/api/v1/query", params={"query": promql}
                 )

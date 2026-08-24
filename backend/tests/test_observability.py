@@ -590,3 +590,80 @@ class TestAgainstCapturedRealBackends:
         assert SignalType.METRICS_CPU_THROTTLED in types
         assert SignalType.METRICS_RESTART_RATE in types
         assert SignalType.LOGS_HISTORICAL_ERRORS in types
+
+
+class TestMultiTenantBackends:
+    """`X-Scope-OrgID`, without which a tenanted Loki or Mimir refuses everything.
+
+    Loki answers a query with no org id with `401 no org id`, which this client
+    correctly records as `unavailable`. So the failure was always legible in an
+    investigation; what was missing was any way to succeed against a backend
+    the majority of Grafana Cloud and self-hosted Loki deployments run.
+
+    Asserted on the header the client actually put on the wire, through
+    MockTransport, rather than on the attribute — a `headers` property that is
+    correct and never passed to `AsyncClient` is the same defect as no property
+    at all, and reads identically in a test that inspects the object.
+    """
+
+    async def test_loki_sends_the_org_id_when_configured(self, promql_responses):
+        seen: list[httpx.Request] = []
+
+        def handler(request):
+            seen.append(request)
+            return httpx.Response(200, json={"status": "success", "data": {"result": []}})
+
+        promql_responses(handler)
+        await LokiClient(base_url=CONFIGURED_LOKI, tenant_id="acme").query_range('{app="web"}')
+
+        assert seen[0].headers["X-Scope-OrgID"] == "acme"
+
+    async def test_loki_sends_no_org_id_when_unset(self, promql_responses):
+        """Single-tenant Loki rejects a header it did not expect."""
+        seen: list[httpx.Request] = []
+
+        def handler(request):
+            seen.append(request)
+            return httpx.Response(200, json={"status": "success", "data": {"result": []}})
+
+        promql_responses(handler)
+        await LokiClient(base_url=CONFIGURED_LOKI, tenant_id="").query_range('{app="web"}')
+
+        assert "X-Scope-OrgID" not in seen[0].headers
+
+    async def test_prometheus_sends_the_org_id_when_configured(self, promql_responses):
+        """Mimir, Cortex and Thanos use the same header, and refuse without it."""
+        seen: list[httpx.Request] = []
+
+        def handler(request):
+            seen.append(request)
+            return httpx.Response(200, json={"status": "success", "data": {"result": []}})
+
+        promql_responses(handler)
+        await PrometheusClient(base_url=CONFIGURED_PROMETHEUS, tenant_id="acme").query("up")
+
+        assert seen[0].headers["X-Scope-OrgID"] == "acme"
+
+    async def test_prometheus_sends_no_org_id_when_unset(self, promql_responses):
+        seen: list[httpx.Request] = []
+
+        def handler(request):
+            seen.append(request)
+            return httpx.Response(200, json={"status": "success", "data": {"result": []}})
+
+        promql_responses(handler)
+        await PrometheusClient(base_url=CONFIGURED_PROMETHEUS, tenant_id="").query("up")
+
+        assert "X-Scope-OrgID" not in seen[0].headers
+
+    async def test_the_default_comes_from_configuration(self, monkeypatch):
+        """Not from the ambient platform tenant, which is a different namespace."""
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "loki_tenant_id", "from-config")
+        monkeypatch.setattr(settings, "prometheus_tenant_id", "from-config")
+
+        assert LokiClient(base_url=CONFIGURED_LOKI).headers == {"X-Scope-OrgID": "from-config"}
+        assert PrometheusClient(base_url=CONFIGURED_PROMETHEUS).headers == {
+            "X-Scope-OrgID": "from-config"
+        }
