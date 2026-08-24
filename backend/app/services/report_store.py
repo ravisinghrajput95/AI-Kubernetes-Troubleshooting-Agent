@@ -248,13 +248,26 @@ class PostgresReportStore:
             )
 
     def prune(self, older_than_days: int = DEFAULT_RETENTION_DAYS) -> int:
-        """Delete report blobs past retention. Returns how many rows went.
+        """Delete report content past retention. Returns how many blobs went.
 
-        Blobs only. The `investigations` row survives, so the fact that an
-        investigation happened outlives the rendered artefact — which is the
-        distinction that makes this retention rather than deletion. The
-        history projection is marked expired in the same transaction so a
-        listing cannot show a downloadable report that is no longer there.
+        Three statements, one transaction, and the second is the one that was
+        missing.
+
+        **`investigations.result` is pruned too, and it is the larger copy.**
+        Retention deleted the rendered PDF/JSON/Markdown and left the JSON
+        payload they were rendered *from* — measured at 2.7 MB against ~200 KB
+        of blobs — so `/investigations/{id}/pdf` 404'd on an expired
+        investigation while `GET /investigations/{id}` still served its whole
+        contents. The same data, deleted on one path and retained on another,
+        under a setting an operator reasonably reads as a deletion schedule.
+        `docs/DATA_PROTECTION.md` recorded it as a gap and offered a hand-run
+        `UPDATE` to close it; the gap was that this method did not run it.
+
+        Nulled rather than deleted, and the row still survives: an investigation
+        that happened must not come to look like one that never did. That is
+        the same distinction the history projection makes by being marked
+        `expired` rather than removed — done here in the same transaction, so a
+        listing cannot offer a download that is no longer there.
         """
         with self._db.cursor() as cursor:
             cursor.execute(
@@ -272,6 +285,17 @@ class PostgresReportStore:
             cursor.execute(
                 """
                 UPDATE investigations
+                   SET result = NULL
+                 WHERE created_at < now() - %s::interval
+                   AND result IS NOT NULL
+                """,
+                (f"{older_than_days} days",),
+            )
+            payloads = cursor.rowcount
+
+            cursor.execute(
+                """
+                UPDATE investigations
                    SET history_item = jsonb_set(history_item, '{expired}', 'true'::jsonb)
                  WHERE created_at < now() - %s::interval
                    AND history_item IS NOT NULL
@@ -280,10 +304,12 @@ class PostgresReportStore:
                 (f"{older_than_days} days",),
             )
 
-        if removed:
+        if removed or payloads:
             logger.info(
-                "Pruned {count} report blob(s) older than {days} days",
+                "Pruned {count} report blob(s) and {payloads} stored payload(s) "
+                "older than {days} days",
                 count=removed,
+                payloads=payloads,
                 days=older_than_days,
             )
         return removed

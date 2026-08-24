@@ -136,33 +136,31 @@ that seam.
 
 | Setting | Default | Effect |
 |---|---|---|
-| `REPORT_RETENTION_DAYS` | 14 | Rendered PDF/JSON/Markdown older than this are deleted |
+| `REPORT_RETENTION_DAYS` | 14 | Rendered PDF/JSON/Markdown **and the stored `investigations.result` payload** older than this are deleted |
 | `REPORT_RETENTION_SWEEP_HOURS` | 6 | How often the sweep runs |
 | `EVENT_COOLDOWN_SECONDS` | 1800 | Alert-trigger dedup window |
 
-`ReportStore.prune()` deletes the rendered artefacts. **The history entry
+`ReportStore.prune()` deletes the rendered artefacts **and nulls
+`investigations.result`, the JSON payload they were rendered from** — one
+transaction, so no path to the content outlives another. **The history entry
 survives and is marked `expired`** — deleting it too would make an investigation
 that happened look like one that never did, which is the wrong answer for both
 incident review and audit. `0` disables pruning entirely.
 
+`result` used to survive the sweep, and it is the *larger* copy: 2.7 MB against
+a couple of hundred kilobytes of blobs. So an expired investigation 404'd on
+`/investigations/{id}/pdf` while `GET /investigations/{id}` still served its
+entire contents — the same data deleted on one path and retained on another,
+under a setting an operator reasonably reads as a deletion schedule. This
+document recorded that as a gap and offered a hand-run `UPDATE` to close it;
+the gap was that `prune()` did not run it.
+
+**On upgrade this deletes payloads it previously kept.** A deployment relying
+on `GET /investigations/{id}` returning full contents beyond
+`REPORT_RETENTION_DAYS` was relying on a bug, but was relying on it — see
+`docs/UPGRADE.md`.
+
 ### What is not built, and matters
-
-- **`investigations.result` is not pruned.** Retention removes the *rendered*
-  artefacts, not the stored JSON payload they were rendered from — which is the
-  larger copy and contains the same data. A deployment that must delete
-  investigation content on a schedule needs a scheduled job of its own:
-
-  ```sql
-  -- Run as the application role so row-level security still applies.
-  UPDATE investigations
-     SET result = NULL
-   WHERE created_at < now() - interval '90 days'
-     AND status IN ('succeeded', 'failed', 'cancelled');
-  ```
-
-  Nulling `result` rather than deleting the row keeps the history entry, which
-  is the same decision `prune()` already makes. Verify against your own
-  retention policy before running it; this is an example, not a default.
 
 - **The audit log is never pruned by the platform.** It is append-only JSON
   lines at `AUDIT_LOG_PATH`, and rotating or shipping it is deliberately the
@@ -246,8 +244,8 @@ customer-facing DPA if enabled.
 - [ ] `sslmode=verify-full` to Postgres, `rediss://` to Redis
 - [ ] CA private key in a secret manager, backed up out of band
 - [ ] Audit log shipped to a SIEM with its own retention
-- [ ] `REPORT_RETENTION_DAYS` set to your policy, and a job nulling
-      `investigations.result` on the same schedule
+- [ ] `REPORT_RETENTION_DAYS` set to your policy (it now covers
+      `investigations.result` as well as the rendered artefacts)
 - [ ] Platform deployed in the region whose data it will hold
 - [ ] Decision recorded on `OPENAI_API_KEY` — off keeps everything in-region
 - [ ] Namespaces whose logs carry regulated data excluded from investigation scope

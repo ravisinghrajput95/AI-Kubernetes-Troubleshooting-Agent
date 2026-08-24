@@ -3,7 +3,10 @@
 import json
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from app.services.report_store import DEFAULT_RETENTION_DAYS, FilesystemReportStore
+from tests.distributed_backend import DistributedBackend, requires_backend
 
 
 def store(tmp_path) -> FilesystemReportStore:
@@ -15,6 +18,15 @@ def add(target: FilesystemReportStore, identifier: str, age_days: float) -> None
     for report_format in ("pdf", "json", "markdown"):
         target.write(identifier, report_format, b"content")
     target.upsert_index({"id": identifier, "timestamp": stamp, "owner": ""})
+
+
+@pytest.fixture
+async def backend():
+    target = DistributedBackend(with_bus=False)
+    try:
+        yield target
+    finally:
+        await target.close()
 
 
 class TestRetention:
@@ -85,3 +97,99 @@ class TestRetention:
         target.prune()
 
         assert isinstance(json.loads(target.index_path.read_text()), list)
+
+
+@requires_backend
+class TestTheStoredPayloadGoesToo:
+    """Retention must not delete the small copy and keep the large one.
+
+    `investigations.result` is the JSON the PDF, Markdown and JSON reports are
+    rendered *from* — measured at 2.7 MB at the `MAX_LIST_ITEMS` ceiling against
+    a couple of hundred kilobytes of rendered blobs. `prune()` deleted the
+    blobs and left it, so an expired investigation 404'd on
+    `/investigations/{id}/pdf` while `GET /investigations/{id}` still served its
+    entire contents from the row.
+
+    Postgres-only because there is no equivalent on the filesystem backend: the
+    JSON report *is* the stored payload there, and it is already deleted. The
+    shared property both backends must satisfy is the last test in this class —
+    after retention there is no path left to the content, and the record that
+    the investigation happened survives.
+    """
+
+    IDENTIFIER = "5c0de1ab-0000-4000-8000-00000000fee1"
+
+    def _aged(self, backend, age_days: float, result: dict | None = None):
+        store = backend.reports()
+        store.ensure(self.IDENTIFIER, "alice")
+        store.write(self.IDENTIFIER, "pdf", b"%PDF-1.4 fake")
+        store.upsert_index({"id": self.IDENTIFIER, "owner": "alice", "timestamp": "2026-01-01"})
+        with backend.database.cursor() as cursor:
+            cursor.execute(
+                "UPDATE investigations SET result = %s, created_at = now() - %s::interval "
+                "WHERE id = %s",
+                (
+                    json.dumps(result or {"investigation": {"pods": ["one"] * 50}}),
+                    f"{age_days} days",
+                    self.IDENTIFIER,
+                ),
+            )
+        return store
+
+    def _result(self, backend):
+        with backend.database.cursor() as cursor:
+            cursor.execute("SELECT result FROM investigations WHERE id = %s", (self.IDENTIFIER,))
+            return cursor.fetchone()[0]
+
+    async def test_the_stored_payload_is_nulled_past_retention(self, backend):
+        store = self._aged(backend, age_days=DEFAULT_RETENTION_DAYS + 1)
+
+        store.prune()
+
+        assert self._result(backend) is None
+
+    async def test_a_recent_payload_is_untouched(self, backend):
+        store = self._aged(backend, age_days=1)
+
+        store.prune()
+
+        assert self._result(backend) is not None
+
+    async def test_the_row_survives_so_the_investigation_still_happened(self, backend):
+        """Nulled, never deleted — same decision the history entry makes."""
+        store = self._aged(backend, age_days=DEFAULT_RETENTION_DAYS + 1)
+
+        store.prune()
+
+        with backend.database.cursor() as cursor:
+            cursor.execute("SELECT id, owner FROM investigations WHERE id = %s", (self.IDENTIFIER,))
+            row = cursor.fetchone()
+        assert row is not None and row[1] == "alice"
+
+    async def test_pruning_twice_is_idempotent(self, backend):
+        store = self._aged(backend, age_days=DEFAULT_RETENTION_DAYS + 1)
+
+        store.prune()
+        store.prune()
+
+        assert self._result(backend) is None
+
+    async def test_no_path_to_the_content_survives(self, backend):
+        """The property both backends share, and the reason this test exists.
+
+        Asserted over every way the content can be read rather than over the
+        column, so a future path to it — a new endpoint, a new projection — is
+        caught by this test rather than by a customer.
+        """
+        store = self._aged(backend, age_days=DEFAULT_RETENTION_DAYS + 1)
+
+        store.prune()
+
+        assert store.read(self.IDENTIFIER, "pdf") is None
+        assert store.read(self.IDENTIFIER, "json") is None
+        assert store.read(self.IDENTIFIER, "markdown") is None
+        assert self._result(backend) is None
+        entry = next(
+            item for item in store.read_index(owner="alice") if item["id"] == self.IDENTIFIER
+        )
+        assert entry["expired"] is True

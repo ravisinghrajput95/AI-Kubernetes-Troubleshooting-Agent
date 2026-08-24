@@ -219,6 +219,37 @@ Nothing consumed the old field (it was always `None`), but a downstream
 consumer reading the raw evidence payload should be checked.
 See `docs/OBSERVABILITY_INTEGRATIONS.md`.
 
+### Upgrading into M9.3 (retention covers the stored payload)
+
+**Read this one before upgrading if you have `DATABASE_URL` set.**
+
+`ReportStore.prune()` now nulls `investigations.result` alongside the rendered
+report blobs. It previously deleted only the blobs, so the JSON payload they
+were rendered *from* — the larger copy — survived retention indefinitely and
+`GET /investigations/{id}` kept serving the full contents of investigations
+whose PDF had already 404'd.
+
+**The first sweep after upgrade deletes those payloads**, for everything older
+than `REPORT_RETENTION_DAYS` (default 14). The sweep runs on start and every
+`REPORT_RETENTION_SWEEP_HOURS` (6), so this happens within minutes of the
+rollout, not at some later boundary.
+
+Nothing is lost that retention did not already intend to delete, and the
+`investigations` row and its history entry still survive — an investigation
+that happened must not come to look like one that never did. But a deployment
+reading old payloads back through `GET /investigations/{id}` was relying on
+this gap, and will stop being able to.
+
+If you need those payloads, take a `pg_dump` before rolling, or set
+`REPORT_RETENTION_DAYS=0` to disable pruning entirely while you decide.
+
+```sql
+-- What the first sweep will null. Run before upgrading.
+SELECT count(*), pg_size_pretty(sum(pg_column_size(result)))
+  FROM investigations
+ WHERE created_at < now() - interval '14 days' AND result IS NOT NULL;
+```
+
 ---
 
 ## Configuration compatibility
