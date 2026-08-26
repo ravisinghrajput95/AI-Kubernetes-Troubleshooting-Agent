@@ -142,13 +142,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: helm/kind-action@v1
-        with:
-          version: v0.24.0
-          # The script owns cluster creation, so that the thing CI runs is the
-          # thing a laptop runs. This step is here only to put the binary on
-          # PATH.
-          install_only: true
+      # kind by curl rather than helm/kind-action, because the script owns
+      # cluster creation — the action's only job here would be to put the
+      # binary on PATH, and its post-step still runs a registry teardown this
+      # job never asked for and logs an error for.
+      - name: Install kind
+        run: |
+          curl -sSLo /usr/local/bin/kind \
+            https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+          chmod +x /usr/local/bin/kind
+          kind version
 
       - uses: azure/setup-helm@v4
         with:
@@ -158,15 +161,12 @@ jobs:
         with:
           version: v1.31.1
 
+      # No `if: failure()` dump step. The script installs its own trap, which
+      # dumps pods, the Deployment and the platform's logs *before* deleting
+      # the cluster — a step here runs after that teardown and can only report
+      # that the context no longer exists, which is what the first CI run did.
       - name: Stand the platform up and verify it
         run: scripts/integration_verify.sh
-
-      - name: Cluster state on failure
-        if: failure()
-        run: |
-          kubectl --context kind-k8s-agent-verify get pods -A -o wide || true
-          kubectl --context kind-k8s-agent-verify -n k8s-agent logs \
-            -l app.kubernetes.io/name=k8s-agent --tail=200 --all-containers || true
 
   agent:
     name: Cluster agent (Go)

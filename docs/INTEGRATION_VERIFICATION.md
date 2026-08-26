@@ -51,7 +51,7 @@ either.
 §21 rolling-upgrade work the current context silently switched to an unrelated
 live GKE cluster mid-experiment, and three commands ran against it.
 
-## The 32 assertions, and what each one is for
+## The 33 assertions, and what each one is for
 
 | Group | Asserts | Catches |
 |---|---|---|
@@ -61,12 +61,13 @@ live GKE cluster mid-experiment, and three commands ran against it.
 | Scrape target | Prometheus has ≥1 target for our ServiceMonitor, all `up`, no `lastError` | `2f60f76`; a ServiceMonitor nobody selects |
 | Alert series | all 15 `k8sagent_*` series the shipped rules reference are **in Prometheus**, by instant query | rules that evaluate forever and fire never |
 | Investigation | 202, terminal `succeeded`, usable evidence > 0, a real PDF — all through the ingress | §21 defect 1 (`impersonate`); a green pipeline collecting nothing |
-| SSE | ≥3 frames, arrival times spread across the stream | nginx buffering the live timeline into one blob |
+| SSE | ≥3 frames, arrivals tracking the platform's own emission times | a live timeline that arrives in one delivery at the end. **Not** `X-Accel-Buffering` — see below |
 | Counters | `sum(k8sagent_investigations_total)` **increased in Prometheus** | series that exist and carry nothing |
 | HPA | `currentMetrics` resolves to a real utilisation, not `<unknown>` | §21's unexercised autoscaling |
 
-Measured on the first full run: 32 passed, 0 failed, ~4 minutes of assertions
-on top of ~4 minutes of environment.
+Measured on a full local run: 33 passed, 0 failed, ~4 minutes of assertions on
+top of ~4 minutes of environment. On a GitHub runner the whole job is about 9
+minutes, most of it the image build and the cluster coming up.
 
 ## Keeping it honest
 
@@ -84,16 +85,82 @@ So every check here carries a guard against its own subject being absent:
 - **The alert-series check refuses fewer than 13 referenced series.** If the
   rules file moves or the regex stops matching, "all 0 referenced series are
   present" would pass. 15 are referenced today.
-- **An SSE stream under 0.75s cannot answer the buffering question**, so the
-  check reports a failure that says exactly that rather than a pass it did not
-  earn. Measured at 1.22s with a 1.21s spread; buffered delivery would show
-  ~0.
-- **A `succeeded` investigation that collected nothing is refused.** Evidence
-  coverage must show usable records.
+- **The SSE check compares against a control taken from the same run.** Every
+  frame carries the server-side moment it was emitted, so the assertion is that
+  *arrivals track emissions*, and the threshold scales with the window the
+  platform actually used. The only absolute left is on what the *platform* did
+  (it must have emitted over ≥0.20s), not on how fast the machine ran — a
+  distinction that cost a red build, below. **And the check claims less than it
+  was built to claim**: it does not pin `X-Accel-Buffering`, which mutation
+  testing established rather than assumed. Also below.
+- **A `succeeded` investigation that collected nothing is refused.**
+  Evidence coverage must show usable records.
 - **Series presence is proven by instant query, not the label-values API**,
   which still lists a name ingested once and never again.
 - **The harness runs as `operator`, not `owner`.** A caller holding every
   permission cannot tell a working permission table from an absent one.
+
+## The first CI run failed, and the reason is worth keeping
+
+31 of 32 passed. The one failure was the SSE check's own honesty guard, on a
+completely healthy platform: the stream lasted **0.73s against a 0.75s floor**,
+so the check refused to conclude — and refusing to conclude was wired as a
+failure.
+
+The floor had been chosen from a local measurement of 1.22s, on the assumption
+that a GitHub runner would be *slower* than the laptop. It was faster. That
+assumption was never checked, and it is the whole defect: **an absolute
+threshold on a machine-dependent quantity is a coin flip wearing a rigorous
+face.** A 1.6× margin over a number that varies with the host is not a margin.
+
+The fix is not a lower floor, which only moves the cliff. Each SSE frame
+carries the server-side moment the platform emitted it, so the check now
+measures whether arrivals *track* emissions and scales its threshold to the
+window the platform actually used. A fast machine shrinks both sides together;
+buffering collapses the ratio regardless. The one remaining absolute is on the
+platform's own emission window, where a degenerate value is worth failing on in
+its own right.
+
+Two things this says about the harness rather than the platform. The guard
+worked — it caught an inconclusive measurement instead of reporting a pass it
+had not earned, which is exactly what it is for. And the job earned its keep on
+its first run by failing on its own weakest assumption rather than on the
+product.
+
+## The SSE check does not pin the header it was written to pin
+
+Recorded because it is the same defect class as everything else here, found in
+the harness built to catch it.
+
+The check was written to catch removal of `X-Accel-Buffering: no`
+(`app/api/investigate.py`), the header that defeats proxy buffering. Mutation
+testing it — deleting the header, rebuilding, rolling out — produced **33/33,
+arrivals tracking emissions at 99%**. Turning `proxy-buffering: "on"` for the
+vhost and repeating gave 33/33 and 99% again.
+
+Two reasons, both about nginx:
+
+- ingress-nginx ships `proxy_buffering off` globally, so the header is
+  redundant on a default install.
+- `proxy_buffering on` does not hold a response until it completes. nginx
+  forwards as buffers fill, so at this traffic shape — 29 frames, ~8 KB, over
+  1.3s — delivery looks identical either way.
+
+The shape where the header earns its keep is a long investigation emitting
+sparse events. This harness cannot produce that without an artificially slow
+investigation, and engineering the scenario to make the assertion true would be
+testing nginx's tuning rather than our code.
+
+So: the header stays, because other proxies honour it and it costs nothing; the
+buffering annotation stays, because holding under the stricter configuration is
+worth something; and the check now claims only what it verifies — that SSE
+reaches a client incrementally, end to end, through a real proxy. That is a
+genuine property, and one `TestClient` cannot check at all, since it buffers
+streamed responses.
+
+**A mutation-surviving assertion that reads as a guarantee is worse than an
+honest description of a narrower one.** The first version was the former for
+about an hour.
 
 ## `serviceMonitorSelector` is restrictive on purpose
 
@@ -213,4 +280,5 @@ cover:
 - **Upgrades under traffic.** §21 measured this by hand across ten runs; the
   measurement is load-generator-shaped and does not fit a pass/fail assertion
   without a flakiness budget nobody has set.
+- **`X-Accel-Buffering: no`.** Nothing in the repository pins it — see above.
 - **Multi-node scheduling, PDBs under real disruption, and network policy.**

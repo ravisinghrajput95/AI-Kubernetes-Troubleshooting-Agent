@@ -46,6 +46,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -57,12 +58,17 @@ ALERT_RULES = REPO_ROOT / "deploy" / "alerts" / "k8s-agent-alerts.yaml"
 # is 13 so that removing a rule is a reviewed diff rather than a broken check.
 MIN_REFERENCED_SERIES = 13
 
-# An SSE stream shorter than this cannot distinguish incremental delivery from
-# a buffered blob, so the check refuses to conclude rather than passing.
-MIN_STREAM_SECONDS = 0.75
-# Spread between the first and last frame's *arrival*. Under nginx's default
-# proxy_buffering this is ~0: every frame lands at once when the response ends.
-MIN_FRAME_SPREAD_SECONDS = 0.30
+# How long the *platform* must have spent emitting events for the buffering
+# question to be answerable at all. Deliberately a property of the run rather
+# than of the machine: the first version floored the wall-clock stream duration
+# at 0.75s, passed locally at 1.22s, and failed the first CI run at 0.73s on a
+# perfectly healthy platform, because the runner was faster than the laptop.
+MIN_SERVER_SPAN_SECONDS = 0.20
+# Arrivals must span at least this fraction of the window the platform emitted
+# over. Under nginx's default proxy_buffering the ratio is ~0 — every frame
+# lands at once when the response ends — so anything short of a total collapse
+# passes, and a machine being fast or slow moves both sides together.
+SPREAD_RATIO = 0.5
 
 
 # --------------------------------------------------------------------------
@@ -571,13 +577,48 @@ def run_investigation(ingress: Ingress, vhost: str, token: str) -> tuple[str | N
 
 
 def check_sse_is_incremental(frames: list, opened: float, closed: float) -> None:
-    """SSE frames must arrive as they are produced, not as one blob at the end.
+    """SSE reaches the client incrementally, end to end, through a real proxy.
 
-    nginx buffers proxied responses by default; `X-Accel-Buffering: no`, set in
-    `app/api/investigate.py`, is what turns that off per response. Nothing in
-    the repository pins it, and losing it is invisible from inside the pod — the
-    application streams correctly either way, and the console's live timeline
-    simply arrives all at once at the end of an incident.
+    What this verifies: the application streams, ASGI does not accumulate the
+    response, the SSE framing survives the proxy, and events reach a client as
+    the platform produces them rather than in one delivery at the end. That is
+    the property the console's live timeline depends on, and it is asserted
+    against a real ingress-nginx rather than `TestClient`, which buffers
+    streamed responses and so verifies framing but never delivery.
+
+    **What this does NOT verify, stated because the first version claimed it
+    did: it does not pin `X-Accel-Buffering: no`.** That header
+    (`app/api/investigate.py`) exists to defeat proxy buffering, and the check
+    was written to catch its removal. It does not. Removing the header and
+    re-running produced 33/33 with arrivals tracking emissions at 99% — twice,
+    once with ingress-nginx's default `proxy_buffering off`, and again after
+    turning buffering *on* for this vhost.
+
+    Two reasons, and both are about nginx rather than about us. ingress-nginx
+    ships `proxy_buffering off` globally, so the header is redundant on a
+    default install. And `proxy_buffering on` does not hold a response until it
+    completes — nginx forwards as buffers fill, so at this traffic shape (29
+    frames, ~8 KB, over 1.3s) delivery looks the same either way. The shape
+    where the header earns its keep is a long investigation emitting sparse
+    events, which this harness cannot produce without an artificially slow
+    investigation — and engineering the scenario to make the assertion true
+    would be testing nginx's tuning, not our code.
+
+    So the header stays, because other proxies do honour it and it costs
+    nothing, and this check stops claiming to guard it. A mutation-surviving
+    assertion that reads as a guarantee is worse than an honest description of
+    a narrower one.
+
+    **The comparison is against a control taken from the same run.** Every
+    frame carries the server-side moment it was emitted, so the question is
+    whether arrivals track emissions, and the threshold scales with the window
+    the platform actually used.
+
+    The first version floored the wall-clock stream duration at 0.75s instead.
+    It passed locally at 1.22s and **failed the first CI run at 0.73s** on a
+    healthy platform, because the runner was faster than the laptop. An
+    absolute threshold on a machine-dependent quantity is a coin flip wearing a
+    rigorous face.
     """
     section("SSE frames arrive incrementally through nginx")
 
@@ -590,32 +631,57 @@ def check_sse_is_incremental(frames: list, opened: float, closed: float) -> None
     ):
         return
 
-    duration = closed - opened
-    spread = frames[-1][0] - frames[0][0]
+    emitted = []
+    for _, payload in frames:
+        try:
+            stamp = json.loads(payload).get("at")
+            emitted.append(datetime.fromisoformat(stamp).timestamp())
+        except (ValueError, TypeError, AttributeError):
+            continue
 
-    # The §18 lesson, applied: the drain scenario reported PASS while the
-    # process exited 0.2s after SIGTERM with nothing in flight. An investigation
-    # that finished in 40ms would show a ~0 spread whether nginx buffered or
-    # not, so refuse to conclude rather than passing.
     if not R.check(
-        "the stream lasted long enough for the question to mean anything",
-        duration >= MIN_STREAM_SECONDS,
-        f"the whole stream took {duration:.3f}s (floor {MIN_STREAM_SECONDS}s). "
-        f"Buffered and unbuffered delivery are indistinguishable over that "
-        f"window, so this check is refusing to report a pass it did not earn.",
-        ok_detail=f"{duration:.2f}s",
+        "frames carry the moment the platform emitted them",
+        len(emitted) >= 3,
+        f"only {len(emitted)} of {len(frames)} frames carried a parseable `at`; "
+        f"without the server-side timestamps there is no control to compare "
+        f"arrivals against, and this check would be measuring nothing",
+        ok_detail=f"{len(emitted)} timestamps",
+    ):
+        return
+
+    server_span = max(emitted) - min(emitted)
+    arrival_span = frames[-1][0] - frames[0][0]
+    duration = closed - opened
+
+    # The §18 lesson: a drain scenario reported PASS while the process exited
+    # 0.2s after SIGTERM with nothing in flight. If the platform emitted every
+    # event inside a few milliseconds there is nothing for buffering to smear,
+    # so refuse to conclude rather than passing. This is the only absolute
+    # threshold left, and it is on what the *platform* did rather than on how
+    # fast the machine ran.
+    if not R.check(
+        "the platform emitted events over a measurable window",
+        server_span >= MIN_SERVER_SPAN_SECONDS,
+        f"all {len(emitted)} events were emitted within {server_span * 1000:.0f}ms "
+        f"(floor {MIN_SERVER_SPAN_SECONDS}s). Buffered and unbuffered delivery "
+        f"are indistinguishable over that window, so this check is refusing to "
+        f"report a pass it did not earn. On a real cluster an investigation "
+        f"emitting less than this is itself worth looking at.",
+        ok_detail=f"{server_span:.2f}s",
     ):
         return
 
     R.check(
-        "frame arrivals are spread across the stream",
-        spread >= MIN_FRAME_SPREAD_SECONDS,
-        f"all {len(frames)} frames arrived within {spread * 1000:.0f}ms of each "
-        f"other over a {duration:.2f}s stream — that is a buffered blob. nginx "
-        f"buffers proxied responses unless the upstream sends "
-        f"`X-Accel-Buffering: no` (app/api/investigate.py SSE_HEADERS).",
-        ok_detail=f"{spread:.2f}s spread over {duration:.2f}s, "
-        f"first frame at +{frames[0][0] - opened:.2f}s",
+        "arrivals track emissions rather than landing in one blob",
+        arrival_span >= SPREAD_RATIO * server_span,
+        f"the platform emitted these {len(frames)} events over {server_span:.2f}s "
+        f"and they all arrived within {arrival_span * 1000:.0f}ms of each other "
+        f"— that is a buffered blob. nginx buffers proxied responses unless the "
+        f"upstream sends `X-Accel-Buffering: no` "
+        f"(app/api/investigate.py SSE_HEADERS).",
+        ok_detail=f"{arrival_span:.2f}s of arrivals against {server_span:.2f}s of "
+        f"emissions ({arrival_span / server_span:.0%}), first frame at "
+        f"+{frames[0][0] - opened:.2f}s of a {duration:.2f}s stream",
     )
 
 

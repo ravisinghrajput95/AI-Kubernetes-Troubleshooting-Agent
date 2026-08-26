@@ -67,6 +67,18 @@ metrics:
 ingress:
   enabled: true
   className: nginx
+  annotations:
+    # Buffering on, which is the stricter configuration — the SSE assertion has
+    # to hold under it, not only under ingress-nginx's default of
+    # `proxy_buffering off`.
+    #
+    # It is **not** what pins `X-Accel-Buffering: no`, and the comment that
+    # first stood here claimed it was. Removing that header and re-running gave
+    # 33/33 at 99% arrival tracking, both with buffering off and with it on:
+    # nginx forwards as buffers fill rather than holding a response to
+    # completion, so at this traffic shape the header is not observable. See
+    # `check_sse_is_incremental` in scripts/verify_deployment.py.
+    nginx.ingress.kubernetes.io/proxy-buffering: "on"
   hosts:
     - host: k8s-agent.local
       paths:

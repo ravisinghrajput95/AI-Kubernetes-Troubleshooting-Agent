@@ -1161,9 +1161,17 @@ to catch was found by hand. `--kube-context` is pinned on every command.
 Every check carries a guard against its own subject being absent, because the
 recurring failure in this repository's harnesses is a *vacuous* assertion, not
 a wrong one: **zero scrape targets is not "no unhealthy targets"**, the
-alert-series check refuses fewer than 13 referenced series, an SSE stream under
-0.75s reports that it cannot answer the buffering question rather than passing,
-and a `succeeded` investigation that collected nothing is refused.
+alert-series check refuses fewer than 13 referenced series, the SSE check
+compares arrivals against the platform's *own* emission timestamps rather than
+a wall-clock constant, and a `succeeded` investigation that collected nothing
+is refused.
+
+**The SSE check does not pin `X-Accel-Buffering: no`, despite being written
+to.** Mutation testing showed the header's removal survives: ingress-nginx
+defaults to `proxy_buffering off`, and even with buffering on nginx forwards as
+buffers fill rather than holding the response, so at this traffic shape the
+header is not observable. It verifies incremental end-to-end delivery through a
+real proxy — which `TestClient` cannot check at all — and claims nothing more.
 
 `deploy/verify/prometheus.yaml` reproduces kube-prometheus-stack's
 **restrictive** `serviceMonitorSelector` (`release:`) rather than the permissive
