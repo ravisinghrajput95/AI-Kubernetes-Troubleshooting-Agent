@@ -142,16 +142,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # kind by curl rather than helm/kind-action, because the script owns
-      # cluster creation — the action's only job here would be to put the
-      # binary on PATH, and its post-step still runs a registry teardown this
-      # job never asked for and logs an error for.
-      - name: Install kind
-        run: |
-          curl -sSLo /usr/local/bin/kind \
-            https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
-          chmod +x /usr/local/bin/kind
-          kind version
+      # The action, only to put the kind binary on PATH — the script owns
+      # cluster creation, so that the thing CI runs is the thing a laptop runs.
+      #
+      # Its post-step logs a harmless `No such container: kind-registry` on the
+      # way out, and hand-rolling the install to be rid of that line broke the
+      # job outright: /usr/local/bin needs root on a runner, so `chmod` failed
+      # with "Operation not permitted". Cosmetic noise in a passing log is not
+      # worth replacing a working, maintained step over.
+      - uses: helm/kind-action@v1
+        with:
+          version: v0.24.0
+          install_only: true
 
       - uses: azure/setup-helm@v4
         with:

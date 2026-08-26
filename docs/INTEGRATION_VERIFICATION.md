@@ -162,6 +162,19 @@ streamed responses.
 honest description of a narrower one.** The first version was the former for
 about an hour.
 
+### And one plain own goal
+
+Between those two fixes the job was also broken by a change that improved
+nothing: swapping `helm/kind-action` for a hand-rolled `curl` install, to be
+rid of a harmless `No such container: kind-registry` line its post-step logs.
+`/usr/local/bin` needs root on a runner, so `chmod` failed with "Operation not
+permitted" and the job never reached a single assertion.
+
+Worth recording next to the other two because it is a different mistake and a
+more ordinary one: not a wrong assumption about measurement, just churn against
+a working, maintained step for a cosmetic gain, pushed without any way to check
+it — in the session whose entire subject is not doing that.
+
 ## `serviceMonitorSelector` is restrictive on purpose
 
 `deploy/verify/prometheus.yaml` selects ServiceMonitors on `release:
