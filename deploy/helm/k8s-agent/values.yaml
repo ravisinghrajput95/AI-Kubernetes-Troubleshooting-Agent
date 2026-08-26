@@ -150,6 +150,25 @@ agentGateway:
   # Only needed where agents dial an IP rather than a name.
   ipAddresses: []
 
+  # What `POST /agents/enrolment` tells an agent to dial — the address that ends
+  # up on the command line in the manifest it generates, and in the console's
+  # /connect flow.
+  #
+  # Defaults to this release's gateway Service, which is right for an agent in
+  # the same cluster. Set it to the address agents reach the platform on from
+  # *outside*, and make sure that name is in `dnsNames` too, or the manifest
+  # tells them to dial somewhere their TLS handshake will then reject.
+  #
+  # Left unset in the platform this renders as the literal
+  # `<platform-host>:9443`, so before the chart set it every generated manifest
+  # carried a placeholder instead of an address.
+  advertise: ""
+
+  # The agent image the generated manifest references. Empty uses the
+  # platform's own default, which is the published `:edge` tag; pin a version
+  # for a fleet.
+  image: ""
+
 # --- Observability ------------------------------------------------------------
 metrics:
   enabled: true

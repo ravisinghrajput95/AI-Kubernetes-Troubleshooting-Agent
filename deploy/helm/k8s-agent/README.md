@@ -208,6 +208,27 @@ That is also why the HPA on CPU is offered but not recommended: CPU is not the
 signal. Scale on `k8sagent_queue_depth` through an external metrics adapter if
 you can.
 
+## `agentGateway.advertise`, and what happens without it
+
+`POST /agents/enrolment` tells the agent what address to dial, and puts it on
+the command line of the manifest it generates — the manifest the console's
+`/connect` page hands an operator to apply.
+
+The platform reads that from `AGENT_GATEWAY_ADVERTISE`. **The chart did not set
+it**, and unset it renders as the literal `<platform-host>:9443`, so every
+manifest a chart-deployed platform produced carried a placeholder rather than
+an address, and the agent it deployed could resolve nothing. The knob existed;
+nothing turned it — the third time in this chart, after the probe paths and the
+gateway's own DNS names.
+
+It now defaults to this release's gateway Service, which is the right address
+for an agent in the same cluster. Set `agentGateway.advertise` to whatever
+agents dial from *outside*, and put that name in `agentGateway.dnsNames` too,
+or the manifest sends them somewhere the TLS handshake then rejects.
+
+The CI job enrols a real agent through this endpoint on every run and refuses
+an enrolment whose address still contains a `<`.
+
 ## The agent gateway Service
 
 Separate from the HTTP Service, because an agent stream is long-lived and the
@@ -230,7 +251,7 @@ a fleet that has finished enrolling can firewall it off.
 - **No Terraform module.** Item 35 named "Terraform/Helm"; this is the Helm
   half. The Terraform half is the managed Postgres, Redis, DNS and secrets
   around it, which is provider-specific and not written.
-- **The `agentGateway` path is not in the CI verification job.** The chart is
-  installed, upgraded and asserted against on every run, but kubeconfig-only:
-  the gateway, mTLS enrolment and M8a routing were exercised by hand in §21 of
-  the audit and would need a Go agent build and a second image in the job.
+- **Agent certificate renewal and revocation are not verified.** The CI job
+  now enrols a real agent, connects it over mTLS and routes investigations
+  through it, but nothing runs long enough to reach renewal at 2/3 of
+  certificate life, and revocation sweeping is unexercised.

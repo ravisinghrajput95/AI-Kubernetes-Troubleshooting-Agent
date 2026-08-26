@@ -39,6 +39,7 @@ setting up the backend's virtualenv first.
 from __future__ import annotations
 
 import argparse
+import base64
 import http.client
 import json
 import re
@@ -102,6 +103,33 @@ R = Results()
 
 def section(title: str) -> None:
     print(f"\n\033[1m{title}\033[0m")
+
+
+def guarded(name: str, check, *args, **kwargs):
+    """Run a check group; turn an exception into a failure, never a traceback.
+
+    A harness that crashes on the thing it is measuring reports nothing at all
+    — no summary, no other findings, and an exit code whose meaning depends on
+    where it happened to die. That is this repository's oldest harness failure
+    wearing yet another face: `fleet_bench.py` printing "5 collections, 0
+    records" from an `AttributeError`.
+
+    It bit here too. The agent routing check read `usable` from an
+    investigation that had been *refused*, where the key is absent, and
+    `None > 0` ended the run mid-report — while correctly detecting the defect
+    it was pointed at. The finding survived only because it had already been
+    printed.
+    """
+    try:
+        return check(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 - a verdict beats a stack trace
+        R.bad(
+            f"{name} completed without erroring",
+            f"the check itself raised {type(exc).__name__}: {exc}. That is a "
+            f"harness defect, not a platform one — but it is reported as a "
+            f"failure because a check that could not run has not passed.",
+        )
+        return None
 
 
 # --------------------------------------------------------------------------
@@ -748,6 +776,253 @@ def check_autoscaling(context: str, namespace: str, release: str) -> None:
     )
 
 
+def enrol(ingress: Ingress, vhost: str, token: str, cluster_id: str, out: str) -> int:
+    """Mint an enrolment and write the manifest the platform generates.
+
+    A separate mode rather than part of the verification run, because it needs
+    `admin` and the verification run deliberately holds only `operator`.
+
+    The manifest is taken from the endpoint rather than kept in this repository
+    on purpose. A checked-in copy would drift from what the platform emits, and
+    the harness would then be verifying itself — the same reason the
+    observability fixtures are captured from a live backend rather than written
+    by hand.
+    """
+    response = ingress.request(
+        "POST", "/agents/enrolment", vhost, token=token,
+        body={"cluster_id": cluster_id, "ttl_minutes": 30},
+    )
+    if response.status != 201:
+        print(f"enrolment failed: HTTP {response.status}: {response.text[:400]}")
+        return 1
+
+    payload = response.json()
+    endpoint = payload.get("gateway_endpoint", "")
+
+    # The failure this catches has no other symptom: `agent_gateway_advertise`
+    # unset renders the endpoint as the literal `<platform-host>:9443`, so the
+    # manifest an operator applies — and the console's /connect flow hands
+    # them — carries a placeholder rather than an address. Third instance of
+    # "the knob exists and the chart never turned it", after the probe paths
+    # and the gateway's own DNS names.
+    if "<" in endpoint or not endpoint:
+        print(
+            f"the enrolment names {endpoint!r} as the address to dial. That is a "
+            f"placeholder, not an endpoint: AGENT_GATEWAY_ADVERTISE is unset, so "
+            f"every manifest this deployment generates is unusable."
+        )
+        return 1
+
+    Path(out).write_text(payload["manifest"])
+    print(f"enrolled {cluster_id}; agents dial {endpoint}")
+    return 0
+
+
+def _investigate_on(
+    context: str, namespace: str, pod: str, token: str, cluster_id: str
+) -> dict:
+    """Submit an investigation *from inside* a named pod, and wait for it.
+
+    `kubectl exec` rather than a port-forward: a port-forward is a background
+    process that can die without saying so, and this check exists to observe
+    which worker accepted a submission. It has to be certain which one did.
+    """
+    script = (
+        "import json,urllib.request,time\n"
+        "req=urllib.request.Request('http://127.0.0.1:8000/investigations',"
+        f"data=json.dumps({{'context':'{cluster_id}','namespace':'kube-system'}}).encode(),"
+        f"headers={{'Content-Type':'application/json','Authorization':'Bearer {token}'}})\n"
+        "jid=json.load(urllib.request.urlopen(req))['id']\n"
+        "d={}\n"
+        "for _ in range(90):\n"
+        "    r=urllib.request.Request('http://127.0.0.1:8000/investigations/'+jid,"
+        f"headers={{'Authorization':'Bearer {token}'}})\n"
+        "    d=json.load(urllib.request.urlopen(r))\n"
+        "    if d.get('status') in ('succeeded','failed','cancelled'): break\n"
+        "    time.sleep(2)\n"
+        "inv=d.get('investigation') or {}\n"
+        "cov=inv.get('evidence_coverage') or {}\n"
+        "print(json.dumps({'status':d.get('status'),'error':d.get('error') or '',"
+        "'provider':(inv.get('cluster_access') or {}).get('provider'),"
+        "'usable':cov.get('usable'),'total':cov.get('total')}))"
+    )
+    result = subprocess.run(
+        ["kubectl", "--context", context, "-n", namespace, "exec", pod, "--",
+         "python", "-c", script],
+        capture_output=True, text=True,
+    )
+    for line in reversed(result.stdout.splitlines()):
+        try:
+            return json.loads(line)
+        except ValueError:
+            continue
+    return {"status": "harness-error", "error": (result.stderr or result.stdout)[:200]}
+
+
+def check_agent_path(
+    ingress: Ingress, vhost: str, token: str, context: str, namespace: str, cluster_id: str
+) -> None:
+    """The agent link, end to end: mTLS enrolment, presence, and M8a routing.
+
+    The largest surface the rest of this file does not touch, and the one where
+    §21 found two defects of exactly the class this job exists to catch — a
+    gateway serving a certificate valid only for `localhost`, and
+    `agent_affinity` failing to pin work to the worker holding the stream. Both
+    were fixed and neither was guarded by anything.
+
+    An in-cluster agent, enrolled through the real endpoint, dialling the real
+    gateway over mTLS.
+    """
+    section("The agent link, end to end")
+
+    def connected():
+        response = ingress.request("GET", "/agents", vhost, token=token)
+        if response.status != 200:
+            return None
+        agents = response.json().get("items") or []
+        found = [a for a in agents if a.get("cluster_id") == cluster_id]
+        return found[0] if found else None
+
+    agent = wait_for(connected, timeout=180, interval=3.0)
+    if not R.check(
+        "the enrolled agent is connected",
+        agent is not None,
+        f"no agent for {cluster_id!r} in GET /agents after 3 minutes. The agent "
+        f"dials out, so this is a TLS or address failure rather than a firewall "
+        f"one — check the gateway's serving certificate names the Service DNS "
+        f"name the manifest tells it to dial (§21 defect 5).",
+        ok_detail=f"worker={(agent or {}).get('worker', '?')}",
+    ):
+        return
+
+    # `declared` means AGENT_GATEWAY_TLS=disabled: the agent asserted its name
+    # rather than proving it. A deployment that left that on must not be able
+    # to look like one that did not.
+    R.check(
+        "the agent proved its identity with a certificate",
+        agent.get("identity_source") == "certificate",
+        f"identity_source is {agent.get('identity_source')!r}, not 'certificate' "
+        f"— the agent's cluster id is asserted rather than proved",
+        ok_detail=agent.get("identity_source", ""),
+    )
+
+    R.check(
+        "the agent reports itself online",
+        agent.get("online") is not False,
+        "the agent registered and is not reporting heartbeats; 'online' is "
+        "heartbeat-derived, so this is a live stream that has gone quiet",
+    )
+
+    # The M8a assertion, and the reason this whole section exists.
+    #
+    # **Submitted on the worker that holds the stream, deliberately, because
+    # that is the only case the defect breaks.** `AgentPresence.holder()`
+    # returns nothing when the record names *this* worker — right for
+    # `select_provider`, which reaches it only after the local registry said no
+    # — and `agent_affinity` had no such check, so a submission landing on the
+    # holder fell through to the *shared* queue where any worker could claim
+    # it. Landing on the right worker was precisely the case that un-pinned the
+    # job.
+    #
+    # Submitting through the ingress instead would be nearly useless as a
+    # guard. Measured against a rebuilt image with the fix reverted: on four
+    # replicas an ingress-routed submission still reached the agent 6 times out
+    # of 6, because three quarters of submissions land on a *non*-holder where
+    # `holder()` answers correctly. Submitted on the holder, the same mutant
+    # failed 3 of 4 with "attached to worker <the worker that accepted it>".
+    #
+    # Repeated, because even on the holder the mutant succeeds whenever the
+    # shared queue happens to hand the job back to the right worker — one in
+    # four here. Three rounds put that below 2%.
+    holder = (agent.get("worker") or "").split(":")[0]
+    if not R.check(
+        "the presence record names the worker holding the stream",
+        bool(holder),
+        f"no worker in the agent record: {agent!r}. Without it this check cannot "
+        f"submit where the defect lives, and would be measuring the easy case.",
+        ok_detail=holder,
+    ):
+        return
+
+    outcomes = [_investigate_on(context, namespace, holder, token, cluster_id) for _ in range(3)]
+    routed = [o for o in outcomes if o.get("provider") == "agent"]
+    R.check(
+        "every investigation submitted on the stream holder reaches the agent",
+        len(routed) == len(outcomes),
+        f"{len(outcomes) - len(routed)} of {len(outcomes)} submissions made on the "
+        f"worker holding the stream did not reach the agent: "
+        + "; ".join(
+            f"status={o.get('status')} provider={o.get('provider')} error={o.get('error', '')[:90]}"
+            for o in outcomes
+            if o.get("provider") != "agent"
+        )
+        + ". `agent_affinity` must ask the local registry before `holder()`, or a "
+        "submission landing on the holder goes to the shared queue and any "
+        "worker may claim it (§21 defect 6).",
+        ok_detail=f"{len(routed)}/{len(outcomes)} through the agent",
+    )
+
+    final = outcomes[0]
+    R.check(
+        "the agent-collected investigation succeeded",
+        final.get("status") == "succeeded",
+        f"status={final.get('status')!r} error={final.get('error')!r}",
+    )
+    R.check(
+        "it collected real evidence through the agent",
+        (final.get("usable") or 0) > 0,
+        f"no usable evidence: {final!r}",
+        ok_detail=f"{final.get('usable')} usable of {final.get('total')} records",
+    )
+
+    # Two corroborations, because `cluster_access` is a label the platform
+    # writes about itself and this section would otherwise be asserting that
+    # label against itself.
+    #
+    # The first is a *control*: there is no kubeconfig context named after this
+    # cluster, so `LocalKubectlProvider` could not have resolved it. A
+    # succeeded investigation carrying usable evidence therefore came through
+    # the stream — the label is corroborated by the setup rather than trusted.
+    contexts = subprocess.run(
+        ["kubectl", "--context", context, "-n", "k8s-agent", "get", "secret",
+         "k8s-agent-kubeconfig", "-o", "jsonpath={.data.config}"],
+        capture_output=True, text=True,
+    ).stdout
+    local_contexts = base64.b64decode(contexts).decode("utf-8", "replace") if contexts else ""
+    R.check(
+        "no local kubeconfig context could have answered for this cluster",
+        bool(local_contexts) and f"name: {cluster_id}" not in local_contexts,
+        f"the mounted kubeconfig has a context named {cluster_id!r} (or could not "
+        f"be read at all), so a successful investigation proves nothing about the "
+        f"agent — the platform could have answered it locally and labelled it "
+        f"`agent`. That is the failure this control exists to exclude.",
+        ok_detail="only the agent could have served it",
+    )
+
+    # The second is the agent's own account of the connection, which is the one
+    # observation on this path that does not come from the platform.
+    #
+    # It asserts the *connection*, not the collections, and that is a
+    # correction: this check first required the agent to have logged about
+    # collecting. It does not log that. §21 read collection activity out of
+    # client-go's `client-side throttling` warnings — which this milestone's
+    # own `--api-qps` fix removed. An assertion inherited from an observation
+    # whose cause has since been fixed.
+    logs = subprocess.run(
+        ["kubectl", "--context", context, "-n", "k8s-ops-agent",
+         "logs", "-l", "app=k8s-ops-agent", "--tail=200"],
+        capture_output=True, text=True,
+    ).stdout
+    R.check(
+        "the agent's own logs show it connected over mTLS",
+        "connected" in logs and "certificate" in logs and cluster_id in logs,
+        f"the agent logged no mTLS connection for {cluster_id!r}. The platform "
+        f"says an agent is attached; the process that should have attached has "
+        f"no record of it.\n--- agent logs ---\n{logs[-600:]}",
+        ok_detail="enrolled and connected",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--context", required=True, help="kube context (always pinned, never implicit)")
@@ -757,6 +1032,13 @@ def main() -> int:
     parser.add_argument("--host", default="k8s-agent.local")
     parser.add_argument("--prometheus-host", default="prometheus.local")
     parser.add_argument("--token", required=True)
+    parser.add_argument(
+        "--agent-cluster",
+        default="",
+        help="cluster id of an enrolled agent; its checks are skipped when absent",
+    )
+    parser.add_argument("--enrol", default="", help="enrolment mode: mint for this cluster id")
+    parser.add_argument("--enrol-out", default="", help="enrolment mode: write the manifest here")
     args = parser.parse_args()
 
     # Line buffering, because this runs for several minutes and its output is
@@ -768,14 +1050,17 @@ def main() -> int:
     ingress = Ingress(args.ingress)
     prom = Prometheus(ingress, args.prometheus_host)
 
+    if args.enrol:
+        return enrol(ingress, args.host, args.token, args.enrol, args.enrol_out)
+
     print(f"\033[1mVerifying {args.release} in {args.namespace} on {args.context}\033[0m")
 
-    check_probes(args.context, args.namespace, args.release)
-    check_ingress(ingress, args.host, args.token)
-    check_metrics_endpoint(ingress, args.host)
+    guarded("probes", check_probes, args.context, args.namespace, args.release)
+    guarded("ingress", check_ingress, ingress, args.host, args.token)
+    guarded("metrics endpoint", check_metrics_endpoint, ingress, args.host)
 
-    scraping = check_scrape_target(prom, args.release)
-    check_alert_series_are_stored(prom)
+    scraping = guarded("scrape target", check_scrape_target, prom, args.release) or False
+    guarded("alert series", check_alert_series_are_stored, prom)
 
     baseline = None
     if scraping:
@@ -784,12 +1069,22 @@ def main() -> int:
         except Exception as exc:
             print(f"  (baseline unavailable: {exc})")
 
-    _, frames, opened, closed = run_investigation(ingress, args.host, args.token)
-    check_sse_is_incremental(frames, opened, closed)
+    _, frames, opened, closed = guarded(
+        "investigation", run_investigation, ingress, args.host, args.token
+    ) or (None, [], 0.0, 0.0)
+    guarded("SSE delivery", check_sse_is_incremental, frames, opened, closed)
     if scraping:
-        check_counters_moved(prom, baseline)
+        guarded("counters", check_counters_moved, prom, baseline)
 
-    check_autoscaling(args.context, args.namespace, args.release)
+    guarded("autoscaling", check_autoscaling, args.context, args.namespace, args.release)
+
+    if args.agent_cluster:
+        guarded(
+            "agent link", check_agent_path, ingress, args.host, args.token,
+            args.context, args.namespace, args.agent_cluster,
+        )
+    else:
+        print("\n(no --agent-cluster given; the agent link is not verified)")
 
     print("\n" + "=" * 72)
     print(f"{len(R.passed)} passed, {len(R.failed)} failed")

@@ -51,7 +51,7 @@ either.
 §21 rolling-upgrade work the current context silently switched to an unrelated
 live GKE cluster mid-experiment, and three commands ran against it.
 
-## The 33 assertions, and what each one is for
+## The assertions, and what each one is for
 
 | Group | Asserts | Catches |
 |---|---|---|
@@ -64,10 +64,13 @@ live GKE cluster mid-experiment, and three commands ran against it.
 | SSE | ≥3 frames, arrivals tracking the platform's own emission times | a live timeline that arrives in one delivery at the end. **Not** `X-Accel-Buffering` — see below |
 | Counters | `sum(k8sagent_investigations_total)` **increased in Prometheus** | series that exist and carry nothing |
 | HPA | `currentMetrics` resolves to a real utilisation, not `<unknown>` | §21's unexercised autoscaling |
+| Agent link | a real in-cluster agent, enrolled through `POST /agents/enrolment`, connects over mTLS with `identity_source: certificate`; investigations **submitted on the stream holder** all reach it | §21 defects 5 and 6 — a gateway certificate naming only localhost, and affinity not pinning work to the holder |
 
-Measured on a full local run: 33 passed, 0 failed, ~4 minutes of assertions on
-top of ~4 minutes of environment. On a GitHub runner the whole job is about 9
-minutes, most of it the image build and the cluster coming up.
+Measured on a full local run — build both images, create, install, enrol,
+assert, destroy: **42 passed, 0 failed**. The exact count moves by a check or
+two depending on which branches run, which is why the groups above are the
+contract and the number is not. On a GitHub runner the job was about 9 minutes
+before the agent leg was added.
 
 ## Keeping it honest
 
@@ -174,6 +177,75 @@ Worth recording next to the other two because it is a different mistake and a
 more ordinary one: not a wrong assumption about measurement, just churn against
 a working, maintained step for a cosmetic gain, pushed without any way to check
 it — in the session whose entire subject is not doing that.
+
+## The agent leg, and the three harness defects it found
+
+The agent link was the largest surface this job did not reach, and the one
+where §21 found two defects of exactly the class it exists to catch. Closing it
+found one more product defect and three defects in the harness itself.
+
+**The chart never set `AGENT_GATEWAY_ADVERTISE`.** Unset, the platform renders
+the enrolment endpoint as the literal `<platform-host>:9443` — so every
+manifest a chart-deployed `POST /agents/enrolment` generates, including the one
+the console's `/connect` page hands an operator, carries a placeholder instead
+of an address. Third instance of this exact shape in this chart, after the
+probe paths and the gateway's own DNS names: the knob existed and nothing
+turned it. Now derived from the release's gateway Service, and the verifier
+refuses an enrolment whose endpoint contains a `<`.
+
+The manifest is taken from the endpoint rather than kept in this repository, for
+the same reason the observability fixtures are captured from a live backend: a
+checked-in copy would drift from what the platform emits, and the harness would
+verify itself.
+
+### The routing check that passed against the bug
+
+The first version submitted its investigation through the ingress. Against a
+rebuilt image with §21's affinity fix reverted, it passed **6 times out of 6**.
+
+On four replicas that is not luck. Three quarters of submissions land on a
+worker that does *not* hold the stream, where `holder()` answers correctly and
+routing works. The defect only bites when the submission lands on the holder —
+`holder()` deliberately returns nothing for a record naming *this* worker, and
+`agent_affinity` had no local-registry check, so the job fell through to the
+shared queue.
+
+Submitted on the holder, the same mutant failed **3 of 4**, each with *"attached
+to worker &lt;the worker that just accepted it&gt;"*. The check now submits from
+inside the holder pod via `kubectl exec`, three times: under the mutation each
+round has a one-in-four chance of accidentally succeeding, so three rounds put
+survival below 2%; under the fix a submission on the holder always routes to
+itself.
+
+Worth stating precisely, because it is easy to get wrong: §21's "1 of 3 before"
+was **no routing at all**, not this mutation. Reverting only the local-registry
+check is the subtler half and mis-routes about 19% of ingress-submitted
+investigations. That gap is exactly why the naive check looked healthy.
+
+### The harness crashed instead of reporting
+
+While correctly detecting that defect, the run died on `None > 0`: it read
+`usable` from an investigation that had been *refused*, where the key is absent.
+No summary, no failure list, and an exit code whose meaning depended on where it
+happened to die. The finding survived only because it had already been printed.
+
+That is `fleet_bench.py`'s "5 collections, 0 records" in a new costume. Every
+check group now runs under `guarded()`, which turns an exception into a
+recorded failure — a check that could not run has not passed, and a verdict
+beats a stack trace.
+
+### An assertion inherited from a fact this milestone deleted
+
+The agent check first required the agent's logs to show it serving collections.
+The agent does not log that. §21 read collection activity out of client-go's
+`client-side throttling` warnings — which **this milestone's own `--api-qps`
+fix removed**. An assertion inherited from an observation whose cause had since
+been fixed, and it could never have passed.
+
+Replaced with two things that are true and independent of the platform's own
+account: the agent's own mTLS `connected` line, and a control proving no
+kubeconfig context named after the agent's cluster exists — so a succeeded
+investigation of it could not have been answered locally.
 
 ## `serviceMonitorSelector` is restrictive on purpose
 
@@ -287,9 +359,9 @@ cover:
   existing `scaleout_bench.py` finding — flat past two workers on the
   kubeconfig path, because process spawning is a host resource — is unchanged
   and unmeasured across hosts.
-- **The agent path.** This install is kubeconfig-only. The gateway, mTLS
-  enrolment and M8a routing were exercised by hand in §21 and are not in this
-  job; adding a Go agent build and a second image is the obvious next step.
+- **Agent certificate renewal and revocation.** The agent leg enrols and
+  connects; it does not run long enough to reach the 2/3-of-life renewal, and
+  revocation sweeping is unexercised.
 - **Upgrades under traffic.** §21 measured this by hand across ten runs; the
   measurement is load-generator-shaped and does not fit a pass/fail assertion
   without a flakiness budget nobody has set.

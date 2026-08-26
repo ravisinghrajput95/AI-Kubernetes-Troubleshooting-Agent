@@ -42,6 +42,25 @@ data:
   {{- $names := list $svc (printf "%s.%s" $svc $ns) (printf "%s.%s.svc" $svc $ns) (printf "%s.%s.svc.cluster.local" $svc $ns) }}
   {{- $names = concat $names .Values.agentGateway.dnsNames }}
   AGENT_GATEWAY_DNS_NAMES: {{ join "," $names | quote }}
+  {{/*
+  What `POST /agents/enrolment` tells an agent to dial, and what the manifest it
+  generates puts on the command line.
+
+  Unset, `settings.agent_gateway_advertise` is empty and the endpoint renders as
+  the literal `<platform-host>:9443`. So a chart-deployed onboarding flow — the
+  console's /connect page included — hands the operator a manifest containing a
+  placeholder, and the agent it deploys cannot resolve anything. Third instance
+  of this exact shape in this chart, after the probe paths and the gateway's own
+  DNS names: the knob exists in the platform and nothing turns it.
+
+  Defaults to this release's gateway Service, which is the address an in-cluster
+  agent should use. `agentGateway.advertise` overrides it for agents dialling
+  from outside, and should name something in `agentGateway.dnsNames`.
+  */}}
+  AGENT_GATEWAY_ADVERTISE: {{ .Values.agentGateway.advertise | default (printf "%s.%s.svc.cluster.local:%d" $svc $ns (int .Values.agentGateway.port)) | quote }}
+  {{- with .Values.agentGateway.image }}
+  AGENT_IMAGE: {{ . | quote }}
+  {{- end }}
   {{- with .Values.agentGateway.ipAddresses }}
   AGENT_GATEWAY_IP_ADDRESSES: {{ join "," . | quote }}
   {{- end }}

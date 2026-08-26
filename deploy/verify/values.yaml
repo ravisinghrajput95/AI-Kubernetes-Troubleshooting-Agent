@@ -52,6 +52,23 @@ kubeconfig:
   key: config
 impersonateUsers: true
 
+# The agent link: gateway, mTLS enrolment and M8a routing. §21 exercised all of
+# this by hand and the CI job did not reach it, which left the two defects it
+# found — a gateway certificate naming only localhost, and affinity not pinning
+# work to the worker holding the stream — guarded by nothing.
+#
+# The CA is supplied rather than generated. Each replica would otherwise mint
+# its own development CA, so an agent enrolled against one could not connect to
+# the other, and the harness would be testing a single-replica deployment while
+# claiming to test a fleet.
+agentGateway:
+  enabled: true
+  port: 9443
+  caSecret:
+    name: k8s-agent-ca
+    certKey: ca.crt
+    keyKey: ca.key
+
 metrics:
   enabled: true
   serviceMonitor:

@@ -28,6 +28,10 @@ IMAGE=k8s-agent-backend:test
 INGRESS_ADDR="${INGRESS_ADDR:-http://127.0.0.1:8080}"
 API_TOKEN="${API_TOKEN:-verify-token}"
 API_SUBJECT="ci@example.com"
+ADMIN_TOKEN="${ADMIN_TOKEN:-verify-admin-token}"
+ADMIN_SUBJECT="admin@example.com"
+AGENT_IMAGE=k8s-agent-agent:test
+AGENT_CLUSTER_ID="${AGENT_CLUSTER_ID:-verify-agent}"
 
 # Pinned so a harness that passed yesterday is not silently running different
 # software today. Bumping these is a reviewed diff.
@@ -71,10 +75,12 @@ trap cleanup EXIT
 if [ "$VERIFY_ONLY" -eq 0 ]; then
 
   if [ "$SKIP_BUILD" -eq 0 ]; then
-    step "building $IMAGE"
+    step "building $IMAGE and $AGENT_IMAGE"
     docker build -t "$IMAGE" "$REPO_ROOT/backend"
+    docker build -t "$AGENT_IMAGE" "$REPO_ROOT/agent"
   fi
   docker image inspect "$IMAGE" >/dev/null
+  docker image inspect "$AGENT_IMAGE" >/dev/null
 
   step "creating kind cluster $CLUSTER_NAME"
   if kind get clusters | grep -qx "$CLUSTER_NAME"; then
@@ -82,8 +88,8 @@ if [ "$VERIFY_ONLY" -eq 0 ]; then
   fi
   kind create cluster --name "$CLUSTER_NAME" --config "$REPO_ROOT/deploy/verify/kind-cluster.yaml" --wait 120s
 
-  step "loading $IMAGE into the cluster"
-  kind load docker-image "$IMAGE" --name "$CLUSTER_NAME"
+  step "loading images into the cluster"
+  kind load docker-image "$IMAGE" "$AGENT_IMAGE" --name "$CLUSTER_NAME"
 
   step "installing ingress-nginx ($INGRESS_NGINX_REF)"
   k apply -f "https://raw.githubusercontent.com/kubernetes/ingress-nginx/${INGRESS_NGINX_REF}/deploy/static/provider/kind/deploy.yaml"
@@ -118,13 +124,39 @@ if [ "$VERIFY_ONLY" -eq 0 ]; then
   k -n "$NAMESPACE" rollout status deployment/postgres --timeout=180s
   k -n "$NAMESPACE" rollout status deployment/redis --timeout=180s
 
+  # A CA the whole release shares. Without one each replica generates its own
+  # development CA, so an agent enrolled against replica A cannot connect to
+  # replica B — and the harness would be exercising a single-replica deployment
+  # while claiming a fleet.
+  step "minting the agent CA"
+  # EC P-256, not RSA. `CertificateAuthority.load` refuses anything else —
+  # agents and the gateway both expect P-256 — and it refuses at *startup*, so
+  # an RSA key here is a CrashLoopBackOff rather than a confusing handshake
+  # failure later. Found by supplying one.
+  CA_DIR="$(mktemp -d)"
+  openssl ecparam -name prime256v1 -genkey -noout -out "$CA_DIR/ca.key" 2>/dev/null
+  openssl req -x509 -new -key "$CA_DIR/ca.key" -days 2 \
+    -subj "/CN=k8s-agent-verify-ca" \
+    -addext "basicConstraints=critical,CA:TRUE" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    -out "$CA_DIR/ca.crt" 2>/dev/null
+  k -n "$NAMESPACE" create secret generic k8s-agent-ca \
+    --from-file=ca.crt="$CA_DIR/ca.crt" --from-file=ca.key="$CA_DIR/ca.key" \
+    --dry-run=client -o yaml | k apply -f -
+  rm -rf "$CA_DIR"
+
   step "creating the platform's secrets"
   k -n "$NAMESPACE" create secret generic k8s-agent-state \
     --from-literal=DATABASE_URL="postgresql://k8sagent:k8sagent@postgres.${NAMESPACE}.svc:5432/k8sagent" \
     --from-literal=REDIS_URL="redis://redis.${NAMESPACE}.svc:6379/0" \
     --dry-run=client -o yaml | k apply -f -
+  # Two tokens, and the split is deliberate. The harness runs as `operator`,
+  # because a caller holding every permission cannot tell a working permission
+  # table from an absent one. Enrolling a cluster needs `admin` — M6.5 put fleet
+  # mutation there on purpose — so it gets its own subject, granted the role by
+  # `rbacctl` after install, and used for exactly one call.
   k -n "$NAMESPACE" create secret generic k8s-agent-tokens \
-    --from-literal=API_TOKENS="${API_TOKEN}:${API_SUBJECT}" \
+    --from-literal=API_TOKENS="${API_TOKEN}:${API_SUBJECT},${ADMIN_TOKEN}:${ADMIN_SUBJECT}" \
     --dry-run=client -o yaml | k apply -f -
 
   # A kubeconfig for the cluster the platform is running in, built from a
@@ -170,6 +202,38 @@ EOF
 
   step "waiting for Prometheus"
   k -n monitoring rollout status statefulset/prometheus-verify --timeout=300s
+
+  # Enrol a real agent, through the endpoint a customer actually uses.
+  #
+  # Deliberately `POST /agents/enrolment` and the manifest it generates, rather
+  # than a manifest kept in this repository. A hand-written one would drift from
+  # what the platform emits and would verify the harness rather than the
+  # product — the same reason the observability fixtures are captured from a
+  # real backend instead of written by hand.
+  step "granting admin to $ADMIN_SUBJECT so it may enrol a cluster"
+  POD="$(k -n "$NAMESPACE" get pod -l app.kubernetes.io/name=k8s-agent -o name | head -1)"
+  k -n "$NAMESPACE" exec "$POD" -- \
+    python -m app.rbacctl grant --subject "$ADMIN_SUBJECT" --role admin
+
+  step "enrolling cluster $AGENT_CLUSTER_ID"
+  MANIFEST="$(mktemp)"
+  python3 "$REPO_ROOT/scripts/verify_deployment.py" \
+    --context "$KCTX" --namespace "$NAMESPACE" --release "$RELEASE" \
+    --ingress "$INGRESS_ADDR" --host k8s-agent.local \
+    --prometheus-host prometheus.local --token "$ADMIN_TOKEN" \
+    --enrol "$AGENT_CLUSTER_ID" --enrol-out "$MANIFEST"
+
+  # The image is the one thing that must change: the manifest names a published
+  # tag and this cluster has a locally built one loaded into it.
+  sed -i.bak \
+    -e "s#image: .*k8s-ops-agent.*#image: ${AGENT_IMAGE}#" \
+    -e "s#image: ${AGENT_IMAGE}#image: ${AGENT_IMAGE}\n          imagePullPolicy: Never#" \
+    "$MANIFEST"
+  k apply -f "$MANIFEST"
+  rm -f "$MANIFEST" "$MANIFEST.bak"
+
+  step "waiting for the agent to connect"
+  k -n k8s-ops-agent rollout status deployment/k8s-ops-agent --timeout=300s
 fi
 
 step "verifying the deployment"
@@ -180,4 +244,5 @@ python3 "$REPO_ROOT/scripts/verify_deployment.py" \
   --ingress "$INGRESS_ADDR" \
   --host k8s-agent.local \
   --prometheus-host prometheus.local \
-  --token "$API_TOKEN"
+  --token "$API_TOKEN" \
+  --agent-cluster "$AGENT_CLUSTER_ID"

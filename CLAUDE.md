@@ -1179,6 +1179,22 @@ real proxy — which `TestClient` cannot check at all — and claims nothing mor
 tested by reverting `2f60f76` into a rebuilt image: 32/0 healthy, **27/4 and
 exit 1** on the mutant, 32/0 restored. See `docs/INTEGRATION_VERIFICATION.md`.
 
+**The agent leg submits its investigations on the worker holding the stream**,
+via `kubectl exec`, and that is the whole of its value. Submitted through the
+ingress the same check passed 6/6 against a rebuilt image with M8a's affinity
+fix reverted: on four replicas three quarters of submissions land on a
+*non*-holder, where `holder()` answers correctly. The defect only bites on the
+holder, where the missing local-registry check sends the job to the shared
+queue — 3 of 4 failed there with "attached to worker &lt;the one that accepted
+it&gt;". Three rounds put a mutant's survival below 2%.
+
+**Every check runs under `guarded()`**, which turns an exception into a
+recorded failure. The routing check crashed on `None > 0` reading `usable` from
+a *refused* investigation, ending the run with no summary while correctly
+detecting the defect it was pointed at. A check that could not run has not
+passed, and a verdict beats a stack trace — same reasoning as `_safe()` in
+`app/observability/`.
+
 ### Deployment and operations docs
 
 Written in Tier 4 of the audit backlog. They record decisions, not just
