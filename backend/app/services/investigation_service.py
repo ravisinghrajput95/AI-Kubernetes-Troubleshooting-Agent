@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
@@ -121,7 +121,64 @@ def select_provider(context: str | None, principal: Principal | None) -> Cluster
                 f"submissions are routed to the worker holding the agent."
             )
 
+        if _agent_was_revoked(context):
+            raise ClusterUnreachable(
+                f"The agent for cluster {context!r} had its certificate revoked and "
+                f"has no valid one left. Falling back to the local kubeconfig would "
+                f"answer from a context that merely shares the name — which is the "
+                f"opposite of what revoking asked for. Enrol a replacement agent, or "
+                f"investigate the kubeconfig cluster under its own context name."
+            )
+
     return LocalKubectlProvider(context=context, principal=principal)
+
+
+def _agent_was_revoked(context: str | None) -> bool:
+    """Was this cluster's agent deliberately taken out of service?
+
+    **Revoked is not the same as disconnected, and only the first one refuses.**
+    An agent that dropped a moment ago still holds a valid certificate and will
+    reconnect; refusing for that would turn every flap into an outage, which is
+    why presence is TTL-based in the first place. A revoked one is an operator
+    saying "this must not serve" — and answering from a local context that
+    happens to share the cluster's name is precisely what they asked us not to
+    do. M8a already refuses for the same reason when an agent lives on another
+    worker; this closes the case where it lives nowhere because someone revoked
+    it.
+
+    Found by verifying revocation end to end: the investigation after a revoke
+    came back `provider=kubeconfig`, and failed only because this harness has
+    no context named after the agent's cluster. A deployment that did would have
+    read the wrong cluster and filed it as evidence for the right one.
+
+    Refuses on a store failure rather than falling back, the same way M8a does:
+    the alternative is answering wrongly, and the only investigations affected
+    are ones already without an agent.
+    """
+    if not context:
+        return False
+
+    from app.security.enrolment import get_enrolment_store
+
+    try:
+        records = get_enrolment_store().certificates(context)
+    except Exception as exc:  # refusing beats reading the wrong cluster
+        logger.warning(
+            "Could not read enrolment records for {cluster}; refusing rather than "
+            "falling back to a same-named local context: {error}",
+            cluster=context,
+            error=exc,
+        )
+        return True
+
+    if not any(record.revoked for record in records):
+        return False
+
+    # A replacement agent may already have been enrolled. Any unexpired,
+    # unrevoked certificate means this cluster is served again — or is about to
+    # be — so the refusal does not apply.
+    now = datetime.now(UTC)
+    return not any(not record.revoked and record.expires_at > now for record in records)
 
 
 def _fleet_holder(context: str | None) -> str:

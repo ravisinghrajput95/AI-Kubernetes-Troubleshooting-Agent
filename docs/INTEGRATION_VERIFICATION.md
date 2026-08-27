@@ -284,7 +284,7 @@ waits out its deadline rather than returning on the first observation. Worth
 knowing for the CI budget: a genuine regression here is the slowest failure the
 job has.
 
-### An observation from the revocation run, not a defect
+### An observation from the revocation run, and the fix it earned
 
 After revocation the investigation came back `status=failed
 provider=kubeconfig`. It did not succeed, which is what the check asserts, but
@@ -299,10 +299,20 @@ the name, a revoked agent's cluster would be read locally instead: exactly the
 "one customer's `prod` answered by another's" risk the refusal message
 describes, arriving through the one door the refusal does not cover.
 
-Recorded rather than fixed. Closing it means a durable "this cluster is
-agent-served" fact, which is a design decision about what the platform
-remembers, not a wiring bug — and inventing one here would be scope this
-harness is not entitled to take.
+**Since fixed**, once the decision it needed was taken: `select_provider` now
+refuses when a cluster has a revoked certificate and no unexpired unrevoked one
+left. The narrow rule was chosen over "any cluster ever enrolled is agent-only"
+deliberately — revoking is an operator saying *this must not serve*, while a
+disconnect is routine, and refusing for the second would turn every agent flap
+into an outage. Re-enrolling lifts it; a merely expired certificate never
+triggers it.
+
+Mutation tested in both directions, which is what the two halves require.
+Removing the refusal fails three tests. Removing the *distinction* — refusing
+for disconnected agents too — initially **survived**, because the early return
+is only a short-circuit and the two versions differ solely for a certificate
+that expired without ever being revoked. There was no test for that case;
+there is now, and it kills the mutant.
 
 ## `serviceMonitorSelector` is restrictive on purpose
 

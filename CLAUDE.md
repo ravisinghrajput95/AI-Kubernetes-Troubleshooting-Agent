@@ -669,6 +669,20 @@ in-cluster at 1 investigation in 3 reaching the agent, 8 of 8 after.
 `pending` and the claim stays the conditional `UPDATE`, so a mis-route is a
 scheduling miss, never a double run.
 
+**A revoked cluster refuses too, and revoked is not disconnected.** A revoked
+agent leaves no presence record, so `holder()` says nothing and the fallback
+read a local context that merely shares the cluster's name — the opposite of
+what revoking asked for. `_agent_was_revoked()` closes it: refuse when the
+cluster has a revoked certificate and **no unexpired unrevoked one left**. That
+second half is the whole feature. An agent that dropped a moment ago still
+holds a valid certificate and will reconnect, and refusing there would turn
+every flap into an outage — which is why presence is TTL-based in the first
+place. Re-enrolling lifts the refusal without un-revoking anything; a merely
+*expired* certificate never triggers it. Fails closed on a store error, like
+M8a's own refusal and unlike the rate limiter. Found by verifying revocation
+against a live deployment, where the post-revoke investigation came back
+`provider=kubeconfig`.
+
 **A presence record naming *this* worker is never a routing target.**
 `holder()` is consulted only after the local registry has said no, so a record
 still claiming us means the agent disconnected here within the TTL. Returning it

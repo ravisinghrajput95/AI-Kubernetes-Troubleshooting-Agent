@@ -27,6 +27,30 @@ class EvidenceStatus(StrEnum):
 
 
 class EvidenceSource(StrEnum):
+    """Which *subsystem* a fact came from — not which mechanism fetched it.
+
+    `KUBECTL` is badly named and cannot be renamed: it is a wire value
+    (`EVIDENCE_SOURCE_KUBECTL` in `proto/agent/v1/evidence.proto`, mapped in
+    `app/wire/codec.py`), so changing it breaks every deployed agent for no
+    informational gain. Read it as "a Kubernetes API read".
+
+    **An agent-collected record carries `KUBECTL` even though no kubectl ran** —
+    the agent uses client-go, and a cluster reached through its agent needs no
+    kubectl on the platform at all. That is deliberate, not an oversight:
+    collectors sit *above* the provider seam and must not be able to tell which
+    provider they have, which is the property `raw_executor()` was removed to
+    guarantee. Making this field name the transport would hand every collector
+    exactly the knowledge that seam exists to withhold.
+
+    The transport is recorded once per investigation, where it belongs and
+    where it is correct: `investigation["cluster_access"]`, as
+    `{"provider": "agent" | "kubeconfig", "cluster_id": ...}`. One investigation
+    uses one provider, so a per-record copy would add nothing anyway.
+
+    Noticed while verifying the agent path end to end, where an agent-served
+    investigation's evidence all read `source: kubectl` and looked wrong.
+    """
+
     KUBECTL = "kubectl"
     PROMETHEUS = "prometheus"
     LOKI = "loki"

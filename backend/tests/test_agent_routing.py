@@ -28,6 +28,8 @@ hint that is occasionally wrong costs a retry, whereas a guarantee that is
 occasionally wrong costs a misdiagnosis.
 """
 
+from datetime import UTC, datetime
+
 import pytest
 
 from app.core.config import settings
@@ -515,3 +517,135 @@ class TestWorkerConcurrencyIsConfigurable:
 
         with pytest.raises(pydantic.ValidationError):
             Settings(JOB_MAX_CONCURRENT=0)
+
+
+class TestARevokedAgentIsNotQuietlyReplacedByTheKubeconfig:
+    """Revoking says "this agent must not serve". Reading a local context that
+    merely shares the cluster's name is the opposite of that.
+
+    **Revoked and disconnected are different, and only the first refuses.** An
+    agent that dropped a moment ago still holds a valid certificate and will
+    reconnect; refusing there would turn every flap into an outage, which is
+    exactly why presence is TTL-based. The distinction is the whole feature —
+    a version that refused for both would pass the first test here and fail the
+    second.
+
+    Found by verifying revocation against a live deployment: the investigation
+    after a revoke came back `provider=kubeconfig`, and failed only because that
+    cluster had no same-named local context. One that did would have read the
+    wrong cluster and filed it as evidence for the right one.
+    """
+
+    def _store(self, monkeypatch, records):
+        from app.services import investigation_service
+
+        class Store:
+            def certificates(self, cluster_id=""):
+                return [r for r in records if r.cluster_id == cluster_id]
+
+        monkeypatch.setattr(
+            "app.security.enrolment.get_enrolment_store", lambda: Store(), raising=False
+        )
+        return investigation_service
+
+    def _cert(self, cluster, revoked=False, expired=False):
+        from datetime import timedelta
+
+        from app.security.enrolment import CertificateRecord
+
+        now = datetime.now(UTC)
+        return CertificateRecord(
+            serial=f"{cluster}-{revoked}-{expired}",
+            cluster_id=cluster,
+            issued_at=now - timedelta(days=1),
+            expires_at=now - timedelta(hours=1) if expired else now + timedelta(days=30),
+            revoked_at=now if revoked else None,
+        )
+
+    def test_a_revoked_cluster_refuses_instead_of_falling_back(
+        self, gateway, registry, presence, monkeypatch
+    ):
+        self._store(monkeypatch, [self._cert("prod-eu", revoked=True)])
+        presence("worker-a")
+
+        with pytest.raises(ClusterUnreachable, match="revoked"):
+            select_provider("prod-eu", None)
+
+    def test_a_merely_disconnected_agent_still_falls_back(
+        self, gateway, registry, presence, monkeypatch
+    ):
+        """The availability half. This is the common case — an agent restarting,
+        a node draining — and it must not become a refusal."""
+        self._store(monkeypatch, [self._cert("prod-eu", revoked=False)])
+        presence("worker-a")
+
+        assert isinstance(select_provider("prod-eu", None), LocalKubectlProvider)
+
+    def test_a_replacement_agent_lifts_the_refusal(self, gateway, registry, presence, monkeypatch):
+        """Re-enrolling is the documented remedy, so it has to work without an
+        operator also having to un-revoke anything."""
+        self._store(
+            monkeypatch,
+            [self._cert("prod-eu", revoked=True), self._cert("prod-eu", revoked=False)],
+        )
+        presence("worker-a")
+
+        assert isinstance(select_provider("prod-eu", None), LocalKubectlProvider)
+
+    def test_an_expired_replacement_does_not_lift_it(
+        self, gateway, registry, presence, monkeypatch
+    ):
+        """Expired is not valid. A stale record must not read as a live agent."""
+        self._store(
+            monkeypatch,
+            [
+                self._cert("prod-eu", revoked=True),
+                self._cert("prod-eu", revoked=False, expired=True),
+            ],
+        )
+        presence("worker-a")
+
+        with pytest.raises(ClusterUnreachable, match="revoked"):
+            select_provider("prod-eu", None)
+
+    def test_an_expired_certificate_that_was_never_revoked_still_falls_back(
+        self, gateway, registry, presence, monkeypatch
+    ):
+        """Lapsed is not revoked, and only revoking asked us to stop.
+
+        This case is the difference between the two conditions in
+        `_agent_was_revoked`, and nothing else here distinguishes them: without
+        it, replacing the "was anything revoked?" test with "are there any
+        records?" passes the whole class while quietly refusing every cluster
+        whose certificate simply ran out. Added because that mutation survived.
+        """
+        self._store(monkeypatch, [self._cert("prod-eu", revoked=False, expired=True)])
+        presence("worker-a")
+
+        assert isinstance(select_provider("prod-eu", None), LocalKubectlProvider)
+
+    def test_a_cluster_that_never_enrolled_is_untouched(
+        self, gateway, registry, presence, monkeypatch
+    ):
+        """The getting-started path: no agent was ever issued for this name."""
+        self._store(monkeypatch, [])
+        presence("worker-a")
+
+        assert isinstance(select_provider("laptop", None), LocalKubectlProvider)
+
+    def test_an_unreadable_enrolment_store_refuses(self, gateway, registry, presence, monkeypatch):
+        """Fails closed, like M8a's own refusal and unlike the rate limiter.
+        The alternative is answering from the wrong cluster, and the only
+        investigations affected are ones that already have no agent."""
+
+        class Broken:
+            def certificates(self, cluster_id=""):
+                raise RuntimeError("enrolment store unavailable")
+
+        monkeypatch.setattr(
+            "app.security.enrolment.get_enrolment_store", lambda: Broken(), raising=False
+        )
+        presence("worker-a")
+
+        with pytest.raises(ClusterUnreachable):
+            select_provider("prod-eu", None)
