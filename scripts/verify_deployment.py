@@ -122,7 +122,7 @@ def guarded(name: str, check, *args, **kwargs):
     """
     try:
         return check(*args, **kwargs)
-    except Exception as exc:  # noqa: BLE001 - a verdict beats a stack trace
+    except Exception as exc:
         R.bad(
             f"{name} completed without erroring",
             f"the check itself raised {type(exc).__name__}: {exc}. That is a "
@@ -208,7 +208,11 @@ class Ingress:
             conn.request(
                 "GET",
                 path,
-                headers={"Host": vhost, "Accept": "text/event-stream", "Authorization": f"Bearer {token}"},
+                headers={
+                    "Host": vhost,
+                    "Accept": "text/event-stream",
+                    "Authorization": f"Bearer {token}",
+                },
             )
             raw = conn.getresponse()
             if raw.status != 200:
@@ -236,7 +240,9 @@ class Prometheus:
     def api(self, path: str) -> dict:
         response = self.ingress.request("GET", path, self.vhost)
         if response.status != 200:
-            raise RuntimeError(f"Prometheus {path} -> HTTP {response.status}: {response.text[:200]}")
+            raise RuntimeError(
+                f"Prometheus {path} -> HTTP {response.status}: {response.text[:200]}"
+            )
         return response.json()
 
     def query(self, expr: str) -> list[dict]:
@@ -357,7 +363,9 @@ def check_ingress(ingress: Ingress, vhost: str, token: str) -> None:
     R.check("GET /health/live", live.status == 200, f"HTTP {live.status}: {live.text[:200]}")
 
     ready = ingress.request("GET", "/health/ready", vhost)
-    if R.check("GET /health/ready", ready.status == 200, f"HTTP {ready.status}: {ready.text[:200]}"):
+    if R.check(
+        "GET /health/ready", ready.status == 200, f"HTTP {ready.status}: {ready.text[:200]}"
+    ):
         checks = ready.json().get("checks", ready.json())
         R.check(
             "readiness consults the real dependencies",
@@ -465,7 +473,11 @@ def check_scrape_target(prom: Prometheus, release: str) -> bool:
     ):
         return False
 
-    unhealthy = [(t["scrapeUrl"], t.get("health"), t.get("lastError", "")) for t in targets if t.get("health") != "up"]
+    unhealthy = [
+        (t["scrapeUrl"], t.get("health"), t.get("lastError", ""))
+        for t in targets
+        if t.get("health") != "up"
+    ]
     R.check(
         "every scrape target is up",
         not unhealthy,
@@ -527,10 +539,7 @@ def check_alert_series_are_stored(prom: Prometheus) -> None:
 
     # Prometheus needs a scrape or two before the first samples land, so poll
     # for the clean result and report whatever is still missing at the deadline.
-    if wait_for(lambda: not absent(), timeout=90) is None:
-        missing = absent()
-    else:
-        missing = []
+    missing = absent() if wait_for(lambda: not absent(), timeout=90) is None else []
 
     R.check(
         "every referenced series is present in Prometheus",
@@ -542,7 +551,9 @@ def check_alert_series_are_stored(prom: Prometheus) -> None:
     )
 
 
-def run_investigation(ingress: Ingress, vhost: str, token: str) -> tuple[str | None, list, float, float]:
+def run_investigation(
+    ingress: Ingress, vhost: str, token: str
+) -> tuple[str | None, list, float, float]:
     """Submit an investigation through the ingress and stream its progress."""
     section("An investigation runs end to end through the ingress")
 
@@ -565,7 +576,11 @@ def run_investigation(ingress: Ingress, vhost: str, token: str) -> tuple[str | N
         state = ingress.request("GET", f"/investigations/{job_id}", vhost, token=token)
         if state.status != 200:
             return None
-        return state.json() if state.json().get("status") in {"succeeded", "failed", "cancelled"} else None
+        return (
+            state.json()
+            if state.json().get("status") in {"succeeded", "failed", "cancelled"}
+            else None
+        )
 
     final = wait_for(finished, timeout=120, interval=2.0)
     if not R.check(
@@ -789,7 +804,10 @@ def enrol(ingress: Ingress, vhost: str, token: str, cluster_id: str, out: str) -
     by hand.
     """
     response = ingress.request(
-        "POST", "/agents/enrolment", vhost, token=token,
+        "POST",
+        "/agents/enrolment",
+        vhost,
+        token=token,
         body={"cluster_id": cluster_id, "ttl_minutes": 30},
     )
     if response.status != 201:
@@ -818,9 +836,7 @@ def enrol(ingress: Ingress, vhost: str, token: str, cluster_id: str, out: str) -
     return 0
 
 
-def _investigate_on(
-    context: str, namespace: str, pod: str, token: str, cluster_id: str
-) -> dict:
+def _investigate_on(context: str, namespace: str, pod: str, token: str, cluster_id: str) -> dict:
     """Submit an investigation *from inside* a named pod, and wait for it.
 
     `kubectl exec` rather than a port-forward: a port-forward is a background
@@ -847,9 +863,21 @@ def _investigate_on(
         "'usable':cov.get('usable'),'total':cov.get('total')}))"
     )
     result = subprocess.run(
-        ["kubectl", "--context", context, "-n", namespace, "exec", pod, "--",
-         "python", "-c", script],
-        capture_output=True, text=True,
+        [
+            "kubectl",
+            "--context",
+            context,
+            "-n",
+            namespace,
+            "exec",
+            pod,
+            "--",
+            "python",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
     )
     for line in reversed(result.stdout.splitlines()):
         try:
@@ -984,9 +1012,20 @@ def check_agent_path(
     # succeeded investigation carrying usable evidence therefore came through
     # the stream — the label is corroborated by the setup rather than trusted.
     contexts = subprocess.run(
-        ["kubectl", "--context", context, "-n", "k8s-agent", "get", "secret",
-         "k8s-agent-kubeconfig", "-o", "jsonpath={.data.config}"],
-        capture_output=True, text=True,
+        [
+            "kubectl",
+            "--context",
+            context,
+            "-n",
+            "k8s-agent",
+            "get",
+            "secret",
+            "k8s-agent-kubeconfig",
+            "-o",
+            "jsonpath={.data.config}",
+        ],
+        capture_output=True,
+        text=True,
     ).stdout
     local_contexts = base64.b64decode(contexts).decode("utf-8", "replace") if contexts else ""
     R.check(
@@ -1009,9 +1048,19 @@ def check_agent_path(
     # own `--api-qps` fix removed. An assertion inherited from an observation
     # whose cause has since been fixed.
     logs = subprocess.run(
-        ["kubectl", "--context", context, "-n", "k8s-ops-agent",
-         "logs", "-l", "app=k8s-ops-agent", "--tail=200"],
-        capture_output=True, text=True,
+        [
+            "kubectl",
+            "--context",
+            context,
+            "-n",
+            "k8s-ops-agent",
+            "logs",
+            "-l",
+            "app=k8s-ops-agent",
+            "--tail=200",
+        ],
+        capture_output=True,
+        text=True,
     ).stdout
     R.check(
         "the agent's own logs show it connected over mTLS",
@@ -1045,10 +1094,26 @@ def check_revocation_ends_the_stream(
     section("Revocation ends a live stream")
 
     revoke = subprocess.run(
-        ["kubectl", "--context", context, "-n", namespace, "exec", holder, "--",
-         "python", "-m", "app.agentctl", "revoke",
-         "--cluster", cluster_id, "--reason", "integration verification"],
-        capture_output=True, text=True,
+        [
+            "kubectl",
+            "--context",
+            context,
+            "-n",
+            namespace,
+            "exec",
+            holder,
+            "--",
+            "python",
+            "-m",
+            "app.agentctl",
+            "revoke",
+            "--cluster",
+            cluster_id,
+            "--reason",
+            "integration verification",
+        ],
+        capture_output=True,
+        text=True,
     )
     if not R.check(
         "the certificate is revoked",
@@ -1067,10 +1132,10 @@ def check_revocation_ends_the_stream(
     R.check(
         "the revoked agent stops serving investigations",
         stopped is not None,
-        f"the agent kept collecting after its certificate was revoked. The "
-        f"connect-time check is not enough on a stream that stays open for "
-        f"weeks — `_sweep_revocations` is what makes revocation take effect on "
-        f"a live session, and it appears not to be running.",
+        "the agent kept collecting after its certificate was revoked. The "
+        "connect-time check is not enough on a stream that stays open for "
+        "weeks — `_sweep_revocations` is what makes revocation take effect on "
+        "a live session, and it appears not to be running.",
         ok_detail=f"status={(stopped or {}).get('status')} "
         f"provider={(stopped or {}).get('provider')}",
     )
@@ -1078,9 +1143,9 @@ def check_revocation_ends_the_stream(
     # The platform's own account of having done it, which distinguishes "the
     # sweep ended the stream" from "the agent happened to drop off".
     logs = subprocess.run(
-        ["kubectl", "--context", context, "-n", namespace,
-         "logs", holder, "--tail=400"],
-        capture_output=True, text=True,
+        ["kubectl", "--context", context, "-n", namespace, "logs", holder, "--tail=400"],
+        capture_output=True,
+        text=True,
     ).stdout
     R.check(
         "the gateway logged that it ended the stream",
@@ -1095,7 +1160,9 @@ def check_revocation_ends_the_stream(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--context", required=True, help="kube context (always pinned, never implicit)")
+    parser.add_argument(
+        "--context", required=True, help="kube context (always pinned, never implicit)"
+    )
     parser.add_argument("--namespace", default="k8s-agent")
     parser.add_argument("--release", default="k8s-agent")
     parser.add_argument("--ingress", default="http://127.0.0.1:8080")
@@ -1156,13 +1223,24 @@ def main() -> int:
 
     if args.agent_cluster:
         holder = guarded(
-            "agent link", check_agent_path, ingress, args.host, args.token,
-            args.context, args.namespace, args.agent_cluster,
+            "agent link",
+            check_agent_path,
+            ingress,
+            args.host,
+            args.token,
+            args.context,
+            args.namespace,
+            args.agent_cluster,
         )
         if holder and not args.skip_revocation:
             guarded(
-                "revocation", check_revocation_ends_the_stream,
-                args.context, args.namespace, holder, args.token, args.agent_cluster,
+                "revocation",
+                check_revocation_ends_the_stream,
+                args.context,
+                args.namespace,
+                holder,
+                args.token,
+                args.agent_cluster,
             )
         elif holder:
             print("\n(--skip-revocation: the certificate is left valid)")

@@ -201,7 +201,11 @@ Missing: envtest / multi-version cluster fixtures · snapshot tests for the PDF
 and Markdown renderers · load tests inside the suite (throughput and chaos are
 opt-in scripts, not tests) · **automated** mutation testing — every invariant
 added since the audit was mutation-tested by hand, which does not survive
-inattention · **agent certificate renewal**, the one part of the identity
+inattention (**partly closed**: `scripts/mutation_check.py` re-runs six of
+them in CI, pairing a defect that shipped with the test that must object to it
+— what remains uncovered is mutations needing a live cluster, which the
+integration job's own mutation record covers by hand) · **agent certificate
+renewal**, the one part of the identity
 lifecycle the job does not reach (it enrols, connects and revokes, but nothing
 runs long enough for renewal at 2/3 of certificate life) · cross-host
 scale-out, which needs workers on separate machines.

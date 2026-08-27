@@ -1152,6 +1152,35 @@ not export is valid YAML, passes `promtool`, evaluates forever and fires never,
 which is exactly the Prometheus defect class from M9.1. A fourth test refuses
 any rule mentioning a cluster, tenant or namespace label.
 
+### Mutation tests, re-run rather than remembered (`scripts/mutation_check.py`)
+
+Every invariant here was mutation-tested by hand — revert the defect, watch the
+check go red, restore. In one session that found **seven defects, three of them
+in checks that had just been written**, looked correct, and guarded nothing.
+It is also the discipline that decays first: a passing suite feels like
+evidence, and a mutation not run leaves no trace.
+
+```bash
+python scripts/mutation_check.py          # ~4s, six mutations
+python scripts/mutation_check.py --list
+```
+
+Each entry pairs **a defect that actually shipped** with the test written to
+catch it, and the run fails if any test passes with its defect present. Runs in
+the `backend` CI job on 3.12.
+
+**Deliberately not `mutmut` or `cosmic-ray`.** A general fuzzer mutates
+everything and grades the whole suite, which here would spend minutes
+rediscovering that most lines are covered and produce a score nobody acts on.
+What is worth keeping is the narrow pairing — a regression suite for the tests
+themselves.
+
+**An anchor that matches other than exactly once is an error, never a skip.**
+A mutation that fails to apply reports "survived" identically to a missing
+test, and that is not hypothetical: the SSE ownership entry refused to apply on
+its first run because the same check appears twice in that file. Re-anchor it;
+never delete it.
+
 ### Integration verification (`scripts/integration_verify.sh`, `deploy/verify/`, CI)
 
 The `integration-verify` CI job stands the chart up on kind — ingress-nginx,

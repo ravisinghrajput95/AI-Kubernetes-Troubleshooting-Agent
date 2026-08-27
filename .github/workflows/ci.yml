@@ -39,11 +39,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt ruff
 
+      # `scripts/` is included, and was not before. All nine already conformed
+      # to backend/ruff.toml by convention — but a convention nothing checks is
+      # a convention that is already drifting, and the two files added this
+      # milestone both landed unformatted.
       - name: Lint
-        run: ruff check .
+        run: |
+          ruff check .
+          ruff check --config ruff.toml ../scripts
 
       - name: Format check
-        run: ruff format --check .
+        run: |
+          ruff format --check .
+          ruff format --check --config ruff.toml ../scripts
 
       # Generated protobuf bindings are committed, so a .proto edit that was not
       # regenerated would otherwise pass every other check and only surface once
@@ -58,6 +66,18 @@ jobs:
       # code. A drop in reasoning accuracy is visible in the log.
       - name: Reasoning evaluation
         run: python -m evals
+
+      # Re-runs the mutation tests that were done by hand for each invariant:
+      # revert a defect that actually shipped, require the test written to
+      # catch it to fail, restore. Seconds, because it is six targeted
+      # mutations rather than a fuzzer.
+      #
+      # It runs on 3.12 only. The mutations are about our own logic, not about
+      # interpreter behaviour, so a second run on 3.13 would cost time to
+      # re-derive the same answer.
+      - name: Mutation tests still catch their defects
+        if: matrix.python-version == '3.12'
+        run: python ../scripts/mutation_check.py
 
   # The default suite is hermetic and needs no database, which is what keeps
   # `python -m pytest` usable on a laptop. That would leave the distributed job
