@@ -69,6 +69,13 @@ agentGateway:
     certKey: ca.crt
     keyKey: ca.key
 
+# The sweep that ends live streams whose certificate was revoked. 30s is the
+# default and would make the revocation check wait for it; the interval is not
+# what is under test.
+extraEnv:
+  - name: AGENT_REVOCATION_SWEEP_SECONDS
+    value: "5"
+
 metrics:
   enabled: true
   serviceMonitor:

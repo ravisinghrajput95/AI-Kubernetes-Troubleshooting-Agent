@@ -1021,6 +1021,76 @@ def check_agent_path(
         f"no record of it.\n--- agent logs ---\n{logs[-600:]}",
         ok_detail="enrolled and connected",
     )
+    return holder
+
+
+def check_revocation_ends_the_stream(
+    context: str, namespace: str, holder: str, token: str, cluster_id: str
+) -> None:
+    """A revoked certificate must end a *live* stream, not merely fail the next dial.
+
+    This transport is built around a connection that stays open for weeks, so
+    revocation-at-reconnect is close to meaningless — `AgentGateway.
+    _sweep_revocations()` exists for exactly that reason. It is a background
+    task on a timer, which is the shape that goes inert without anything
+    noticing: the same family as the correlation-id patcher that was correct,
+    called, and produced a constant.
+
+    **The control is the check before this one.** Three investigations already
+    reached this agent, so "it no longer serves" means revocation did something.
+    Without that pairing an agent that had never worked would pass this
+    identically — a chaos scenario with no control, which §18 recorded as the
+    way to get a confident number out of nothing.
+    """
+    section("Revocation ends a live stream")
+
+    revoke = subprocess.run(
+        ["kubectl", "--context", context, "-n", namespace, "exec", holder, "--",
+         "python", "-m", "app.agentctl", "revoke",
+         "--cluster", cluster_id, "--reason", "integration verification"],
+        capture_output=True, text=True,
+    )
+    if not R.check(
+        "the certificate is revoked",
+        revoke.returncode == 0,
+        f"agentctl revoke exited {revoke.returncode}: {(revoke.stderr or revoke.stdout)[:300]}",
+        ok_detail=revoke.stdout.strip().splitlines()[-1][:70] if revoke.stdout.strip() else "",
+    ):
+        return
+
+    def no_longer_served():
+        outcome = _investigate_on(context, namespace, holder, token, cluster_id)
+        served = outcome.get("status") == "succeeded" and outcome.get("provider") == "agent"
+        return None if served else outcome
+
+    stopped = wait_for(no_longer_served, timeout=90, interval=5.0)
+    R.check(
+        "the revoked agent stops serving investigations",
+        stopped is not None,
+        f"the agent kept collecting after its certificate was revoked. The "
+        f"connect-time check is not enough on a stream that stays open for "
+        f"weeks — `_sweep_revocations` is what makes revocation take effect on "
+        f"a live session, and it appears not to be running.",
+        ok_detail=f"status={(stopped or {}).get('status')} "
+        f"provider={(stopped or {}).get('provider')}",
+    )
+
+    # The platform's own account of having done it, which distinguishes "the
+    # sweep ended the stream" from "the agent happened to drop off".
+    logs = subprocess.run(
+        ["kubectl", "--context", context, "-n", namespace,
+         "logs", holder, "--tail=400"],
+        capture_output=True, text=True,
+    ).stdout
+    R.check(
+        "the gateway logged that it ended the stream",
+        "Revoked certificate" in logs,
+        "nothing in the holder's log says it ended a revoked stream. The agent "
+        "stopped serving, but not demonstrably because of the sweep — which is "
+        "the difference between verifying revocation and observing a "
+        "coincidence.",
+        ok_detail="sweep ended the session",
+    )
 
 
 def main() -> int:
@@ -1036,6 +1106,12 @@ def main() -> int:
         "--agent-cluster",
         default="",
         help="cluster id of an enrolled agent; its checks are skipped when absent",
+    )
+    parser.add_argument(
+        "--skip-revocation",
+        action="store_true",
+        help="leave the agent's certificate valid; revoking it makes a rerun against "
+        "the same cluster meaningless, so the local --verify-only loop passes this",
     )
     parser.add_argument("--enrol", default="", help="enrolment mode: mint for this cluster id")
     parser.add_argument("--enrol-out", default="", help="enrolment mode: write the manifest here")
@@ -1079,10 +1155,17 @@ def main() -> int:
     guarded("autoscaling", check_autoscaling, args.context, args.namespace, args.release)
 
     if args.agent_cluster:
-        guarded(
+        holder = guarded(
             "agent link", check_agent_path, ingress, args.host, args.token,
             args.context, args.namespace, args.agent_cluster,
         )
+        if holder and not args.skip_revocation:
+            guarded(
+                "revocation", check_revocation_ends_the_stream,
+                args.context, args.namespace, holder, args.token, args.agent_cluster,
+            )
+        elif holder:
+            print("\n(--skip-revocation: the certificate is left valid)")
     else:
         print("\n(no --agent-cluster given; the agent link is not verified)")
 

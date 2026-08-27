@@ -247,6 +247,64 @@ account: the agent's own mTLS `connected` line, and a control proving no
 kubeconfig context named after the agent's cluster exists — so a succeeded
 investigation of it could not have been answered locally.
 
+### Revocation, mutation-tested because it is a security control
+
+`AgentGateway._sweep_revocations()` is a background task on a timer, which is
+the shape that goes inert without anything noticing — the same family as the
+correlation-id patcher that was correct, called, and produced a constant. A
+transport built around a stream that stays open for weeks makes
+revocation-at-reconnect close to meaningless, so the sweep is the control, not
+the connect-time check.
+
+The check revokes the agent's certificate with `agentctl` and asserts it stops
+serving. **Its control is the check immediately before it**: three
+investigations already reached this agent, so "it no longer serves" means
+revocation did something. Without that pairing an agent that had never worked
+would pass identically — a chaos scenario with no control, which §18 recorded
+as the way to get a confident number out of nothing.
+
+Mutation tested by making `_sweep_revocations` return immediately, rebuilt into
+an image and rolled out:
+
+```
+Revocation ends a live stream
+  PASS  the certificate is revoked
+  FAIL  the revoked agent stops serving investigations
+        the agent kept collecting after its certificate was revoked
+  FAIL  the gateway logged that it ended the stream
+```
+
+**43 passed, 2 failed, exit 1**; restored, 45/0. Note the first line still
+passes: revoking *succeeded*, and the certificate was recorded as revoked. Only
+the live stream ignored it — which is exactly the gap between a revocation
+list and revocation taking effect, and the reason this check asserts behaviour
+rather than the store's contents.
+
+A failing run of this check costs ~90s more than a passing one, because it
+waits out its deadline rather than returning on the first observation. Worth
+knowing for the CI budget: a genuine regression here is the slowest failure the
+job has.
+
+### An observation from the revocation run, not a defect
+
+After revocation the investigation came back `status=failed
+provider=kubeconfig`. It did not succeed, which is what the check asserts, but
+note *how* it failed: the platform fell back to `LocalKubectlProvider` and
+failed there only because no local context is named after that cluster.
+
+That is the documented M8a behaviour — `select_provider` refuses outright only
+when the presence index names *another* worker, and a revoked agent leaves no
+presence record at all. So the platform has no way to know that a cluster was
+ever agent-only. On a deployment where a kubeconfig context happens to share
+the name, a revoked agent's cluster would be read locally instead: exactly the
+"one customer's `prod` answered by another's" risk the refusal message
+describes, arriving through the one door the refusal does not cover.
+
+Recorded rather than fixed. Closing it means a durable "this cluster is
+agent-served" fact, which is a design decision about what the platform
+remembers, not a wiring bug — and inventing one here would be scope this
+harness is not entitled to take.
+
 ## `serviceMonitorSelector` is restrictive on purpose
 
 `deploy/verify/prometheus.yaml` selects ServiceMonitors on `release:

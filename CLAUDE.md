@@ -1188,6 +1188,15 @@ holder, where the missing local-registry check sends the job to the shared
 queue — 3 of 4 failed there with "attached to worker &lt;the one that accepted
 it&gt;". Three rounds put a mutant's survival below 2%.
 
+**Revocation is asserted on behaviour, not on the store.** The agent's
+certificate is revoked with `agentctl` and the check requires it to stop
+serving — with the three preceding agent investigations as its control, so
+"no longer serves" cannot be satisfied by an agent that never worked. Mutation
+tested by making `_sweep_revocations` return immediately: **43/2 and exit 1**,
+with "the certificate is revoked" still passing. Revoking succeeded; only the
+live stream ignored it, which is the whole distance between a revocation list
+and revocation taking effect.
+
 **Every check runs under `guarded()`**, which turns an exception into a
 recorded failure. The routing check crashed on `None > 0` reading `usable` from
 a *refused* investigation, ending the run with no summary while correctly

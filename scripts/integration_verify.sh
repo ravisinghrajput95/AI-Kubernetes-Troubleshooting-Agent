@@ -56,6 +56,23 @@ step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
 cleanup() {
   local code=$?
+
+  # **A completion sentinel, because the exit status alone is not trustworthy.**
+  #
+  # On bash 3.2 — which macOS ships — a `set -u` violation aborts the script but
+  # leaves `$?` at 0 inside the EXIT trap. So this function tore the cluster
+  # down and exited **0** on a run that had failed before reaching a single
+  # assertion. A harness reporting success on a broken run is the worst defect
+  # it can have, and it is invisible: the log said "deleting cluster" and the
+  # exit code said fine.
+  #
+  # Reproduced in five lines rather than reasoned about, then fixed here: only
+  # the last line of the happy path sets COMPLETED, so *any* abnormal exit —
+  # `set -e`, `set -u`, a signal — reports failure.
+  if [ "${COMPLETED:-0}" -ne 1 ] && [ "$code" -eq 0 ]; then
+    code=1
+    echo "the run did not reach the end but exited 0; reporting failure" >&2
+  fi
   if [ "$code" -ne 0 ] && [ "$VERIFY_ONLY" -eq 0 ]; then
     step "FAILED (exit $code) — dumping cluster state"
     k get pods -A -o wide || true
@@ -236,6 +253,18 @@ EOF
   k -n k8s-ops-agent rollout status deployment/k8s-ops-agent --timeout=300s
 fi
 
+# Revoking the agent's certificate is the last thing the run does, and it is
+# destructive: a second --verify-only pass against the same cluster would find
+# an agent that can no longer serve and report the earlier checks as failures.
+# So the local iterate loop leaves the certificate valid; a full run does not.
+# A scalar, not an array: macOS ships bash 3.2, where `"${arr[@]}"` on an empty
+# array is an *unbound variable* under `set -u`. An empty scalar expands to
+# nothing and is safe on both.
+SKIP_REVOCATION=""
+if [ "$VERIFY_ONLY" -eq 1 ]; then
+  SKIP_REVOCATION="--skip-revocation"
+fi
+
 step "verifying the deployment"
 python3 "$REPO_ROOT/scripts/verify_deployment.py" \
   --context "$KCTX" \
@@ -245,4 +274,8 @@ python3 "$REPO_ROOT/scripts/verify_deployment.py" \
   --host k8s-agent.local \
   --prometheus-host prometheus.local \
   --token "$API_TOKEN" \
-  --agent-cluster "$AGENT_CLUSTER_ID"
+  --agent-cluster "$AGENT_CLUSTER_ID" \
+  $SKIP_REVOCATION
+
+# The happy path ends here, and nothing else sets this. See `cleanup`.
+COMPLETED=1
