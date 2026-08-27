@@ -251,7 +251,7 @@ a fleet that has finished enrolling can firewall it off.
 - **No Terraform module.** Item 35 named "Terraform/Helm"; this is the Helm
   half. The Terraform half is the managed Postgres, Redis, DNS and secrets
   around it, which is provider-specific and not written.
-- **Agent certificate renewal and revocation are not verified.** The CI job
-  now enrols a real agent, connects it over mTLS and routes investigations
-  through it, but nothing runs long enough to reach renewal at 2/3 of
-  certificate life, and revocation sweeping is unexercised.
+- **Agent certificate renewal is not verified.** The CI job enrols a real
+  agent, connects it over mTLS, routes investigations through it and revokes
+  it — but nothing runs long enough to reach renewal at 2/3 of certificate
+  life.

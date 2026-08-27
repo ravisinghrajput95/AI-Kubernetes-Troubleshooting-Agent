@@ -188,7 +188,8 @@ hand-written — which is what caught the defects hand-written ones could not.
 
 **A required CI job now stands the platform up** on kind with ingress-nginx,
 metrics-server, a prometheus-operator Prometheus and out-of-band Postgres and
-Redis, installs the chart, and makes 32 assertions against the live deployment
+Redis **and a real Go agent enrolled over mTLS**, installs the chart, and makes
+45 assertions against the live deployment
 (`scripts/integration_verify.sh`, `docs/INTEGRATION_VERIFICATION.md`). That
 closes the gap every tier from §16 to §21 was actually found through: nothing in
 CI had ever *run* the system against a real dependency, so a defect that needs a
@@ -200,10 +201,10 @@ Missing: envtest / multi-version cluster fixtures · snapshot tests for the PDF
 and Markdown renderers · load tests inside the suite (throughput and chaos are
 opt-in scripts, not tests) · **automated** mutation testing — every invariant
 added since the audit was mutation-tested by hand, which does not survive
-inattention · the **agent path** in the integration job, which is
-kubeconfig-only, so the gateway, mTLS enrolment and M8a routing are still
-hand-exercised · cross-host scale-out, which needs workers on separate
-machines.
+inattention · **agent certificate renewal**, the one part of the identity
+lifecycle the job does not reach (it enrols, connects and revokes, but nothing
+runs long enough for renewal at 2/3 of certificate life) · cross-host
+scale-out, which needs workers on separate machines.
 
 ---
 

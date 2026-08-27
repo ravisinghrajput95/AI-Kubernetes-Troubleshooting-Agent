@@ -67,10 +67,9 @@ live GKE cluster mid-experiment, and three commands ran against it.
 | Agent link | a real in-cluster agent, enrolled through `POST /agents/enrolment`, connects over mTLS with `identity_source: certificate`; investigations **submitted on the stream holder** all reach it | §21 defects 5 and 6 — a gateway certificate naming only localhost, and affinity not pinning work to the holder |
 
 Measured on a full local run — build both images, create, install, enrol,
-assert, destroy: **42 passed, 0 failed**. The exact count moves by a check or
-two depending on which branches run, which is why the groups above are the
-contract and the number is not. On a GitHub runner the job was about 9 minutes
-before the agent leg was added.
+assert, destroy: **45 passed, 0 failed**, and the same in CI in about 4½
+minutes. The exact count moves by a check or two depending on which branches
+run, which is why the groups above are the contract and the number is not.
 
 ## Keeping it honest
 
@@ -406,6 +405,12 @@ direction except the one this job added — which is precisely why it shipped.
 
 Restored, rebuilt and re-run: 32 passed, 0 failed.
 
+Those totals are the suite as it stood for that experiment — 32 checks, one of
+which (the Prometheus counter read) is skipped when scraping is broken, hence
+27+4. It has 45 now. The numbers are left as they were measured rather than
+rescaled, because a mutation record that drifts with later work is no longer a
+record of anything.
+
 ## What this does not reach
 
 Stated plainly, because a harness's reputation is made by what it claims not to
@@ -417,9 +422,9 @@ cover:
   existing `scaleout_bench.py` finding — flat past two workers on the
   kubeconfig path, because process spawning is a host resource — is unchanged
   and unmeasured across hosts.
-- **Agent certificate renewal and revocation.** The agent leg enrols and
-  connects; it does not run long enough to reach the 2/3-of-life renewal, and
-  revocation sweeping is unexercised.
+- **Agent certificate renewal.** The agent leg enrols, connects and is
+  revoked, but nothing runs long enough to reach renewal at 2/3 of certificate
+  life — the one part of the identity lifecycle still unexercised here.
 - **Upgrades under traffic.** §21 measured this by hand across ten runs; the
   measurement is load-generator-shaped and does not fit a pass/fail assertion
   without a flakiness budget nobody has set.
