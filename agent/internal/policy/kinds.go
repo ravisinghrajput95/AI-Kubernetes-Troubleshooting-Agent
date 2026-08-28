@@ -68,6 +68,20 @@ var kinds = map[string]resource{
 	"k8s.ingress":         {group: "apis/networking.k8s.io/v1", plural: "ingresses", kubectl: "ingress"},
 	"k8s.networkpolicies": {group: "apis/networking.k8s.io/v1", plural: "networkpolicies", kubectl: "networkpolicies"},
 
+	// The deep-investigation reads. Every one of these was collected by the
+	// kubeconfig path and refused by this agent, so an agent-reached cluster
+	// silently produced a shallower investigation than the same cluster read
+	// locally — a partial view presented as a whole one, which is the outcome
+	// the evidence layer exists to prevent. Held by
+	// backend/tests/test_provider_parity.py, which derives the required set
+	// from the collectors rather than from this list.
+	"k8s.serviceaccounts":   {group: "api/v1", plural: "serviceaccounts", kubectl: "serviceaccount"},
+	"k8s.resourcequotas":    {group: "api/v1", plural: "resourcequotas", kubectl: "resourcequotas"},
+	"k8s.limitranges":       {group: "api/v1", plural: "limitranges", kubectl: "limitranges"},
+	"k8s.endpointslices":    {group: "apis/discovery.k8s.io/v1", plural: "endpointslices", kubectl: "endpointslices"},
+	"k8s.storageclasses":    {group: "apis/storage.k8s.io/v1", plural: "storageclasses", kubectl: "storageclasses", clusterScoped: true},
+	"k8s.volumeattachments": {group: "apis/storage.k8s.io/v1", plural: "volumeattachments", kubectl: "volumeattachments", clusterScoped: true},
+
 	// metrics-server. Frequently absent, which is a normal degradation: the
 	// read fails, the platform records unavailable evidence, and a diagnosis
 	// states that metrics were not consulted rather than assuming health.

@@ -48,7 +48,21 @@ _KINDS: dict[tuple[ReadVerb, str], str] = {
     (ReadVerb.GET, "cronjobs"): "k8s.cronjobs",
     (ReadVerb.GET, "namespaces"): "k8s.namespaces",
     (ReadVerb.GET, "configmaps"): "k8s.configmaps",
+    # Singular *and* plural, because the key is whatever a collector happened
+    # to type. `pod`/`pods` were both here from the start; `configmap` and
+    # `ingresses` were not, and each one missing meant that read failed on
+    # every agent-reached cluster and nowhere else. `tests/test_provider_parity.py`
+    # derives the keys from the collectors so the next one cannot be forgotten.
+    (ReadVerb.GET, "configmap"): "k8s.configmaps",
+    (ReadVerb.GET, "serviceaccounts"): "k8s.serviceaccounts",
+    (ReadVerb.GET, "serviceaccount"): "k8s.serviceaccounts",
+    (ReadVerb.GET, "resourcequotas"): "k8s.resourcequotas",
+    (ReadVerb.GET, "limitranges"): "k8s.limitranges",
+    (ReadVerb.GET, "storageclasses"): "k8s.storageclasses",
+    (ReadVerb.GET, "volumeattachments"): "k8s.volumeattachments",
+    (ReadVerb.GET, "endpointslices"): "k8s.endpointslices",
     (ReadVerb.GET, "ingress"): "k8s.ingress",
+    (ReadVerb.GET, "ingresses"): "k8s.ingress",
     (ReadVerb.GET, "networkpolicies"): "k8s.networkpolicies",
     (ReadVerb.LOGS, ""): "k8s.logs",
     (ReadVerb.TOP, "nodes"): "k8s.metrics.nodes",

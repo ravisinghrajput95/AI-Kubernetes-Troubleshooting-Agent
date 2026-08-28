@@ -290,6 +290,88 @@ def wait_for(predicate, timeout: float, interval: float = 2.0):
 # --------------------------------------------------------------------------
 
 
+def check_agent_api_versions(context: str) -> None:
+    """Does this cluster actually serve the group versions the agent assumes?
+
+    F7. `agent/internal/policy/kinds.go` maps each evidence kind to a fixed API
+    path — `apis/networking.k8s.io/v1`, `apis/discovery.k8s.io/v1`,
+    `apis/storage.k8s.io/v1`, `apis/metrics.k8s.io/v1beta1` — and performs no
+    discovery. On a cluster that serves a different version the read 404s, and
+    the platform records unavailable evidence: correct behaviour, and an
+    investigation that is quietly shallower than the same cluster read through
+    a kubeconfig, because kubectl does its own discovery and would have found
+    it.
+
+    **A discovery client in the agent was considered and not built.** Every
+    version in that table is GA on every currently supported Kubernetes
+    release, so a resolver would compute the same path it already has, at the
+    cost of a startup dependency on a call that can fail. What the assumption
+    lacked was not machinery but *evidence*, and that is what this is: the
+    table checked against a real cluster's discovery document, in the job that
+    already stands one up. When a version does move, this fails on the release
+    that moves it rather than in a customer's degraded investigation.
+
+    `metrics.k8s.io` is exempt from the failure: metrics-server is frequently
+    absent and its absence is a normal degradation the platform reports rather
+    than a defect. It is still listed, so the run says which way it went.
+    """
+    source = REPO_ROOT / "agent/internal/policy/kinds.go"
+    if not R.check(
+        "the agent's kind table can be read",
+        source.exists(),
+        f"{source} is missing, so this check would pass without comparing anything",
+    ):
+        return
+
+    # `group: "apis/<group>/<version>"` or `"api/v1"`, plus its plural.
+    # Whitespace-tolerant, because gofmt breaks a long entry across lines and a
+    # regex that only matched the one-line form silently skipped the two
+    # metrics kinds — the check would have passed while comparing 22 of 24
+    # entries. The count guard below is what makes that visible.
+    entries = re.findall(
+        r'\{\s*group:\s*"(?P<group>[^"]+)",\s*plural:\s*"(?P<plural>[^"]+)"',
+        source.read_text(),
+    )
+    if not R.check(
+        "the kind table parsed",
+        len(entries) >= 20,
+        f"only {len(entries)} entries parsed out of {source.name}; the regex has "
+        f"drifted from the source and this check is comparing nothing",
+        ok_detail=f"{len(entries)} entries",
+    ):
+        return
+
+    served: dict[str, set[str]] = {}
+    for group_path in sorted({group for group, _ in entries}):
+        try:
+            listing = json.loads(kubectl(context, "get", "--raw", "/" + group_path))
+        except Exception:
+            served[group_path] = set()
+            continue
+        served[group_path] = {
+            resource.get("name", "") for resource in listing.get("resources") or []
+        }
+
+    optional = {"apis/metrics.k8s.io/v1beta1"}
+    missing = [
+        f"{group}/{plural}"
+        for group, plural in sorted(set(entries))
+        if plural not in served.get(group, set()) and group not in optional
+    ]
+    absent_optional = [group for group in optional if group in served and not served[group]]
+
+    R.check(
+        "every API version the agent hardcodes is served by this cluster",
+        not missing,
+        f"{len(missing)} of the agent's reads name a path this cluster does not "
+        f"serve: {', '.join(missing)}. The agent performs no discovery, so each "
+        f"one 404s and becomes an evidence gap that the kubeconfig path — which "
+        f"discovers — would not have.",
+        ok_detail=f"{len(set(entries))} reads across {len(served)} group versions"
+        + (f"; {', '.join(absent_optional)} absent (optional)" if absent_optional else ""),
+    )
+
+
 def check_probes(context: str, namespace: str, release: str) -> None:
     """The probes must resolve to the endpoints Tier 5 built.
 
@@ -1211,6 +1293,7 @@ def main() -> int:
 
     print(f"\033[1mVerifying {args.release} in {args.namespace} on {args.context}\033[0m")
 
+    guarded("agent API versions", check_agent_api_versions, args.context)
     guarded("probes", check_probes, args.context, args.namespace, args.release)
     guarded("ingress", check_ingress, ingress, args.host, args.token)
     guarded("metrics endpoint", check_metrics_endpoint, ingress, args.host)

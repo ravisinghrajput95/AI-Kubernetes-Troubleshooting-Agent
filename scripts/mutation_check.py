@@ -248,6 +248,35 @@ MUTATIONS = [
         new="    token = _window.set(FreshnessWindow())\n    window = FreshnessWindow()",
         tests="tests/test_collection_cache.py",
     ),
+    Mutation(
+        name="agent-cannot-serve-a-read",
+        why=(
+            "F7. Eight deep-investigation reads named a resource the agent had "
+            "no kind for — EndpointSlice, Ingress, `configmap` singular against "
+            "a plural key, and five more. Each degraded silently: the collector "
+            "records a non-usable record and the investigation succeeds, so an "
+            "agent cluster was quietly shallower than the same cluster read "
+            "locally. This removes one key back."
+        ),
+        path="app/providers/remote_agent.py",
+        old='    (ReadVerb.GET, "endpointslices"): "k8s.endpointslices",\n',
+        new="",
+        tests="tests/test_provider_parity.py",
+    ),
+    Mutation(
+        name="parity-check-sees-nothing",
+        why=(
+            "The vacuity guard on the parity check itself. A recorder that "
+            "captured no reads satisfies every assertion in that file — the "
+            "parametrised test collapses to zero cases and reports green. Same "
+            "failure as `fleet_bench.py` printing a platform result from an "
+            "AttributeError, and as a scrape check with zero targets."
+        ),
+        path="tests/test_provider_parity.py",
+        old="        self.requests.extend(requests)",
+        new="        pass",
+        tests="tests/test_provider_parity.py",
+    ),
 ]
 
 

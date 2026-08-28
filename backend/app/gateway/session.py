@@ -117,10 +117,20 @@ class AgentSession:
 
     @property
     def supported_kinds(self) -> frozenset[str]:
-        """What this agent can collect.
+        """What this agent says it can collect.
 
-        The platform plans against this rather than assuming a uniform fleet,
-        so an agent two releases behind serves fewer kinds instead of failing.
+        **Reported, not planned against.** It is surfaced through `GET /agents`
+        so an operator can see that an agent two releases behind serves fewer
+        kinds; the collection path does not consult it. That is deliberate and
+        the outcome is the same either way — asking for a kind the agent does
+        not know returns a `NOT_APPLICABLE` record naming the kind, which is
+        the citable gap the evidence layer wants, whereas skipping the request
+        would produce the same gap with no record of what was skipped.
+
+        This docstring used to claim the platform planned against it, which was
+        never true. A stale claim about a mechanism is the same defect as a
+        stale "this is dead" note: it invites someone to rely on something that
+        is not happening.
         """
         return frozenset(self.hello.supported_kinds)
 

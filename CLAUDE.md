@@ -778,6 +778,52 @@ Three things the codec must not regress:
 
 Generated bindings under `app/wire/gen/` are **committed** — `pip install -r requirements.txt` stays sufficient, and a schema change shows up in review as a diff. Regenerate with `python scripts/generate_proto.py`; CI runs `--check` so the two cannot drift. `protobuf` and `grpcio-tools` are pinned to matching versions because protobuf 7 validates gencode against the runtime. Service stubs are deliberately *not* generated yet — they import `grpc`, which is not a dependency until M4.
 
+### The two providers must be able to serve the same reads (F7)
+
+There are two lookup tables between a collector and a cluster — the agent's
+kinds (`agent/internal/policy/kinds.go`, mirrored by `_KINDS` in
+`app/providers/remote_agent.py`) and the resource name the collector wrote —
+and until F7 nothing checked they agreed. **Eight of the deep-investigation
+reads named a resource the agent had no kind for**: EndpointSlice, Ingress
+(`ingresses` against a key spelled `ingress`), `configmap` *singular* against a
+plural key, StorageClass, VolumeAttachment, ResourceQuota, LimitRange and
+ServiceAccount.
+
+**It degraded silently, which is why it lasted.** `spec_for` refuses, the
+collector records a non-usable record, and the investigation *succeeds* with a
+gap — so an agent-reached cluster produced a shallower investigation than the
+same cluster read through a kubeconfig, and nothing compared the two. Same
+shape as the M8a regression and the four Prometheus queries that parsed,
+returned `success` and matched nothing.
+
+`tests/test_provider_parity.py` is the fix that lasts: it **runs** every
+collector against a recording provider and holds each read against
+`kind_for()`, so a collector added later is covered without anyone remembering.
+It carries its own vacuity guard (a recorder that saw nothing would satisfy
+every assertion) and seeds the pod spec `ConfigReferenceCollector` needs,
+because with an empty store that collector declines before issuing the two
+reads the gap was found in. `describe secret` is the one **named** exception:
+`describe` is kubectl's renderer, not an API read, and reproducing it in Go is
+the mistake `ResourceMetricsCollector` already refused to make for `kubectl
+top`. Adding a kind means changing three places — `_KINDS`, `kinds.go`, and the
+ClusterRole in `app/api/agents.py`.
+
+**A discovery client in the agent was considered and not built.** Every group
+version the table hardcodes (`apis/networking.k8s.io/v1`,
+`apis/discovery.k8s.io/v1`, `apis/storage.k8s.io/v1`, `apis/batch/v1`,
+`apis/metrics.k8s.io/v1beta1`) is GA on every supported Kubernetes release, so
+a resolver would compute the path it already has, at the cost of a startup
+dependency on a call that can fail. What the assumption lacked was evidence,
+not machinery — so `verify_deployment.py` checks all 24 entries against a live
+cluster's discovery document in the required CI job, and the release that moves
+a version fails there rather than in a customer's degraded investigation. The
+same reasoning as F6: answered, not as asked.
+
+`AgentSession.supported_kinds` is **reported, not planned against** — its
+docstring claimed otherwise for several milestones. Asking for an unknown kind
+returns a `NOT_APPLICABLE` record naming it, which is the citable gap; skipping
+the request would produce the same gap with no record of what was skipped.
+
 ### Reusing a cluster read (`app/providers/cache.py`, F18)
 
 Every investigation used to collect the whole cluster from scratch — ~20 reads,
