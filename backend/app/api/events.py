@@ -139,7 +139,16 @@ async def _start(trigger, principal) -> str | None:
 
     try:
         job = get_job_runner().submit(
-            InvestigationRequest(context=trigger.cluster, namespace=trigger.namespace or None),
+            # An alert is a claim that the cluster just changed, so reusing a
+            # read taken before it fired would investigate the world the alert
+            # is complaining about the absence of. `refresh` still *writes* what
+            # it reads, so an operator opening the console straight afterwards
+            # gets the alert's own fresh evidence rather than a cold cache.
+            InvestigationRequest(
+                context=trigger.cluster,
+                namespace=trigger.namespace or None,
+                refresh=True,
+            ),
             principal=principal,
         )
     except Exception as exc:

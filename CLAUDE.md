@@ -778,6 +778,82 @@ Three things the codec must not regress:
 
 Generated bindings under `app/wire/gen/` are **committed** — `pip install -r requirements.txt` stays sufficient, and a schema change shows up in review as a diff. Regenerate with `python scripts/generate_proto.py`; CI runs `--check` so the two cannot drift. `protobuf` and `grpcio-tools` are pinned to matching versions because protobuf 7 validates gencode against the runtime. Service stubs are deliberately *not* generated yet — they import `grpc`, which is not a dependency until M4.
 
+### Reusing a cluster read (`app/providers/cache.py`, F18)
+
+Every investigation used to collect the whole cluster from scratch — ~20 reads,
+each a kubectl subprocess — so two investigations a minute apart did identical
+work. Measured on a real 53-pod cluster: a second investigation now spawns
+**13 kubectl processes instead of 70** and spends **0.16 s collecting instead
+of 0.57 s** (`scripts/cache_bench.py`, numbers in the envelope).
+
+**A cache that lies is worse than no cache, and here "lies" is specific.** Every
+conclusion cites an evidence id and every record carries a `collected_at`; a
+record dated *now* for a fact read forty seconds ago is a false citation. So:
+
+- **It sits at the `ClusterProvider` seam**, wrapping whatever `select_provider`
+  chose. Not in collectors — a collector that knew about caching could tell
+  which provider it had, which is what removing `raw_executor()` guaranteed
+  against. Not in the evidence store either: that would cache *conclusions*.
+- **The key is `(tenant, provider class, cluster, impersonated identity)` plus a
+  fingerprint of the request derived from `dataclasses.fields`.** The tenant
+  because `AgentRegistry` is tenant-keyed for the reason two customers may both
+  call a cluster `prod`. The identity because with impersonation on the cluster
+  applies the *caller's* RBAC, so the same read has different correct answers
+  per caller — one of them a refusal. The fingerprint is derived rather than
+  enumerated so a field added to `ResourceRequest` later cannot silently
+  collide two different reads.
+- **Only successes are stored.** A cached `FORBIDDEN` would keep refusing after
+  the RBAC that caused it was fixed, and `app/kubernetes/access.py` reads
+  exactly those statuses to tell a locked door from a broken cluster. On the
+  real measurement *every one* of the warm run's 13 misses was a failure.
+- **Evidence is dated by the read, never by the run.** `FreshnessWindow` is a
+  **mutable holder** in a `ContextVar`, opened per collector by the scheduler
+  and written by the provider — because `LocalKubectlProvider.fetch_many`
+  gathers into child tasks and a context copy would discard a rebound value.
+  Same family as `require_principal` staying `async` and `correlation_scope()`
+  installing a holder. `_sanitize` backdates only: a collector that mixed
+  cached and live reads understates its freshness, which is the safe direction.
+- **`underlying()` exists so `cluster_access` still names the transport.** A
+  wrapper is neither an agent nor a kubeconfig, and reading
+  `type(self.provider)` through one reports every investigation as
+  `kubeconfig` — the exact M8a regression `cluster_access_total` was added to
+  make visible.
+- **A cached payload is re-parsed from text on every serve.** Handing one dict
+  to two investigations means one collector's mutation rewrites the other's
+  evidence, and redaction runs *above* this layer. `json.loads` costs far less
+  than a subprocess, which is the whole point.
+- **`executed_commands` and `truncations` survive the cache.** A warm
+  investigation whose command list shrank would look like one that examined
+  less of the cluster; a lost truncation would make it claim it saw a whole
+  cluster it saw the first 2,000 objects of.
+
+**It applies to the agent path identically**, and that is an argument rather
+than an oversight: the freshness contract is a property of the evidence, not of
+the transport, and a cache that behaved differently per provider would make an
+agent investigation and a kubeconfig one non-comparable — what
+`test_metrics_parity.py` exists to prevent. It is also where a round trip costs
+most.
+
+**In this process only, never Redis.** "Redis is the latency layer, Postgres is
+the truth" means every message has a committed row behind it; a cached read has
+none, so it would be the Redis-only fact that rule forbids — and it would put
+megabytes of unredacted cluster interior in a shared store.
+
+`COLLECTION_CACHE_TTL_SECONDS` (60, `0` restores the pre-cache code path
+exactly — `with_cache` returns the provider untouched) and
+`COLLECTION_CACHE_MAX_BYTES` (64 MB, LRU by bytes because a node list is
+kilobytes and a pod list is megabytes). `POST /investigate` and
+`/investigations` take `refresh: true`; **an alert-triggered investigation
+always sets it**, because an alert is a claim that the cluster just changed.
+`refresh` bypasses *reading* and still writes, so a storm does not leave the
+cache cold for the operator who looks straight afterwards.
+
+`investigation["collection_cache"]` reports hits, misses and the age of the
+oldest reused fact, and the console renders it in the Evidence Explorer — same
+rule as the SSE-versus-polling transport: a cheaper path has to be visible.
+`k8sagent_collection_cache_reads_total{outcome}` is the ratio; the *age* is
+deliberately not a metric, because that would need the cluster as a label.
+
 ### Collection (`app/collectors/`)
 
 Collectors declare `provides` / `requires` / `optional_requires`; `CollectorRegistry.resolve()` topologically sorts them into waves. `requires` must have a registered provider (a missing one raises `CollectorGraphError` at resolve time); `optional_requires` only affects ordering when a provider exists, which is how optional backends like Prometheus stay absent without breaking the graph.

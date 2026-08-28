@@ -165,6 +165,89 @@ MUTATIONS = [
         ),
         tests="tests/test_authz.py tests/test_auth.py",
     ),
+    Mutation(
+        name="cache-dates-evidence-now",
+        why=(
+            "F18. The collection cache's one load-bearing promise: a record "
+            "built from a reused read carries the age of the *read*. Drop the "
+            "backdating and every warm investigation dates forty-second-old "
+            "facts `now` — a false citation on every conclusion, with a green "
+            "suite and a faster benchmark. The first of the new invariants "
+            "rather than a defect that shipped; the point of writing it down "
+            "is that it is the one which would ship silently."
+        ),
+        path="app/collectors/scheduler.py",
+        old=(
+            "        if window is not None and window.oldest is not None "
+            "and window.oldest < collected_at:\n"
+            "            collected_at = window.oldest"
+        ),
+        new="        pass",
+        tests="tests/test_collection_cache.py",
+    ),
+    Mutation(
+        name="cache-key-drops-the-tenant",
+        why=(
+            "M6 keyed `AgentRegistry` on `(tenant, cluster)` because two "
+            "customers may both call a cluster `prod`. A cache keyed on the "
+            "name alone undoes that in one dictionary, and the symptom is one "
+            "tenant's pod list cited in another's report."
+        ),
+        path="app/providers/cache.py",
+        old=(
+            "    return _SCOPE_SEP.join(\n"
+            "        (current_tenant(), type(provider).__name__, provider.cluster_id, identity)\n"
+            "    )"
+        ),
+        new=(
+            "    return _SCOPE_SEP.join((type(provider).__name__, provider.cluster_id, identity))"
+        ),
+        tests="tests/test_collection_cache.py",
+    ),
+    Mutation(
+        name="cache-stores-failures",
+        why=(
+            "A cached FORBIDDEN goes on refusing after the RBAC that caused it "
+            "is fixed, and `app/kubernetes/access.py` reads exactly those "
+            "statuses to tell a locked door from a broken cluster. Measured "
+            "against a real cluster: every one of a warm run's 13 misses was a "
+            "failure, so this is the normal path and not an edge case."
+        ),
+        path="app/providers/cache.py",
+        old="if not self.enabled or not result.success:",
+        new="if not self.enabled:",
+        tests="tests/test_collection_cache.py",
+    ),
+    Mutation(
+        name="cache-hides-the-transport",
+        why=(
+            "`cluster_access` asks what the provider *is*, and a wrapper is "
+            "neither an agent nor a kubeconfig. Without `underlying()` an agent "
+            "fleet reports every investigation as `kubeconfig` — the exact M8a "
+            "regression `cluster_access_total` was added to make visible, "
+            "reintroduced by the thing meant to make it faster."
+        ),
+        path="app/providers/cache.py",
+        old="    return provider.inner if isinstance(provider, CachingProvider) else provider",
+        new="    return provider",
+        tests="tests/test_collection_cache.py",
+    ),
+    Mutation(
+        name="cache-window-is-not-shared",
+        why=(
+            "`asyncio` copies the context when it creates a task, and "
+            "`LocalKubectlProvider.fetch_many` gathers its reads into child "
+            "tasks. A window the scheduler holds by value rather than by "
+            "reference is never written to by the provider, so every record is "
+            "dated `now` and every test that inspects the window object still "
+            "passes. Same family as `require_principal` having to stay `async` "
+            "and the correlation id needing a mutable holder."
+        ),
+        path="app/providers/cache.py",
+        old="    window = FreshnessWindow()\n    token = _window.set(window)",
+        new="    token = _window.set(FreshnessWindow())\n    window = FreshnessWindow()",
+        tests="tests/test_collection_cache.py",
+    ),
 ]
 
 

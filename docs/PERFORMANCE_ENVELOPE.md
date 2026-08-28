@@ -129,6 +129,57 @@ python scripts/routing_bench.py --clusters 1000 --workers 3 --submissions 2000
 Flat because the lookup is a `GET` on one key rather than a scan of the
 tenant's agents; the fleet's size is not the cost of starting an investigation.
 
+### Repeating an investigation (F18)
+
+```bash
+python scripts/cache_bench.py --context kind-my-cluster
+```
+
+The one number in this document taken against a **real cluster and a real
+`kubectl`**, because that is the only place the saving exists: the cost being
+removed is a subprocess and a round trip, and a fake executor has neither. A
+harness measuring `json.loads` against `json.loads` would report an excellent
+figure that means nothing — the mistake the throughput number made twice.
+
+Measured on a 53-pod kind cluster carrying `docs/qa/audit-faults.yaml`, three
+runs, one investigation immediately after another:
+
+| | cold | warm | `refresh=true` |
+|---|---|---|---|
+| kubectl processes spawned | 70 | **13** | 70 |
+| collect wall time | 0.57 s | **0.16 s** | 0.65 s |
+| reads served from memory | 0 | 57 of 70 | 0 |
+| usable evidence records | 61 | 61 | 61 |
+
+**81% fewer processes, ~72% less collect time**, and the same evidence both
+times. Process count is the headline rather than the seconds: a laptop timing
+is a coin flip, and the process count is what scales with cluster size and with
+a WAN.
+
+**All 13 of the warm run's misses were failures**, which is the design working
+rather than a shortfall. Nothing that failed is ever stored — a cached
+`FORBIDDEN` would go on refusing after the RBAC that caused it was fixed. That
+cluster is *deliberately broken*, so it is close to the worst case for hit
+rate; the 13 are `kubectl top` with no metrics-server and logs from pods that
+have no container to read logs from.
+
+**What the warm run does not do is claim to be fresh.** Each evidence record is
+stamped with the age of the read behind it, not the age of the investigation,
+so a citation resolved six weeks later still means what it says. The harness
+asserts this rather than trusting it: the warm run's oldest evidence must be at
+least as old as the cold run took.
+
+Cache footprint, for sizing `COLLECTION_CACHE_MAX_BYTES` (default 64 MB):
+
+| cluster | entries | bytes |
+|---|---|---|
+| 53-pod kind cluster, real reads | 56 | 2.4 MB |
+| 2,000-pod synthetic (`payload_bench` fake) | 40 | 1.6 MB |
+
+One whole cluster is tens of entries and single-digit megabytes, so the default
+holds many clusters at once; beyond it the eviction is LRU by bytes, and
+`tests/test_collection_cache.py` asserts the bound rather than assuming it.
+
 ### Payload reads
 
 ```bash
@@ -168,6 +219,15 @@ travel.
 - **Sustained operation.** The longest run here is under a minute. Nothing says
   what happens over hours: no leak test, no certificate rotation under load, no
   Postgres growth over a retention period.
+- **Whether the cache helps a *fleet*.** The F18 figures above are one
+  process investigating one cluster twice. The cache is per worker and per
+  `(tenant, cluster, identity)`, so on a fleet the hit rate depends on how
+  often the same cluster is investigated by the same caller within the TTL —
+  which is a usage question, not a platform one, and nothing here measures it.
+  What is measured is the saving *when* a read is reused.
+- **The cache under `refresh=true` load.** An alert storm bypasses reads and
+  still writes, so a hot cluster's entries are rewritten rather than reused.
+  Not benchmarked.
 - **Where the per-worker limit binds.** ~12/s per worker is measured and
   scale-out is linear, but which serialisation inside the process sets it —
   event loop, GIL, or gRPC stream handling — was not isolated. Ruled out: CPU,
@@ -245,6 +305,11 @@ cd backend && AGENT_GATEWAY_PORT=19700 AGENT_GATEWAY_TLS=disabled \
 python scripts/fleet_bench.py --clusters 1000 --investigations 500 --concurrency 64
 python scripts/payload_bench.py --pods 2000 --memory
 python scripts/routing_bench.py --clusters 1000 --workers 3
+
+# The one that needs a real cluster and a real kubectl, not the stack above.
+kind create cluster --name bench
+kubectl --context kind-bench apply -f docs/qa/audit-faults.yaml
+python scripts/cache_bench.py --context kind-bench
 ```
 
 `fleet_bench.py` reports `stream_failures` and exits non-zero when any stream

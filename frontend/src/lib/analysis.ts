@@ -1,4 +1,5 @@
 import type {
+  CollectionCache,
   ConfidenceComponent,
   EvidenceEntry,
   EvidenceStatus,
@@ -144,6 +145,39 @@ export function formatDuration(ms?: number | null): string {
     return `${ms}ms`;
   }
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/**
+ * What to tell an operator about reused cluster reads, or nothing.
+ *
+ * Returns `null` when every read was live, because a line saying "0 reused"
+ * on every investigation trains people to stop reading it. When reads *were*
+ * reused the age leads: the backend stamps each evidence record with the age
+ * of the read behind it, so this is a summary of what the records already say
+ * rather than a separate claim that could drift from them.
+ */
+export function describeCollectionCache(
+  cache?: CollectionCache,
+): { label: string; detail: string } | null {
+  if (!cache || !cache.enabled || cache.hits <= 0) {
+    return null;
+  }
+  const total = cache.hits + cache.misses;
+  const age = cache.oldest_evidence_seconds;
+  return {
+    label: `${cache.hits} of ${total} reads reused`,
+    detail:
+      age === null || age === undefined
+        ? "Some evidence was reused from a recent investigation of this cluster."
+        : `Oldest evidence is ${formatAge(age)} old. Re-run with refresh for a live read.`,
+  };
+}
+
+function formatAge(seconds: number): string {
+  if (seconds < 60) {
+    return `${Math.round(seconds)}s`;
+  }
+  return `${Math.round(seconds / 60)}m`;
 }
 
 export function humanizeKind(kind: string): string {

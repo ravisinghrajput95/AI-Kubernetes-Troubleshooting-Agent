@@ -57,3 +57,27 @@ def fresh_authenticator():
     reset_authenticator()
     yield
     reset_authenticator()
+
+
+@pytest.fixture(autouse=True)
+def fresh_collection_cache():
+    """No test inherits the cluster reads another test made.
+
+    Same shape as `fresh_authenticator`, for the same reason: the collection
+    cache is a **process singleton built on first use**, so a test that
+    monkeypatches `collection_cache_ttl_seconds` changes the setting and leaves
+    the built object alone. Worse in this case, because every test in the suite
+    investigates a cluster called `test-cluster` through a *different* fake — so
+    without this a second test is answered from the first one's fake cluster,
+    and the failure surfaces as a wrong pod list rather than as cache
+    pollution. Six tests failed exactly that way when this fixture was missing.
+
+    Deliberately not "turn the cache off in tests": the cache is on by default
+    in a real deployment, and a suite that never exercises the default is
+    testing a configuration nobody runs.
+    """
+    from app.providers.cache import reset_collection_cache
+
+    reset_collection_cache()
+    yield
+    reset_collection_cache()

@@ -10,6 +10,7 @@ from app.collectors.registry import CollectorRegistry
 from app.evidence.models import Evidence, EvidenceSource, EvidenceStatus
 from app.evidence.store import EvidenceStore
 from app.observability import metrics
+from app.providers.cache import FreshnessWindow, freshness_window
 
 
 class CollectionScheduler:
@@ -131,28 +132,35 @@ class CollectionScheduler:
 
         started = time.monotonic()
         async with semaphore:
-            try:
-                collected = await asyncio.wait_for(collector.collect(context), timeout=timeout)
-            except TimeoutError:
-                logger.warning(
-                    "Collector {id} exceeded its {timeout:.0f}s budget",
-                    id=collector.id,
-                    timeout=timeout,
-                )
-                return self._degraded_evidence(
-                    collector,
-                    context,
-                    EvidenceStatus.TIMEOUT,
-                    f"Collector exceeded its {timeout:.0f}s time budget.",
-                )
-            except Exception as exc:
-                logger.opt(exception=exc).error("Collector {id} failed", id=collector.id)
-                return self._degraded_evidence(
-                    collector,
-                    context,
-                    EvidenceStatus.FAILED,
-                    f"Collector raised {type(exc).__name__}: {exc}",
-                )
+            # Everything this collector reads is observed inside the window, so
+            # evidence built from a reused read can be stamped with the age of
+            # the read rather than the age of the investigation. Opened here
+            # rather than around the whole wave because the window has to be
+            # per collector: one collector working from a cached list must not
+            # backdate another that read the cluster live.
+            with freshness_window() as window:
+                try:
+                    collected = await asyncio.wait_for(collector.collect(context), timeout=timeout)
+                except TimeoutError:
+                    logger.warning(
+                        "Collector {id} exceeded its {timeout:.0f}s budget",
+                        id=collector.id,
+                        timeout=timeout,
+                    )
+                    return self._degraded_evidence(
+                        collector,
+                        context,
+                        EvidenceStatus.TIMEOUT,
+                        f"Collector exceeded its {timeout:.0f}s time budget.",
+                    )
+                except Exception as exc:
+                    logger.opt(exception=exc).error("Collector {id} failed", id=collector.id)
+                    return self._degraded_evidence(
+                        collector,
+                        context,
+                        EvidenceStatus.FAILED,
+                        f"Collector raised {type(exc).__name__}: {exc}",
+                    )
 
         duration_ms = int((time.monotonic() - started) * 1000)
         context.report(
@@ -160,7 +168,7 @@ class CollectionScheduler:
             collector=collector.id,
             duration_ms=duration_ms,
         )
-        return [self._sanitize(item, duration_ms) for item in collected]
+        return [self._sanitize(item, duration_ms, window) for item in collected]
 
     def _degraded_evidence(
         self,
@@ -181,19 +189,43 @@ class CollectionScheduler:
             for kind in sorted(collector.provides)
         ]
 
-    def _sanitize(self, evidence: Evidence, duration_ms: int) -> Evidence:
-        """Redact at the collection boundary.
+    def _sanitize(
+        self,
+        evidence: Evidence,
+        duration_ms: int,
+        window: FreshnessWindow | None = None,
+    ) -> Evidence:
+        """Redact at the collection boundary, and date the record honestly.
 
         Redacting here rather than at the prompt boundary means every consumer
         — reports on disk, the HTTP API, and the LLM — sees the same scrubbed
         payload, and no consumer can be added later that bypasses it.
+
+        The timestamp is the same argument applied to time. `Evidence` defaults
+        `collected_at` to construction time, which is the truth only while
+        every read is live. Once a read can be served from
+        `app/providers/cache.py`, a record built from it must carry the age of
+        the *read* — every conclusion cites an evidence id, so a record dated
+        now for a fact observed forty seconds ago is a false citation rather
+        than an untidy one. Backdating only, never forward: the window holds
+        the oldest read the collector saw, so a collector that mixed cached and
+        live reads understates its freshness, which is the safe direction.
         """
+        collected_at = evidence.collected_at
+        if window is not None and window.oldest is not None and window.oldest < collected_at:
+            collected_at = window.oldest
+
         if evidence.redacted or evidence.data is None:
-            return replace(evidence, duration_ms=evidence.duration_ms or duration_ms)
+            return replace(
+                evidence,
+                duration_ms=evidence.duration_ms or duration_ms,
+                collected_at=collected_at,
+            )
 
         return replace(
             evidence,
             data=self.redactor.redact(evidence.data),
             redacted=True,
             duration_ms=evidence.duration_ms or duration_ms,
+            collected_at=collected_at,
         )

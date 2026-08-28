@@ -27,6 +27,11 @@ class InvestigationRequest(BaseModel):
     namespace: str | None = Field(default=None, max_length=MAX_IDENTIFIER_LENGTH)
     resource_kind: str | None = Field(default=None, max_length=MAX_IDENTIFIER_LENGTH)
     resource_name: str | None = Field(default=None, max_length=MAX_IDENTIFIER_LENGTH)
+    # Read the cluster again rather than reusing reads a recent investigation
+    # already made. The reuse is honest either way — evidence carries the age
+    # of the read — but an operator who has just changed something wants to see
+    # the change, and asking is cheaper than explaining a timestamp.
+    refresh: bool = False
 
 
 class InvestigationJobAccepted(BaseModel):

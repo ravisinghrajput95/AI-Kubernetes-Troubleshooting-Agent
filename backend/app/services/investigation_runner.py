@@ -60,6 +60,7 @@ async def run_investigation(
         resource_name=request.resource_name if request else None,
         reporter=reporter,
         principal=principal,
+        refresh=bool(request.refresh) if request else False,
     )
 
     with span(

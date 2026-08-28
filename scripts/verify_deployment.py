@@ -558,7 +558,14 @@ def run_investigation(
     section("An investigation runs end to end through the ingress")
 
     accepted = ingress.request(
-        "POST", "/investigations", vhost, token=token, body={"namespace": "kube-system"}
+        # `refresh` for the same reason as the agent leg: this check measures
+        # incremental SSE delivery through a real proxy, and an investigation
+        # served from cache finishes before there is anything to stream.
+        "POST",
+        "/investigations",
+        vhost,
+        token=token,
+        body={"namespace": "kube-system", "refresh": True},
     )
     if not R.check(
         "POST /investigations is accepted",
@@ -846,7 +853,13 @@ def _investigate_on(context: str, namespace: str, pod: str, token: str, cluster_
     script = (
         "import json,urllib.request,time\n"
         "req=urllib.request.Request('http://127.0.0.1:8000/investigations',"
-        f"data=json.dumps({{'context':'{cluster_id}','namespace':'kube-system'}}).encode(),"
+        # `refresh` because this check exists to observe the *stream* being
+        # used. Without it the second and third submissions would be answered
+        # from the collection cache, report `provider=agent` correctly, and
+        # assert nothing about routing — a vacuous check, which is the failure
+        # mode every guard in this file is written against.
+        f"data=json.dumps({{'context':'{cluster_id}','namespace':'kube-system',"
+        f"'refresh':True}}).encode(),"
         f"headers={{'Content-Type':'application/json','Authorization':'Bearer {token}'}})\n"
         "jid=json.load(urllib.request.urlopen(req))['id']\n"
         "d={}\n"

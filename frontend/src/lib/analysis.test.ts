@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  describeCollectionCache,
   filterEvidence,
   formatDuration,
   formatTarget,
@@ -191,5 +192,64 @@ describe("formatting helpers", () => {
   it("humanizes evidence kinds", () => {
     expect(humanizeKind("k8s.pod.logs.previous")).toBe("Pod Logs Previous");
     expect(humanizeKind("k8s.pods")).toBe("Pods");
+  });
+});
+
+describe("describeCollectionCache", () => {
+  it("says nothing when every read was live", () => {
+    // A line reading "0 reused" on every investigation trains people to stop
+    // reading it, which is how a genuinely stale run would go unnoticed.
+    expect(
+      describeCollectionCache({
+        enabled: true,
+        hits: 0,
+        misses: 20,
+        oldest_evidence_seconds: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("says nothing when caching is off", () => {
+    expect(
+      describeCollectionCache({
+        enabled: false,
+        hits: 0,
+        misses: 0,
+        oldest_evidence_seconds: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("leads with the age of the oldest fact the diagnosis rests on", () => {
+    const described = describeCollectionCache({
+      enabled: true,
+      hits: 17,
+      misses: 3,
+      oldest_evidence_seconds: 42,
+    });
+    expect(described?.label).toBe("17 of 20 reads reused");
+    expect(described?.detail).toContain("42s");
+  });
+
+  it("reads minutes once seconds stop being useful", () => {
+    expect(
+      describeCollectionCache({
+        enabled: true,
+        hits: 1,
+        misses: 0,
+        oldest_evidence_seconds: 305,
+      })?.detail,
+    ).toContain("5m");
+  });
+
+  it("still reports reuse when the backend sent no age", () => {
+    const described = describeCollectionCache({
+      enabled: true,
+      hits: 4,
+      misses: 1,
+      oldest_evidence_seconds: null,
+    });
+    expect(described?.label).toBe("4 of 5 reads reused");
+    expect(described?.detail).not.toContain("null");
   });
 });

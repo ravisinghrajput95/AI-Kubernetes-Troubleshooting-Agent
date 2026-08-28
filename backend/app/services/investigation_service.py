@@ -23,6 +23,7 @@ from app.playbooks.kubernetes import DEFAULT_PLAYBOOKS
 from app.playbooks.orchestrator import DEFAULT_MAX_ROUNDS, InvestigationOrchestrator
 from app.playbooks.registry import PlaybookRegistry
 from app.providers.base import ClusterProvider, ClusterUnreachable
+from app.providers.cache import CachingProvider, underlying, with_cache
 from app.providers.local_kubectl import LocalKubectlProvider
 
 # Evidence kinds already surfaced through a named investigation section.
@@ -225,6 +226,7 @@ class InvestigationService:
         reporter: ProgressReporter | None = None,
         max_playbook_rounds: int = DEFAULT_MAX_ROUNDS,
         principal: Principal | None = None,
+        refresh: bool = False,
     ) -> None:
         self.max_playbook_rounds = max_playbook_rounds
         self.principal = principal
@@ -239,7 +241,14 @@ class InvestigationService:
         # The provider is the engine's only route to a cluster — since M5 there
         # is no executor beside it, and nothing here can tell a local kubeconfig
         # from an agent on the far end of a stream.
-        self.provider = select_provider(context, principal)
+        # Selection decides *which cluster* this reaches; caching decides
+        # whether a read that already happened has to happen again. Two
+        # decisions, so two layers — and `with_cache` returns the provider
+        # untouched when caching is off, so `COLLECTION_CACHE_TTL_SECONDS=0` is
+        # the pre-cache code path rather than a disabled version of a new one.
+        self.provider = with_cache(
+            select_provider(context, principal), principal=principal, refresh=refresh
+        )
         self.scope = InvestigationScope(
             context=context,
             namespace=namespace,
@@ -258,6 +267,7 @@ class InvestigationService:
         investigation["timeline"] = self._timeline(store, started_at)
         investigation["executed_commands"] = list(self.provider.executed_commands)
         investigation["cluster_access"] = self._cluster_access()
+        investigation["collection_cache"] = self._collection_cache()
         return investigation
 
     def _graph(self, investigation: dict[str, Any]) -> dict[str, Any]:
@@ -280,7 +290,12 @@ class InvestigationService:
         guess which. It is also the only way to notice that a cluster with an
         agent was read locally because the agent was connected elsewhere.
         """
-        remote = type(self.provider).__name__ == "RemoteAgentProvider"
+        # Ask the provider that actually reaches the cluster, not whatever is
+        # wrapped around it. Reading `type(self.provider)` directly made every
+        # investigation report `kubeconfig` the moment a cache wrapper existed —
+        # which is the M8a regression `cluster_access_total` was added to make
+        # visible, reintroduced by the thing meant to make it faster.
+        remote = type(underlying(self.provider)).__name__ == "RemoteAgentProvider"
         # M8a made this worth counting: before routing, an agent cluster was
         # often collected through a kubeconfig, and nothing said so in
         # aggregate. A rising `kubeconfig` rate on an agent fleet is the shape
@@ -290,6 +305,19 @@ class InvestigationService:
             "provider": "agent" if remote else "kubeconfig",
             "cluster_id": self.provider.cluster_id,
         }
+
+    def _collection_cache(self) -> dict[str, Any]:
+        """How much of this investigation was served from an earlier one.
+
+        Part of the payload, for the same reason the console shows its
+        SSE-versus-polling transport: an operator comparing two investigations
+        of the same cluster should not have to guess whether the second one
+        looked. `oldest_evidence_seconds` is the honest headline — the age of
+        the oldest fact any conclusion here rests on.
+        """
+        if isinstance(self.provider, CachingProvider):
+            return self.provider.report()
+        return {"enabled": False, "hits": 0, "misses": 0, "oldest_evidence_seconds": None}
 
     def _collection_limits(self) -> dict[str, Any]:
         """Where the cluster was larger than this investigation looked.

@@ -107,6 +107,13 @@ cluster_access_total = Counter(
     registry=REGISTRY,
 )
 
+collection_cache_reads_total = Counter(
+    "k8sagent_collection_cache_reads_total",
+    "Cluster reads served from the in-process collection cache, or not.",
+    ["outcome"],
+    registry=REGISTRY,
+)
+
 collection_duration_seconds = Histogram(
     "k8sagent_collection_duration_seconds",
     "Wall time for one collection wave.",
@@ -193,6 +200,7 @@ _KNOWN_LABELS: tuple[tuple[Counter, str, tuple[str, ...]], ...] = (
         ("succeeded", "failed", "cancelled", "worker_lost", "unreachable", "no_evidence"),
     ),
     (cluster_access_total, "provider", ("agent", "kubeconfig")),
+    (collection_cache_reads_total, "outcome", ("hit", "miss")),
     (rate_limited_total, "scope", ("subject", "tenant")),
     (notifications_total, "outcome", ("delivered", "rejected", "failed")),
     (
@@ -287,6 +295,17 @@ def agents(count: int) -> None:
 
 def cluster_access(provider: str) -> None:
     _safe(lambda: cluster_access_total.labels(provider=provider).inc())
+
+
+def collection_cache(outcome: str) -> None:
+    """Whether one cluster read came from memory.
+
+    A ratio, not an age: an age would need the cluster to be a label, and the
+    rule that nothing here is labelled by cluster, tenant, namespace or user is
+    what keeps `/metrics` safe to leave unauthenticated. The per-investigation
+    age lives in the payload, where the caller is already authorised to see it.
+    """
+    _safe(lambda: collection_cache_reads_total.labels(outcome=outcome).inc())
 
 
 def collection_finished(duration_seconds: float, statuses: dict[str, int]) -> None:

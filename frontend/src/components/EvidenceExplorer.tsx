@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { EmptyState, Meter, Panel, Tag } from "./ui";
 import {
   STATUS_TONE,
+  describeCollectionCache,
   filterEvidence,
   formatDuration,
   formatTarget,
@@ -31,6 +32,9 @@ export function EvidenceExplorer({
 
   const evidence = investigation?.evidence ?? [];
   const coverage = investigation?.evidence_coverage;
+  // Null unless reads were actually reused, so this line is absent on a
+  // fully-live investigation rather than reading "0 reused" every time.
+  const reuse = describeCollectionCache(investigation?.collection_cache);
   const cited = useMemo(() => new Set(citedEvidence), [citedEvidence]);
 
   const groups = useMemo(
@@ -74,6 +78,18 @@ export function EvidenceExplorer({
                   value={coverage.completeness}
                   tone={coverage.completeness === 100 ? "bg-lime-400" : "bg-amber-400"}
                 />
+              </div>
+            </div>
+          ) : null}
+
+          {reuse ? (
+            <div className="rounded-md border border-slate-800 bg-[#101722] px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Tag
+                  label={reuse.label}
+                  className="border-slate-700 bg-slate-900/60 text-slate-300"
+                />
+                <span className="text-xs text-slate-400">{reuse.detail}</span>
               </div>
             </div>
           ) : null}

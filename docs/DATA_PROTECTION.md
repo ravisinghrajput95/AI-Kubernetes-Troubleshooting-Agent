@@ -34,6 +34,30 @@ production estate, which is what makes the rest of this document necessary.
 - **Kubernetes credentials.** The platform holds a kubeconfig; it is never
   copied into evidence.
 
+### Held in memory, never written down (F18)
+
+The collection cache (`app/providers/cache.py`) keeps raw cluster reads in the
+worker's heap for `COLLECTION_CACHE_TTL_SECONDS` (60) so a repeat investigation
+does not re-read the cluster. Three things about it are the answer to the
+obvious question:
+
+- **Process memory only.** Never Redis, never Postgres, never disk. It does not
+  survive a restart and it is not shared between workers, so it adds nothing to
+  what a backup, a `pg_dump` or a stolen volume contains, and nothing to §2.
+- **It holds the read *before* redaction**, because redaction happens at the
+  collection boundary above it and caching redacted payloads would mean a warm
+  investigation analysed different bytes from a cold one. So for up to 60
+  seconds, unredacted cluster output is resident — which was already true for
+  the duration of an investigation, and is now true for a bounded interval
+  after it. Nothing redacted-out ever reaches the API, a report or the model:
+  the cache is upstream of that boundary, not a way around it.
+- **It is keyed on the impersonated identity**, so one caller's reads are never
+  served to another whose Kubernetes RBAC would have refused them.
+
+Set `COLLECTION_CACHE_TTL_SECONDS=0` to remove the interval entirely; that
+returns the platform to re-reading the cluster on every investigation, which is
+the only thing it costs.
+
 ### What is redacted, and where
 
 Redaction happens at the **collection boundary** (`CollectionScheduler`), not at

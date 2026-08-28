@@ -82,9 +82,25 @@ export interface InvestigationResponse {
     workloads?: Record<string, unknown>;
     evidence?: EvidenceEntry[];
     evidence_coverage?: EvidenceCoverage;
+    collection_cache?: CollectionCache;
     deep_evidence?: Record<string, DeepEvidenceEntry[]>;
     playbook_rounds?: PlaybookRound[];
   };
+}
+
+/**
+ * How much of this investigation was served from an earlier one.
+ *
+ * Surfaced for the same reason `transport` is: a degraded or cheaper path has
+ * to be visible rather than inferred. `oldest_evidence_seconds` is the honest
+ * headline — the age of the oldest fact any conclusion here rests on.
+ */
+export interface CollectionCache {
+  enabled: boolean;
+  ttl_seconds?: number;
+  hits: number;
+  misses: number;
+  oldest_evidence_seconds: number | null;
 }
 
 export type EvidenceStatus =

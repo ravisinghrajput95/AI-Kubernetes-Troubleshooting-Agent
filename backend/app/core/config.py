@@ -30,6 +30,29 @@ class Settings(BaseSettings):
     # is recorded as evidence rather than applied silently.
     max_list_items: int = Field(default=2000, validation_alias="MAX_LIST_ITEMS")
 
+    # --- Collection cache ---------------------------------------------------
+    # How long a cluster read may be reused by a later investigation. Every
+    # investigation used to re-read the whole cluster; two of them a minute
+    # apart did identical work, and collection is 65% of an investigation.
+    #
+    # 60 seconds rather than something larger because the failure this trades
+    # against is concrete: an operator applies a fix and re-investigates. What
+    # makes any reuse defensible is that it is never *hidden* — evidence built
+    # from a reused read carries the age of the read, not of the investigation,
+    # so a citation still means what it says. `0` disables it and restores the
+    # previous behaviour exactly. See `app/providers/cache.py`.
+    collection_cache_ttl_seconds: float = Field(
+        default=60.0, validation_alias="COLLECTION_CACHE_TTL_SECONDS"
+    )
+    # Bounded in bytes, not entries: a node list is kilobytes and a 2,000-pod
+    # list is megabytes, so an entry count is not a memory bound. Peak heap for
+    # one investigation is ~5x its stored result, which is what
+    # `JOB_MAX_CONCURRENT` is sized against — an unbounded cache would move
+    # that number without anyone changing it.
+    collection_cache_max_bytes: int = Field(
+        default=64 * 1024 * 1024, validation_alias="COLLECTION_CACHE_MAX_BYTES"
+    )
+
     # Optional observability backends. Empty means "not deployed": the
     # collectors record unavailable evidence rather than failing, so an
     # investigation degrades instead of breaking.

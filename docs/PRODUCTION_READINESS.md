@@ -162,7 +162,7 @@ Apache-2.0 added. Without it the work was legally unusable by any enterprise.
 |---|---|---|
 | F1 | ~~Mark model-authored prose as untrusted in the UI~~ **done**: `ReportDocument` styles the model-authored sections distinctly and labels them; commands render as commands. |  done |
 | F6 | ~~No RBAC preflight~~ **answered, not as asked**: the preflight described needs `kubectl auth can-i`, which is a *command*, and `ResourceRequest` deliberately cannot carry one — that closed verb set is what makes a request safe to send to a customer's cluster. The reads are cheap anyway (a 403 is immediate); what was expensive was the explanation. `app/kubernetes/access.py` recognises "nothing usable, refusals dominate" from evidence status and says whose RBAC is at fault, identically through both providers. | done |
-| F18 | No caching; every investigation re-reads the whole cluster. | 1.5d |
+| F18 | ~~No caching; every investigation re-reads the whole cluster~~ **fixed**: a TTL-bounded cache at the `ClusterProvider` seam, keyed on `(tenant, provider, cluster, impersonated identity)` — the identity because impersonation means the same read has different correct answers per caller. Measured against a real cluster: a second investigation spawns **13 kubectl processes instead of 70** and collects in **0.16 s instead of 0.57 s**. Failures are never stored; an alert-triggered investigation always refreshes; and **evidence built from a reused read carries the age of the read, not of the run**, so a citation still means what it says. Five mutations in `scripts/mutation_check.py`, all caught. | done |
 | F19 | ~~Report files are never pruned~~ **fixed**: `ReportStore.prune()` deletes rendered artefacts past `REPORT_RETENTION_DAYS` (14) **and nulls `investigations.result` in the same transaction** — the larger copy, at 2.7 MB against a couple of hundred kilobytes, which previously survived retention so an expired investigation 404'd on `/pdf` while `GET /investigations/{id}` still served its whole contents. The history entry survives marked `expired`, because deleting it would make an investigation that happened look like one that never did. Deletes payloads on upgrade that were previously kept — see `docs/UPGRADE.md`. | done |
 | F7 | API version assumptions (EndpointSlice, Ingress) with no discovery. | 1d |
 | — | README documents a roadmap as if implemented; `docs/` is orphaned. | 1d |
@@ -170,7 +170,9 @@ Apache-2.0 added. Without it the work was legally unusable by any enterprise.
 ## P3 — quality
 
 `App.tsx` still ~1,050 lines · `FixRecommendationEngine` vestigial ·
-`history_service.py` ~900 lines doing three jobs · kubectl subprocess-per-call ·
+`history_service.py` ~900 lines doing three jobs · kubectl subprocess-per-call
+(**reduced, not removed**: F18 stops a *repeat* investigation paying for it —
+70 processes to 13 — but a cold one still spawns one per read) ·
 no frontend component tests · no runtime plugin discovery (entry points).
 
 ---
