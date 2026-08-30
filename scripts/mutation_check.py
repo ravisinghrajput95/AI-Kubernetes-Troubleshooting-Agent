@@ -304,6 +304,42 @@ MUTATIONS = [
         ),
         tests="tests/test_metrics_parity.py",
     ),
+    Mutation(
+        name="agent-impersonation-drift",
+        why=(
+            "Impersonation is what makes 'the platform cannot see more than you "
+            "can' true, and it was decided twice. The local path declined for an "
+            "anonymous caller; the agent path sent principal.subject regardless, "
+            "so an unauthenticated deployment asked the cluster to read as a user "
+            "named 'anonymous'. Inert only while the agent discarded the field — "
+            "and every read would have been refused the moment it stopped."
+        ),
+        path="app/providers/remote_agent.py",
+        old=(
+            "    identity = identity_for(principal)\n"
+            '    subject, groups = identity if identity else ("", ())'
+        ),
+        new=(
+            '    subject = principal.subject if principal else ""\n'
+            "    groups = principal.groups if principal else ()"
+        ),
+        tests="tests/test_auth.py",
+    ),
+    Mutation(
+        name="agent-refusal-says-nothing",
+        why=(
+            "client-go reports 'unknown' for every error on a raw request, and "
+            "the agent reads raw on purpose. Losing the API server's own sentence "
+            "makes an investigation degraded by one caller's narrow RBAC "
+            "indistinguishable from one degraded by a broken cluster — the single "
+            "distinction app/kubernetes/access.py exists to draw. Caught here by "
+            "a source tripwire; the behaviour itself is pinned in Go."
+        ),
+        path="../agent/internal/collectors/collector.go",
+        old='\tif message := statusMessage(body); message != "" {\n\t\treturn message\n\t}\n',
+        new="",
+        tests="tests/test_provider_parity.py",
+    ),
 ]
 
 

@@ -252,6 +252,48 @@ SELECT count(*), pg_size_pretty(sum(pg_column_size(result)))
 
 ---
 
+### Upgrading into agent impersonation
+
+**The behaviour change that matters most in this document.** Until now, a
+cluster read performed through an agent ran as the **agent's own
+ServiceAccount** — broad read across the whole cluster — for any caller who
+could reach the platform. The calling user travelled on the wire in
+`CollectionRequest.actor` and the agent discarded it, so F13's guarantee that
+*the platform cannot see more than you can* was true through a kubeconfig and
+false through an agent. `collection.proto` had documented the opposite since M2.
+
+The agent now applies `Impersonate-User` and `Impersonate-Group` to every read.
+Three consequences, in the order they will reach you:
+
+1. **Nothing changes for an agent already running.** Impersonation is off unless
+   `--impersonate` is passed, and an agent enrolled before this shipped has
+   neither the flag nor the `impersonate` verb in its ClusterRole. It logs a
+   warning naming exactly that on every start. This is deliberate: turning it on
+   without the grant would have the API server refuse every read, and
+   `app/kubernetes/access.py` would report it as *the caller's* RBAC being too
+   narrow — blaming the user for the agent's missing permission.
+
+2. **Re-apply the enrolment manifest to turn it on.** `POST /agents/enrolment`
+   now emits the flag and the grant in the same document, so they cannot be out
+   of step. After that, an investigation sees exactly what the person who ran it
+   would see — which for some users is **less than before**. That is the fix
+   working, not a regression, but it will look like one to anyone whose reports
+   suddenly have gaps. The gaps are citable: the evidence record carries the API
+   server's own sentence naming who was refused.
+
+3. **`--impersonate` and `AUTH_MODE=disabled` are not a working pair.** With
+   authentication off there is no caller to read as, and an impersonating agent
+   refuses an unattributed read rather than quietly falling back to its own
+   ServiceAccount — the same refusal `EVENT_SOURCES` makes by requiring a
+   subject. Configure real authentication before enrolling an impersonating
+   agent, or leave the flag off.
+
+A related fix ships with it: every agent-reported failure used to read
+`unknown`, because client-go reports that for any error on a raw request and the
+agent reads raw on purpose. It now recovers the API server's message from the
+response body, so a refusal names the user and a permissions problem stops
+looking like a broken cluster.
+
 ## Configuration compatibility
 
 Settings are validated at startup and a bad one **refuses to boot** rather than

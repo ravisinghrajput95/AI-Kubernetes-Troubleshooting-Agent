@@ -216,3 +216,38 @@ def test_every_kind_the_platform_can_name_is_one_the_agent_knows():
         f"_KINDS names {missing}, which agent/internal/policy/kinds.go does not "
         f"serve. The platform would ask for it and be refused."
     )
+
+
+def test_a_refusal_names_who_was_refused_on_both_paths():
+    """Parity of the *reason*, not just of the read.
+
+    `app/kubernetes/access.py` exists to tell a locked door from a broken
+    cluster, and it can only do that when the message names whose permissions
+    closed the door. Through a kubeconfig, kubectl relays the API server's
+    sentence. Through an agent it said `unknown` — because client-go reports
+    that for every error on a raw request, and the agent reads raw on purpose
+    so the schema cannot decode the error body either. The server's actual
+    sentence is in the response body that `DoRaw` hands back alongside the
+    error.
+
+    A source tripwire rather than a behavioural test, deliberately: the
+    behaviour is pinned in Go (`internal/collectors/status_test.go`) and live
+    against a real cluster in `test_agent_transport.py`, and neither runs in the
+    Python suite. This is what makes the coupling visible to someone editing
+    from this side.
+    """
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2] / "agent/internal/collectors/collector.go"
+    ).read_text()
+
+    assert "statusMessage(body)" in source, (
+        "the agent no longer reads the API server's message out of the error "
+        "body, so every refusal reports client-go's 'unknown' placeholder and a "
+        "permissions problem becomes indistinguishable from a broken cluster"
+    )
+    assert "isPlaceholder(message)" in source, (
+        "the agent no longer filters client-go's 'unknown' placeholder, so it "
+        "reaches the evidence record as if it were the server's reason"
+    )

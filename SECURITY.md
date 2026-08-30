@@ -88,17 +88,36 @@ cluster content as hostile input.
 
 Not vulnerabilities to report — documented limitations.
 
-- **`AUTH_MODE` defaults to `disabled`.** It costs a deliberate acknowledgement,
-  but the default is still the insecure one.
+- **`AUTH_MODE`'s default *value* is `disabled`, which reads worse than it
+  behaves.** A fresh install with no configuration **does not start**:
+  `disabled` is refused unless `ALLOW_INSECURE_NO_AUTH=true` is also set, and
+  `token` with no `API_TOKENS` is refused too. The insecure state is reachable
+  only by an operator asking for it in as many words, and
+  `TestTheShippedDefaultCannotServeUnauthenticated` pins that. What remains is
+  a **documentation hazard**, not an open deployment: `default="disabled"` in
+  `config.py` reads as an insecure default to anyone who does not also read
+  `build_authenticator`. This bullet previously said "the default is still the
+  insecure one", which is how a reader — and one readiness assessment — came to
+  score the platform as shipping open.
 - **The agent CA is a development CA** unless you supply one. It is generated on
   first start, says so loudly, and its private key sits on the gateway's disk.
   Supply `AGENT_CA_CERT_FILE`/`AGENT_CA_KEY_FILE` from an issuer you control.
 - **Agent enrolment bootstrap is trust-on-first-use** without `--ca-file`. That
   one call has nothing to verify the platform with; the CA it is handed is
   pinned thereafter. Supply the CA file in any deployment you care about.
-- **Impersonation is not enforced by the cluster on the agent path.** The
-  calling principal travels on the wire, but the agent's ServiceAccount bounds
-  what can actually be read.
+- ~~Impersonation is not enforced by the cluster on the agent path~~
+  **closed.** The agent applies `Impersonate-User` / `Impersonate-Group` to
+  every read, so the API server — not the platform, and not the agent — decides
+  what a request may see. Proved against a real cluster: a caller bound to one
+  namespace is refused a cluster-wide list, is served the namespace they hold,
+  and the same read through a non-impersonating agent returns the whole cluster
+  (`TestTheClusterAppliesTheCallersRbac`). **Two caveats an operator needs.**
+  An agent enrolled before this shipped does not impersonate — it lacks both
+  the flag and the `impersonate` verb — and says so in its logs on every start;
+  re-apply the enrolment manifest. And an impersonating agent **refuses** a read
+  that names nobody rather than falling back to its own broad-read
+  ServiceAccount, so `--impersonate` and `AUTH_MODE=disabled` are not a working
+  pair. See `docs/UPGRADE.md`.
 - **Redaction is best effort on free text.** It reliably catches credentials in
   recognisable shapes. It cannot catch a secret a log line prints with no marker
   and no shape — an account number, a customer email, a bare high-entropy
@@ -113,8 +132,13 @@ Not vulnerabilities to report — documented limitations.
   `docs/DATA_PROTECTION.md`.
 - **The rate limiter fails open**, so a Redis outage removes it rather than
   refusing traffic.
-- **`investigations.result` is not pruned by retention** — only the rendered
-  artefacts are.
+- ~~`investigations.result` is not pruned by retention~~ **stale, and it was
+  the wrong way round.** `ReportStore.prune()` nulls `investigations.result` in
+  the same transaction that deletes the rendered artefacts, and the payload is
+  the *larger* copy — 2.7 MB against a couple of hundred kilobytes. Fixed with
+  F19; this bullet outlived it. Left visible rather than deleted, because a
+  stale security claim is the same defect as a stale "this is dead" note: it
+  invites a reader to plan around a gap that is not there.
 - **Peak parse memory is proportional to cluster size** on the kubeconfig path:
   kubectl assembles a whole list before writing it. Item counts are capped and
   truncation is recorded as an evidence gap, but the parse ceiling needs a

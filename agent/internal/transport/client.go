@@ -171,6 +171,42 @@ func (c *Client) serve(
 	}
 
 	specs := request.GetSpecs()
+
+	// **An impersonating agent will not serve an unattributed read.**
+	//
+	// Falling back to the agent's own broad-read ServiceAccount for a request
+	// that named nobody is exactly the hole impersonation closes, and it would
+	// be reachable by omitting one wire field. The platform's own event ingress
+	// makes the same refusal for the same reason: an alert-triggered
+	// investigation with no identity would read as the service account, so
+	// `EVENT_SOURCES` requires a subject. Refused as FORBIDDEN rather than
+	// dropped, because a citable gap is the point of the evidence layer.
+	if c.collector.Impersonates() && request.GetActor().GetUsername() == "" {
+		for _, spec := range specs {
+			send(&agentv1.AgentMessage{Payload: &agentv1.AgentMessage_Evidence{
+				Evidence: &agentv1.EvidenceEnvelope{
+					InvestigationId: request.GetInvestigationId(),
+					RequestId:       request.GetRequestId(),
+					Record: &agentv1.EvidenceRecord{
+						Kind:   spec.GetKind(),
+						Target: spec.GetTarget(),
+						Status: agentv1.EvidenceStatus_EVIDENCE_STATUS_FORBIDDEN,
+						Detail: "This agent impersonates the calling user and the " +
+							"request named none, so there is no identity to read as.",
+						CollectorId: "agent",
+					},
+				},
+			}})
+		}
+		send(&agentv1.AgentMessage{Payload: &agentv1.AgentMessage_Done{Done: &agentv1.CollectionDone{
+			InvestigationId: request.GetInvestigationId(),
+			RequestId:       request.GetRequestId(),
+			RecordsEmitted:  int32(len(specs)),
+			SpecsRequested:  int32(len(specs)),
+		}}})
+		return
+	}
+
 	limit := make(chan struct{}, c.options.MaxConcurrent)
 	var wait sync.WaitGroup
 	var emitted int
@@ -183,7 +219,7 @@ func (c *Client) serve(
 			limit <- struct{}{}
 			defer func() { <-limit }()
 
-			record := c.collector.Collect(ctx, spec)
+			record := c.collector.Collect(ctx, spec, request.GetActor())
 			send(&agentv1.AgentMessage{Payload: &agentv1.AgentMessage_Evidence{
 				Evidence: &agentv1.EvidenceEnvelope{
 					InvestigationId: request.GetInvestigationId(),

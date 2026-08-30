@@ -728,6 +728,57 @@ Four things here are load-bearing:
 
 **Nothing set that variable for six milestones** — not CI, not `integration_verify.sh` — so this suite ran when a person remembered, which is the standing the mutation tests had before `scripts/mutation_check.py`. It now runs in the `integration-verify` job, which builds the binary on the host and **checks how many tests ran rather than the exit status**, because a fully-skipped pytest run exits 0. Two holes in the suite closed on the way in: it now creates the pod it compares (three tests assumed one called `web` existed, and their failure was indistinguishable from a real divergence), and it **pins the agent's kubeconfig** — the binary has no `--context` and followed *current-context*, so the comparison rested on ambient kubectl state; with a decoy current-context, 23 of 36 fail unpinned and all pass pinned. Running it is what found `statusFor` mapping **every** 404 to `EMPTY`: a status the platform counts as *usable*, so an absent metrics-server read as "we looked and there is no usage" through an agent and "we could not look" through a kubeconfig, for the same cluster at the same moment. That inflates `evidence_coverage.completeness`, and with it the confidence of a diagnosis that saw less — the exact thing "missing metrics must never read as healthy metrics" forbids. A 404 on a **named** read means that object is gone (`EMPTY`); on a **list** read it means the API is not served here (`UNAVAILABLE`), and `policy.Read.Named` is what carries the difference.
 
+### Reading as the caller, through an agent (`agent/internal/collectors/`)
+
+F13's guarantee is that **the platform cannot see more than the calling user
+can**, delivered by Kubernetes impersonation so the API server applies *their*
+RBAC. It held on the kubeconfig path via `kubectl --as`. On the agent path the
+caller travelled on the wire in `CollectionRequest.actor` and the agent
+**discarded it** — every read ran as the agent's own broad-read ServiceAccount,
+for any caller who could reach the platform. `collection.proto` documented the
+opposite from the day it was written.
+
+The agent now sets `Impersonate-User` / `Impersonate-Group` per request. Five
+things are load-bearing:
+
+- **Per request, never on the `rest.Config`.** One agent serves every caller
+  through one shared client; an identity on the config would be whichever
+  caller set it last, applied to whoever's read went out next.
+- **Groups are repeated headers, not one joined string.** Joining them produces
+  a group literally named `sre,oncall`, which matches no binding — so the read
+  is refused and looks like the user simply lacking access.
+- **Off unless `--impersonate`.** An agent enrolled earlier has no `impersonate`
+  verb; sending the header anyway would have the API server refuse everything
+  and `app/kubernetes/access.py` would blame the *caller's* RBAC. The enrolment
+  manifest writes the flag and the ClusterRole grant in one document.
+- **An impersonating agent refuses an unattributed read.** Falling back to its
+  own ServiceAccount is the hole this closes, reachable by omitting one wire
+  field. Same refusal `EVENT_SOURCES` makes by requiring a subject. The
+  consequence: `--impersonate` and `AUTH_MODE=disabled` are not a working pair.
+- **One decision, both providers.** `app/auth/impersonation.identity_for()` is
+  asked by `_impersonation_args` and by `build_remote_provider`. They used to
+  decide separately and disagree: the local path declined for an anonymous
+  caller, the agent path sent `principal.subject` regardless — so an
+  unauthenticated deployment asked the cluster to read as a user named
+  `anonymous`. Pinned by a test that reads the **kubectl argv and the protobuf
+  actor**, not the shared helper; comparing the helper to itself survives the
+  mutation.
+
+**A refusal has to name who was refused**, and that took a second fix.
+client-go reports `unknown` for *every* error on a raw request — the agent reads
+raw on purpose, so that is the normal path — while the API server's own sentence
+sits in the body `DoRaw` returns alongside the error. `detailFor` reads it, and
+filters client-go's placeholder precisely (`unknown`, or `unknown (get pods)`)
+rather than by prefix, because `unknown field "spec.replicas"` is a real server
+message. Without this every agent-path permissions problem was indistinguishable
+from a broken cluster.
+
+Proved against a real API server, not just on the wire:
+`TestTheClusterAppliesTheCallersRbac` binds a user to one namespace and asserts
+the cluster-wide read is refused, the namespaced read succeeds, and **the same
+read through a non-impersonating agent returns the whole cluster** — the control
+that makes the refusal mean something.
+
 ### Agent identity (`app/security/`, `app/gateway/identity.py`, `agent/internal/identity/`)
 
 **The certificate is the identity.** An agent names itself exactly once — in `Register`, where a single-use token has already bound that name — and never again. Every `Connect` stream is placed by reading the peer certificate, carried as a URI SAN in SPIFFE form (`spiffe://<trust-domain>/cluster/<id>`; the CN is for humans and is never trusted).

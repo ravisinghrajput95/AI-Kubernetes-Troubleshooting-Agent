@@ -62,13 +62,22 @@ class KubectlExecutor:
         Local kubeconfig operations are excluded: there is no API server call to
         impersonate against.
         """
-        if not settings.impersonate_users or self.principal is None:
-            return []
-        if self.principal.anonymous or args[:1] == ["config"]:
+        from app.auth.impersonation import identity_for
+
+        # Local kubeconfig operations have no API server call behind them, so
+        # there is nothing to impersonate against. Everything else defers to the
+        # one shared decision, so this path and the agent path cannot disagree
+        # about who a read runs as.
+        if args[:1] == ["config"]:
             return []
 
-        flags = ["--as", self.principal.subject]
-        for group in self.principal.groups:
+        identity = identity_for(self.principal)
+        if identity is None:
+            return []
+
+        subject, groups = identity
+        flags = ["--as", subject]
+        for group in groups:
             flags.extend(["--as-group", group])
         return flags
 

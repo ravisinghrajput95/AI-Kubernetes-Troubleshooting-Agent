@@ -200,6 +200,18 @@ def differential_workload():
 @pytest.fixture
 async def connected_agent(tmp_path, monkeypatch, pinned_kubeconfig):
     """A gateway, and a real agent process enrolled and dialled into it over mTLS."""
+    async for session in _agent(tmp_path, monkeypatch, pinned_kubeconfig, impersonate=False):
+        yield session
+
+
+@pytest.fixture
+async def impersonating_agent(tmp_path, monkeypatch, pinned_kubeconfig):
+    """The same, reading as whoever the platform names rather than as itself."""
+    async for session in _agent(tmp_path, monkeypatch, pinned_kubeconfig, impersonate=True):
+        yield session
+
+
+async def _agent(tmp_path, monkeypatch, pinned_kubeconfig, impersonate: bool):
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "agent_gateway_dns_names", "localhost")
@@ -242,6 +254,7 @@ async def connected_agent(tmp_path, monkeypatch, pinned_kubeconfig):
             "--identity-dir",
             str(tmp_path / "agent-identity"),
             "--once",
+            *(["--impersonate"] if impersonate else []),
         ],
         env=environment,
         stdout=subprocess.PIPE,
@@ -874,3 +887,169 @@ class TestThePlaintextPathIsStillThere:
             process.terminate()
             process.wait(timeout=5)
             await gateway.stop()
+
+
+# A namespace, a pod in it, and a user who may read *only* that namespace.
+#
+# The point is a caller whose RBAC is genuinely narrower than the agent's, so
+# "the cluster refused this read" and "the agent never asked on their behalf"
+# produce visibly different answers.
+RESTRICTED_USER = "restricted@k8s-agent.test"
+IMPERSONATION_NAMESPACE = "k8s-agent-impersonation"
+IMPERSONATION_MANIFEST = f"""apiVersion: v1
+kind: Namespace
+metadata:
+  name: {IMPERSONATION_NAMESPACE}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-restricted
+  namespace: {IMPERSONATION_NAMESPACE}
+spec:
+  containers:
+    - name: web
+      image: registry.k8s.io/pause:3.9
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: read-pods-here
+  namespace: {IMPERSONATION_NAMESPACE}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: read-pods-here
+  namespace: {IMPERSONATION_NAMESPACE}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: read-pods-here
+subjects:
+  - kind: User
+    name: {RESTRICTED_USER}
+    apiGroup: rbac.authorization.k8s.io
+"""
+
+
+class TestTheClusterAppliesTheCallersRbac:
+    """F13's guarantee, on the path where it did not hold.
+
+    "The platform cannot see more than you can" is true through a kubeconfig
+    because `kubectl --as` makes the API server apply the caller's RBAC. Through
+    an agent the caller travelled on the wire in `CollectionRequest.actor` and
+    was **discarded** — every read ran as the agent's own broad-read
+    ServiceAccount, for any caller who could reach the platform.
+    `collection.proto` documented the opposite from the day it was written.
+
+    Asserted against a real API server, because the unit tests prove the headers
+    leave the agent and nothing more. Only Kubernetes can prove they are obeyed.
+    """
+
+    @pytest.fixture(scope="class", autouse=True)
+    def restricted_user(self):
+        apply = subprocess.run(
+            ["kubectl", "--context", CONTEXT, "apply", "-f", "-"],
+            input=IMPERSONATION_MANIFEST,
+            capture_output=True,
+            text=True,
+        )
+        if apply.returncode != 0:
+            pytest.skip(f"could not create the restricted user: {apply.stderr[-300:]}")
+        try:
+            yield
+        finally:
+            subprocess.run(
+                [
+                    "kubectl",
+                    "--context",
+                    CONTEXT,
+                    "delete",
+                    "namespace",
+                    IMPERSONATION_NAMESPACE,
+                    "--wait=false",
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+    async def _read(self, session, request, subject):
+        provider = RemoteAgentProvider(session, principal_subject=subject)
+        return await provider.fetch(request)
+
+    async def test_the_agent_can_see_the_whole_cluster_by_itself(self, impersonating_agent):
+        """The control, and it has to come first.
+
+        Without it, "the restricted user was refused" is satisfied just as well
+        by an agent that cannot read anything at all — which is what a broken
+        ClusterRole, a wrong path or a dead cluster all look like from here.
+        """
+        result = await self._read(
+            impersonating_agent,
+            ResourceRequest(verb=ReadVerb.GET, resource="pods", all_namespaces=True),
+            subject="",
+        )
+        # An impersonating agent refuses an unattributed read rather than
+        # falling back to its own identity — that refusal is itself the point.
+        assert not result.success
+        assert "named none" in result.error, result.error
+
+    async def test_a_restricted_caller_is_refused_a_cluster_wide_read(self, impersonating_agent):
+        result = await self._read(
+            impersonating_agent,
+            ResourceRequest(verb=ReadVerb.GET, resource="pods", all_namespaces=True),
+            subject=RESTRICTED_USER,
+        )
+        assert not result.success, (
+            "the cluster served a cluster-wide pod list to a user bound only to "
+            f"{IMPERSONATION_NAMESPACE}; the agent read as itself"
+        )
+        # **The message must name the user**, which is the entire product of
+        # `app/kubernetes/access.py`: an investigation degraded by one caller's
+        # narrow RBAC has to be distinguishable from one degraded by a broken
+        # cluster, and the way you tell is that the API server said whose
+        # permissions closed the door. client-go reports "unknown" for every
+        # error on a raw read, so this arrived empty until `detailFor` learned
+        # to read the response body.
+        assert RESTRICTED_USER in result.error, (
+            f"the refusal does not name who was refused: {result.error!r}"
+        )
+        assert "cannot list" in result.error.lower(), result.error
+
+    async def test_the_same_caller_reads_what_they_are_allowed(self, impersonating_agent):
+        """The other half. A refusal on its own is also what a broken agent
+        produces; this proves the identity is applied rather than the read
+        simply failing."""
+        result = await self._read(
+            impersonating_agent,
+            ResourceRequest(verb=ReadVerb.GET, resource="pods", namespace=IMPERSONATION_NAMESPACE),
+            subject=RESTRICTED_USER,
+        )
+        assert result.success, result.error
+        names = [item["metadata"]["name"] for item in (result.data or {}).get("items", [])]
+        assert "web-restricted" in names, names
+
+    async def test_without_impersonation_the_same_read_is_served(self, connected_agent):
+        """The measurement of what was wrong.
+
+        The identical request, to an agent built the way every agent was built
+        until now: the restricted user is handed the whole cluster.
+        """
+        result = await self._read(
+            connected_agent,
+            ResourceRequest(verb=ReadVerb.GET, resource="pods", all_namespaces=True),
+            subject=RESTRICTED_USER,
+        )
+        assert result.success, result.error
+        namespaces = {
+            item["metadata"]["namespace"] for item in (result.data or {}).get("items", [])
+        }
+        assert len(namespaces) > 1, (
+            "the control did not actually read beyond one namespace, so it proves "
+            f"nothing about what impersonation prevents: {namespaces}"
+        )

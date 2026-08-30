@@ -3,8 +3,10 @@ package collectors
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	agentv1 "github.com/ravisinghrajput95/ai-kubernetes-agent/agent/gen/agentv1"
@@ -16,12 +18,20 @@ import (
 
 // Collector performs reads against one cluster.
 type Collector struct {
-	client  rest.Interface
-	cluster string
+	client rest.Interface
+	// impersonate applies the calling user's identity to every read, so the
+	// *cluster* decides what a request may see. Off by default: an agent whose
+	// ServiceAccount lacks the `impersonate` verb would have every read
+	// refused, and an agent enrolled before this existed has exactly that
+	// ClusterRole. The enrolment manifest turns it on and grants the verb in
+	// the same document, so the two cannot be out of step for a cluster
+	// enrolled after this shipped.
+	impersonate bool
+	cluster     string
 }
 
-func New(client rest.Interface, cluster string) *Collector {
-	return &Collector{client: client, cluster: cluster}
+func New(client rest.Interface, cluster string, impersonate bool) *Collector {
+	return &Collector{client: client, cluster: cluster, impersonate: impersonate}
 }
 
 // Collect resolves a spec and performs the read.
@@ -29,7 +39,20 @@ func New(client rest.Interface, cluster string) *Collector {
 // A failure is returned as a record with a status, never as an error: the
 // platform's evidence layer treats "could not look" as citable data, and a
 // dropped record would make a gap indistinguishable from a healthy result.
-func (c *Collector) Collect(ctx context.Context, spec *agentv1.EvidenceSpec) *agentv1.EvidenceRecord {
+// Collect performs one read on behalf of `actor`.
+//
+// **The actor is much of the reason the agent is a separate process.** F13's
+// guarantee is that the platform cannot see more than the calling user can, and
+// it holds on the kubeconfig path because `kubectl --as` makes the API server
+// apply that user's RBAC. On this path the actor arrived on the wire and was
+// *discarded*, so every agent read ran as the agent's own ServiceAccount —
+// broad read across the cluster, for any caller who could reach the platform.
+// `proto/agent/v1/collection.proto` has documented the opposite since M2.
+func (c *Collector) Collect(
+	ctx context.Context,
+	spec *agentv1.EvidenceSpec,
+	actor *agentv1.Impersonation,
+) *agentv1.EvidenceRecord {
 	started := time.Now()
 	namespace, name := targetOf(spec)
 
@@ -61,6 +84,7 @@ func (c *Collector) Collect(ctx context.Context, spec *agentv1.EvidenceSpec) *ag
 			request = request.Param(key, value)
 		}
 	}
+	request = c.impersonated(request, actor)
 
 	// Raw bytes, deliberately: decoding into typed objects would drop fields
 	// this binary's compiled-in schema does not know and reorder keys on the
@@ -71,7 +95,7 @@ func (c *Collector) Collect(ctx context.Context, spec *agentv1.EvidenceSpec) *ag
 
 	if err != nil {
 		record.Status = statusFor(err, read.Named)
-		record.Detail = detailFor(err)
+		record.Detail = detailFor(err, body)
 		return record
 	}
 
@@ -79,6 +103,31 @@ func (c *Collector) Collect(ctx context.Context, spec *agentv1.EvidenceSpec) *ag
 	record.Status = agentv1.EvidenceStatus_EVIDENCE_STATUS_OK
 	return record
 }
+
+// impersonated applies the calling user's identity to a request.
+//
+// Headers rather than a `rest.Config` field, because one agent serves every
+// caller through one shared client: an identity baked into the config would be
+// whichever caller set it last, applied to whoever's read went out next. Per
+// request, an identity cannot outlive the read it belongs to.
+func (c *Collector) impersonated(
+	request *rest.Request,
+	actor *agentv1.Impersonation,
+) *rest.Request {
+	if !c.impersonate || actor.GetUsername() == "" {
+		return request
+	}
+	request = request.SetHeader("Impersonate-User", actor.GetUsername())
+	if groups := actor.GetGroups(); len(groups) > 0 {
+		request = request.SetHeader("Impersonate-Group", groups...)
+	}
+	return request
+}
+
+// Impersonates reports whether this agent applies the caller's identity, so the
+// platform can say which guarantee an investigation actually ran under rather
+// than assuming the stronger one.
+func (c *Collector) Impersonates() bool { return c.impersonate }
 
 // wrap presents a text response as a one-key object so the wire payload is
 // always JSON, whatever the read returned.
@@ -130,11 +179,77 @@ func statusFor(err error, named bool) agentv1.EvidenceStatus {
 	}
 }
 
-func detailFor(err error) string {
+// detailFor is why a refused read can name who was refused.
+//
+// **client-go reports `"unknown"` for every error on a raw request**, and the
+// agent reads raw on purpose — decoding into typed objects would drop fields
+// this binary's compiled-in schema does not know. So `transformResponse` cannot
+// decode the error body either, and synthesises a `Status` whose `Message` is
+// the literal string `unknown`. `err.Error()` says the same. The API server's
+// actual sentence — `pods is forbidden: User "alice@acme.com" cannot list
+// resource "pods" in API group "" at the cluster scope` — is sitting in the
+// response body, which `DoRaw` hands back alongside the error.
+//
+// That sentence is the whole product of `app/kubernetes/access.py`: it exists
+// to tell a locked door from a broken cluster, and to say *whose* RBAC closed
+// the door. Through a kubeconfig it gets kubectl's message; through an agent it
+// used to get "unknown", so an investigation degraded by one user's narrow
+// permissions was indistinguishable from one degraded by a broken cluster.
+//
+// Found while proving impersonation end to end — the read was correctly
+// refused and could not say by whom.
+func detailFor(err error, body []byte) string {
+	if message := statusMessage(body); message != "" {
+		return message
+	}
 	if status := apierrors.APIStatus(nil); errors.As(err, &status) {
-		return status.Status().Message
+		if message := status.Status().Message; message != "" && !isPlaceholder(message) {
+			return message
+		}
+		if reason := status.Status().Reason; reason != "" {
+			return string(reason)
+		}
 	}
 	return err.Error()
+}
+
+// client-go's placeholder when it could not decode an error response.
+const unknownMessage = "unknown"
+
+// isPlaceholder distinguishes client-go's stand-in from a real server message.
+//
+// It emits `unknown`, or `unknown (get pods)` when it knows the request that
+// failed. Matched precisely rather than by prefix, because a genuine API server
+// message can begin with the same word — `unknown field "spec.replicas"` on a
+// rejected object is one — and discarding that would trade this defect for its
+// mirror image.
+func isPlaceholder(message string) bool {
+	if message == unknownMessage {
+		return true
+	}
+	return strings.HasPrefix(message, unknownMessage+" (") && strings.HasSuffix(message, ")")
+}
+
+// statusMessage reads the API server's own sentence out of an error body.
+//
+// Parsed with `encoding/json` into a minimal shape rather than decoded through
+// the scheme: the scheme is what failed in the first place, and a Status has
+// exactly one field worth reading here.
+func statusMessage(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var status struct {
+		Kind    string `json:"kind"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &status); err != nil {
+		return ""
+	}
+	if status.Kind != "Status" {
+		return ""
+	}
+	return status.Message
 }
 
 func targetOf(spec *agentv1.EvidenceSpec) (namespace, name string) {

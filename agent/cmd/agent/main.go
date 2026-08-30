@@ -83,6 +83,7 @@ func main() {
 	caFile := flag.String("ca-file", envOr("AGENT_CA_FILE", ""), "platform CA bundle, for verifying the gateway during enrolment")
 	insecureMode := flag.Bool("insecure", envOr("AGENT_INSECURE", "") == "1", "plaintext, no certificate; local development only")
 	kubeconfig := flag.String("kubeconfig", envOr("KUBECONFIG", ""), "kubeconfig path; in-cluster config when empty")
+	impersonate := flag.Bool("impersonate", envOr("AGENT_IMPERSONATE", "") == "1", "read as the calling user, so the cluster applies their RBAC (needs the impersonate verb)")
 	apiQPS := flag.Float64("api-qps", envOrFloat("AGENT_API_QPS", defaultAPIQPS), "sustained API-server requests per second this agent allows itself")
 	apiBurst := flag.Int("api-burst", envOrInt("AGENT_API_BURST", defaultAPIBurst), "burst above --api-qps before client-side throttling kicks in")
 	renewalCheck := flag.Duration("renewal-check", defaultRenewalCheck, "how often to check whether the certificate has reached its renewal point")
@@ -145,7 +146,15 @@ func main() {
 		log.Warn("could not read the server version", "error", err)
 	}
 
-	collector := collectors.New(clientset.CoreV1().RESTClient(), *cluster)
+	collector := collectors.New(clientset.CoreV1().RESTClient(), *cluster, *impersonate)
+	if *impersonate {
+		log.Info("reads run as the calling user; this agent's ServiceAccount needs the impersonate verb")
+	} else {
+		log.Warn("reads run as this agent's ServiceAccount, not as the calling user. " +
+			"The platform's guarantee that it cannot see more than you can does not hold " +
+			"on this agent. Re-apply the enrolment manifest, or pass --impersonate with a " +
+			"ClusterRole granting the impersonate verb.")
+	}
 	client := transport.New(transport.Options{
 		Endpoint:       *endpoint,
 		ClusterID:      *cluster,

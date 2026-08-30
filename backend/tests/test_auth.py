@@ -502,3 +502,83 @@ class TestTheShippedDefaultCannotServeUnauthenticated:
         object.__setattr__(config, "allow_insecure_no_auth", True)
 
         config.validate_auth()
+
+
+class TestBothProvidersReadAsTheSamePerson:
+    """One policy, two deliveries, and they must not drift.
+
+    Impersonation is what makes "the platform cannot see more than you can"
+    true. It is delivered by `kubectl --as` locally and by `Impersonate-User`
+    headers through an agent, and those were two separate decisions that did not
+    agree: the local path declined for an anonymous caller, the agent path sent
+    `principal.subject` regardless — so an unauthenticated deployment asked the
+    cluster to read as a user literally named `anonymous`.
+
+    It was inert only because the agent discarded the field. The moment the
+    agent honoured it, every read on such a deployment would have been refused
+    by a cluster with no such user, and the refusal would have read as the
+    caller's RBAC being too narrow.
+    """
+
+    def _both(self, principal):
+        """What each path decides, read off **what each one would send**.
+
+        Not off `identity_for`. Comparing the shared helper against itself
+        proves the helper is consistent with the helper — the agent path could
+        stop calling it entirely and this would still pass, which is precisely
+        the drift being pinned. So the local side is read from the kubectl argv
+        and the remote side from the protobuf actor on a provider built by
+        `build_remote_provider`. Mutation-tested: reverting that function to
+        `principal.subject` survives the weaker version of this test.
+        """
+        from app.kubernetes.kubectl_executor import KubectlExecutor
+        from app.providers.remote_agent import build_remote_provider
+
+        flags = KubectlExecutor(principal=principal)._impersonation_args(["get", "pods"])
+        local = None
+        if flags:
+            groups = tuple(flags[index + 1] for index, f in enumerate(flags) if f == "--as-group")
+            local = (flags[flags.index("--as") + 1], groups)
+
+        class Session:
+            cluster_id = "prod"
+
+        actor = build_remote_provider(Session(), principal=principal)._actor
+        remote = (actor.username, tuple(actor.groups)) if actor is not None else None
+        return local, remote
+
+    @pytest.mark.parametrize(
+        "principal",
+        [
+            None,
+            ANONYMOUS,
+            Principal(subject="alice@acme.com"),
+            Principal(subject="alice@acme.com", groups=("sre", "oncall")),
+            Principal(subject=""),
+        ],
+    )
+    def test_the_two_paths_agree(self, principal):
+        local, remote = self._both(principal)
+        assert local == remote, (
+            f"the kubeconfig path reads as {local!r} and the agent path as "
+            f"{remote!r} for the same caller"
+        )
+
+    def test_an_anonymous_caller_is_never_impersonated(self):
+        """`AUTH_MODE=disabled` produces an anonymous principal. Asking a
+        cluster to read as `anonymous` is asking for a user that does not
+        exist — every read refused, blamed on the caller."""
+        local, remote = self._both(ANONYMOUS)
+        assert local is None and remote is None
+
+    def test_turning_impersonation_off_turns_it_off_on_both(self, monkeypatch):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "impersonate_users", False)
+        local, remote = self._both(Principal(subject="alice@acme.com", groups=("sre",)))
+        assert local is None and remote is None
+
+    def test_groups_survive_to_both(self):
+        local, remote = self._both(Principal(subject="a@b.c", groups=("sre", "oncall")))
+        assert local == ("a@b.c", ("sre", "oncall"))
+        assert remote == ("a@b.c", ("sre", "oncall"))

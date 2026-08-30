@@ -232,6 +232,21 @@ rules:
   - apiGroups: ["metrics.k8s.io"]
     resources: ["nodes", "pods"]
     verbs: ["get", "list"]
+  # Read as the calling user, so the *cluster* decides what an investigation may
+  # see. Without this the agent reads as itself — broad read across the cluster
+  # for any caller who can reach the platform — and F13's guarantee that the
+  # platform cannot see more than you can holds through a kubeconfig and not
+  # through an agent. `--impersonate` on the Deployment below and this grant are
+  # written together on purpose: either alone is a broken agent.
+  #
+  # It is not an escalation of what this ServiceAccount can reach. Impersonating
+  # grants the *intersection* of this role and the impersonated user, every read
+  # is still a GET from a closed kind table, and the cluster's own audit log now
+  # attributes each read to the person who caused it instead of to a shared
+  # robot.
+  - apiGroups: [""]
+    resources: ["users", "groups"]
+    verbs: ["impersonate"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -343,6 +358,9 @@ spec:
             - "--gateway={endpoints["gateway_endpoint"]}"
             - "--enrol={endpoints["enrolment_endpoint"]}"
             - "--ca-file=/etc/k8s-ops-agent/ca.crt"
+            # Read as the caller, not as this agent. Paired with the
+            # `impersonate` grant in the ClusterRole above; neither works alone.
+            - "--impersonate"
           env:
             - name: AGENT_BOOTSTRAP_TOKEN
               valueFrom:

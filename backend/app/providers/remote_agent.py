@@ -247,9 +247,19 @@ def build_remote_provider(
     principal=None,
 ) -> RemoteAgentProvider:
     logger.debug("Using the remote agent for cluster {cluster}", cluster=session.cluster_id)
+
+    # The same decision the kubeconfig path makes, from the same function.
+    # Sending `principal.subject` unconditionally asked the cluster to read as a
+    # user named `anonymous` on an unauthenticated deployment — inert only while
+    # the agent discarded the field, and refused by every real cluster the
+    # moment it stopped.
+    from app.auth.impersonation import identity_for
+
+    identity = identity_for(principal)
+    subject, groups = identity if identity else ("", ())
     return RemoteAgentProvider(
         session,
         investigation_id=investigation_id,
-        principal_subject=principal.subject if principal else "",
-        principal_groups=principal.groups if principal else (),
+        principal_subject=subject,
+        principal_groups=groups,
     )
