@@ -208,10 +208,14 @@ therefore runs only when someone remembers. Running it found a shipped defect
 within minutes: the agent mapped every 404 to `EMPTY`, a *usable* status, so an
 absent metrics-server read as an idle cluster and raised the confidence of a
 diagnosis that had seen less. Fixed, mutation-tested three ways, and pinned by
-a Go test plus a tripwire in `tests/test_metrics_parity.py`. **Wiring the suite
-into the `integration-verify` job is the remaining work** — that job already has
-kind, Docker and a Python environment; what it does not have is a host-built
-agent binary.
+a Go test plus a tripwire in `tests/test_metrics_parity.py`. **The suite now
+runs in the `integration-verify` job**, which builds the agent binary on the
+host and fails unless most of the suite actually ran — a fully-skipped pytest
+run exits 0, so the count is checked rather than the exit status. Wiring it in
+also closed a hole in the suite itself: the agent binary has no `--context` and
+followed the caller's *current-context*, so the differential comparison rested
+on ambient kubectl state. The kubeconfig is now pinned, mutation-tested with a
+decoy current-context (23 of 36 fail without it).
 
 Renewal, specifically, is *not* the gap it was thought to be: it is covered by
 `TestRenewalHappensAtTwoThirdsOfLife` (Go, arbitrary clock) and

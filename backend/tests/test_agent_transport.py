@@ -81,6 +81,39 @@ async def wait_for_agent(registry: AgentRegistry, process, timeout: float = 20.0
     pytest.fail(f"The agent never connected: {stderr.decode()[-1500:]}")
 
 
+@pytest.fixture(scope="module")
+def pinned_kubeconfig(tmp_path_factory) -> str:
+    """A kubeconfig whose *current context* is the one under test.
+
+    The agent binary has no `--context`: `discoverConfig` falls through to the
+    default loading rules, which follow current-context. So the differential
+    comparison silently rested on the caller's ambient kubectl state — the agent
+    reading whatever context happened to be current while
+    `LocalKubectlProvider` read `AGENT_TEST_CONTEXT`. Two different clusters
+    compared for identical evidence passes or fails by luck, and the whole
+    suite is one long assertion that they agree.
+
+    That is the same machine-global state `integration_verify.sh` pins
+    `--kube-context` against on every command, after current-context switched
+    to an unrelated live GKE cluster mid-run. Minifying the context into a file
+    of its own and handing the agent `--kubeconfig` removes the variable rather
+    than checking it.
+    """
+    if KUBECONFIG:
+        return KUBECONFIG
+
+    path = tmp_path_factory.mktemp("kubeconfig") / "config"
+    minified = subprocess.run(
+        ["kubectl", "config", "view", "--minify", "--flatten", "--context", CONTEXT],
+        capture_output=True,
+        text=True,
+    )
+    if minified.returncode != 0:
+        pytest.skip(f"no kubeconfig for context {CONTEXT!r}: {minified.stderr[-200:]}")
+    path.write_text(minified.stdout)
+    return str(path)
+
+
 # The workload the differential comparison needs, created by the suite rather
 # than assumed.
 #
@@ -165,7 +198,7 @@ def differential_workload():
 
 
 @pytest.fixture
-async def connected_agent(tmp_path, monkeypatch):
+async def connected_agent(tmp_path, monkeypatch, pinned_kubeconfig):
     """A gateway, and a real agent process enrolled and dialled into it over mTLS."""
     from app.core.config import settings
 
@@ -189,13 +222,13 @@ async def connected_agent(tmp_path, monkeypatch):
 
     token = store.issue_token(CONTEXT)
 
-    environment = {**os.environ}
-    if KUBECONFIG:
-        environment["KUBECONFIG"] = KUBECONFIG
+    environment = {**os.environ, "KUBECONFIG": pinned_kubeconfig}
 
     process = subprocess.Popen(
         [
             BINARY,
+            "--kubeconfig",
+            pinned_kubeconfig,
             "--cluster",
             CONTEXT,
             "--gateway",
@@ -661,7 +694,7 @@ class TestRotationDoesNotInterruptAnything:
     """
 
     @pytest.fixture
-    async def rotating_agent(self, tmp_path, monkeypatch):
+    async def rotating_agent(self, tmp_path, monkeypatch, pinned_kubeconfig):
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "agent_gateway_dns_names", "localhost")
@@ -683,6 +716,8 @@ class TestRotationDoesNotInterruptAnything:
         process = subprocess.Popen(
             [
                 BINARY,
+                "--kubeconfig",
+                pinned_kubeconfig,
                 "--cluster",
                 CONTEXT,
                 "--gateway",
@@ -699,7 +734,7 @@ class TestRotationDoesNotInterruptAnything:
                 "1s",
                 "--once",
             ],
-            env={**os.environ},
+            env={**os.environ, "KUBECONFIG": pinned_kubeconfig},
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -757,18 +792,18 @@ class TestThePlaintextPathIsStillThere:
     """
 
     @pytest.fixture
-    async def plaintext_agent(self, tmp_path):
+    async def plaintext_agent(self, tmp_path, pinned_kubeconfig):
         registry = AgentRegistry()
         gateway = AgentGateway(port=0, registry=registry, mtls=False)
         port = await gateway.start()
 
-        environment = {**os.environ}
-        if KUBECONFIG:
-            environment["KUBECONFIG"] = KUBECONFIG
+        environment = {**os.environ, "KUBECONFIG": pinned_kubeconfig}
 
         process = subprocess.Popen(
             [
                 BINARY,
+                "--kubeconfig",
+                pinned_kubeconfig,
                 "--cluster",
                 CONTEXT,
                 "--gateway",

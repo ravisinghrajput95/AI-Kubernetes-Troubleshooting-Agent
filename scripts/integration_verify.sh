@@ -265,6 +265,79 @@ if [ "$VERIFY_ONLY" -eq 1 ]; then
   SKIP_REVOCATION="--skip-revocation"
 fi
 
+# The differential agent suite, against this cluster.
+#
+# It is the M4 exit criterion — an investigation collected through an agent must
+# produce the same evidence as the same read performed locally — and until now
+# it ran nowhere: **nothing set `K8S_AGENT_CLUSTER_INTEGRATION`**, not this
+# script and not CI, so 36 tests including both certificate-renewal checks
+# waited on someone remembering. That is the standing the mutation tests had
+# before `scripts/mutation_check.py`, and it cost a real defect: running it by
+# hand found the agent reporting an *absent* metrics-server as an empty result,
+# which made an uninstalled metrics-server read as an idle cluster.
+#
+# It belongs here rather than in `verify_deployment.py` for the reason
+# `docs/INTEGRATION_VERIFICATION.md` gives: it needs a second product to agree
+# with us — a real API server answering a real Go binary — and is only
+# observable from outside the process. It runs its own gateway and its own
+# agent against this cluster, sharing nothing with the chart-deployed one.
+#
+# Placed *after* the deployment verification on purpose: those assertions are
+# the established ones, and a newer check must not be able to stop them
+# reporting.
+run_differential_suite() {
+  local suite="$REPO_ROOT/backend/tests/test_agent_transport.py"
+
+  # The venv on a laptop, the runner's interpreter in CI. Named rather than
+  # guessed, because a `python3` without pytest would *skip* the whole suite
+  # and exit 0 — the vacuous pass this file guards against everywhere else.
+  local py="python3"
+  if [ -x "$REPO_ROOT/backend/.venv/bin/python" ]; then
+    py="$REPO_ROOT/backend/.venv/bin/python"
+  fi
+  if ! "$py" -c "import pytest" >/dev/null 2>&1; then
+    echo "the differential suite needs pytest and the backend dependencies." >&2
+    echo "  laptop: cd backend && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt" >&2
+    return 1
+  fi
+
+  local bin_dir
+  bin_dir="$(mktemp -d)"
+  (cd "$REPO_ROOT/agent" && go build -o "$bin_dir/k8s-agent" ./cmd/agent)
+
+  local junit="$bin_dir/results.xml"
+  (
+    cd "$REPO_ROOT/backend"
+    K8S_AGENT_CLUSTER_INTEGRATION=1 \
+    AGENT_BINARY="$bin_dir/k8s-agent" \
+    AGENT_TEST_CONTEXT="$KCTX" \
+      "$py" -m pytest -q "$suite" --junitxml="$junit"
+  )
+
+  # **The suite skips itself on a missing binary or a missing variable, and a
+  # fully-skipped run exits 0.** So the count is checked, not the exit status —
+  # the same guard the alert-series and scrape-target checks carry, and the
+  # reason `fleet_bench.py` refuses to print a result from a run that asserted
+  # nothing.
+  python3 - "$junit" <<'PY'
+import sys, xml.etree.ElementTree as ET
+
+root = ET.parse(sys.argv[1]).getroot()
+suite = root if root.tag == "testsuite" else root.find("testsuite")
+total = int(suite.get("tests", 0))
+skipped = int(suite.get("skipped", 0))
+ran = total - skipped
+print(f"  {ran} of {total} differential tests ran ({skipped} skipped)")
+if ran < 25:
+    sys.exit(
+        f"only {ran} of {total} ran. The suite skips itself when "
+        f"K8S_AGENT_CLUSTER_INTEGRATION is unset or AGENT_BINARY is missing, and a "
+        f"fully-skipped run exits 0 — which is indistinguishable from a passing one."
+    )
+PY
+  rm -rf "$bin_dir"
+}
+
 step "verifying the deployment"
 python3 "$REPO_ROOT/scripts/verify_deployment.py" \
   --context "$KCTX" \
@@ -276,6 +349,9 @@ python3 "$REPO_ROOT/scripts/verify_deployment.py" \
   --token "$API_TOKEN" \
   --agent-cluster "$AGENT_CLUSTER_ID" \
   $SKIP_REVOCATION
+
+step "differential agent suite (a real Go agent against this cluster)"
+run_differential_suite
 
 # The happy path ends here, and nothing else sets this. See `cleanup`.
 COMPLETED=1

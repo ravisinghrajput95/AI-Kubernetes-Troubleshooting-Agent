@@ -354,6 +354,59 @@ pytest. If the answer is "our code, or Prometheus's parser, or nginx's
 buffering, or the kubelet's probe path, or the operator's label selector", it
 is here.
 
+## The differential agent suite, which used to run nowhere
+
+`backend/tests/test_agent_transport.py` is M4's exit criterion: an
+investigation collected through an agent must produce the **same evidence** as
+the same read performed locally. It runs the compiled Go binary, enrols it over
+mTLS against a gateway the test starts, and compares record for record against
+`LocalKubectlProvider` reading the same cluster. Thirty-six tests, including
+both certificate-renewal checks.
+
+**Nothing set `K8S_AGENT_CLUSTER_INTEGRATION`.** Not this script, not CI, not
+`backend-integration`. So the suite waited on a human remembering — the exact
+standing the mutation tests had before `scripts/mutation_check.py`, and with
+the same result: running it by hand found a shipped defect in minutes. The
+agent mapped *every* 404 to `EMPTY`, a status the platform counts as **usable**,
+so an uninstalled metrics-server read as "we looked and there is no usage"
+through an agent and "we could not look" through a kubeconfig. That inflates
+evidence completeness, and completeness feeds the confidence score: the agent
+path reported more confidence for having seen less.
+
+It belongs in this job by the dividing question below. What would have to be
+wrong for it to fail? Our code — *or* a real API server's discovery document, or
+client-go's error classification, or the kubelet. It is not observable by
+importing `app`.
+
+Three things make it trustworthy here rather than merely present:
+
+- **The count is checked, not the exit status.** The suite skips itself when
+  `K8S_AGENT_CLUSTER_INTEGRATION` is unset or `AGENT_BINARY` is missing, and a
+  fully-skipped pytest run **exits 0**. Verified rather than assumed: pytest
+  alone returns 0 on 36 skips. The script parses the JUnit XML and fails unless
+  most of the suite actually ran, which is the same guard the scrape-target and
+  alert-series checks carry.
+- **The kubeconfig is pinned, and that was a real hole.** The agent binary has
+  no `--context`; `discoverConfig` falls through to the default loading rules,
+  which follow *current-context*. So the comparison rested on the caller's
+  ambient kubectl state — the agent reading whichever context happened to be
+  current while the local provider read `AGENT_TEST_CONTEXT`. Two different
+  clusters compared for identical evidence pass or fail by luck. The fixture
+  now minifies the named context into a file of its own and hands the agent
+  `--kubeconfig`. Mutation-tested with a kubeconfig whose current-context is a
+  decoy: **23 of 36 fail** with the pinning removed, all pass with it.
+- **It creates the workload it compares.** Three tests look for a pod named
+  `web`, and the module said only "kind create cluster" — so on a cluster
+  without one, three tests failed in a way indistinguishable from a real
+  divergence, which is the one judgement this suite exists to make. It now
+  applies a `pause` pod in a namespace of its own and deletes the namespace
+  afterwards.
+
+It runs **after** `verify_deployment.py`, so the established assertions report
+first and a newer check cannot stop them. Its gateway and its agent are its
+own; it shares nothing with the chart-deployed agent the routing and revocation
+checks use.
+
 ## Mutation-tested
 
 An invariant that has never been observed failing is a hypothesis. So
@@ -432,9 +485,14 @@ cover:
   existing `scaleout_bench.py` finding — flat past two workers on the
   kubeconfig path, because process spawning is a host resource — is unchanged
   and unmeasured across hosts.
-- **Agent certificate renewal.** The agent leg enrols, connects and is
-  revoked, but nothing runs long enough to reach renewal at 2/3 of certificate
-  life — the one part of the identity lifecycle still unexercised here.
+- **Agent certificate renewal *through the chart*.** The differential suite
+  above does exercise renewal — with a 30-second certificate, a real binary and
+  a real gateway, asserting the **same session object** still serves reads
+  afterwards — so the mechanism is covered in this job now. What is still not
+  covered is renewal in a *chart-deployed* agent, which needs the deployment to
+  issue a short-lived certificate. `AGENT_CERT_TTL_HOURS` is now a float
+  (`0.025` is ninety seconds, renewing at sixty), so that is buildable; it is
+  not built.
 - **Upgrades under traffic.** §21 measured this by hand across ten runs; the
   measurement is load-generator-shaped and does not fit a pass/fail assertion
   without a flakiness budget nobody has set.

@@ -183,6 +183,29 @@ jobs:
         with:
           version: v1.31.1
 
+      # Go and the backend dependencies are for the differential agent suite the
+      # script runs at the end: a real Go binary, built for this host, enrolling
+      # over mTLS against a gateway this job starts, answering reads from the
+      # kind cluster — and its evidence compared against the same reads made
+      # through kubectl. That suite is M4's exit criterion and until now ran
+      # nowhere, because nothing set `K8S_AGENT_CLUSTER_INTEGRATION`.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: agent/go.sum
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
       # No `if: failure()` dump step. The script installs its own trap, which
       # dumps pods, the Deployment and the platform's logs *before* deleting
       # the cluster — a step here runs after that teardown and can only report
