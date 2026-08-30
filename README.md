@@ -8,10 +8,12 @@ Every claim it makes is traceable to a specific piece of evidence. It cannot
 modify your cluster, and it will tell you what it could not see.
 
 > [!WARNING]
-> **Not production ready.** This runs against real clusters and is useful today,
-> but it is single-process with no HA, and several operational gaps remain. Read
-> [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) before deploying
-> anything, and [SECURITY.md](SECURITY.md) before exposing it.
+> **No production deployment exists.** Every number in this repository was
+> measured on kind clusters and synthetic fleets — there is no install anywhere
+> that has run for a week, and no user but its author. The gaps that remain are
+> tracked honestly in
+> [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md), and
+> [SECURITY.md](SECURITY.md) lists what is still weak before you expose it.
 
 ---
 
@@ -103,7 +105,10 @@ kubectl ─► Evidence ─► Signals ─► Hypotheses ─┬─► Playbooks 
 | Console | Panels for signals, hypotheses, evidence, remediation | [SRE_CONSOLE](docs/SRE_CONSOLE.md) |
 | Reports | One composition rendered as PDF, Markdown, JSON | [INCIDENT_REPORTS](docs/INCIDENT_REPORTS.md) |
 | Evaluation | Golden corpus gating reasoning quality in CI | [EVALUATION](docs/EVALUATION.md) |
-| **Enterprise** | **Proposed fleet architecture: agents, tenancy, scale** | [ENTERPRISE_ARCHITECTURE](docs/ENTERPRISE_ARCHITECTURE.md) |
+| Fleet | Cluster agents over mTLS, per-worker routing, presence | [ENTERPRISE_ARCHITECTURE](docs/ENTERPRISE_ARCHITECTURE.md) |
+| Tenancy & roles | Row-level security, four roles, audit log | [SSO_GROUP_MAPPING](docs/SSO_GROUP_MAPPING.md) |
+| Integrations | Alert-triggered investigations, signed egress, MCP tools | [MCP](docs/MCP.md) |
+| Operations | Probes, retention, backup, upgrade, SLOs | [UPGRADE](docs/UPGRADE.md) |
 
 ### Failure classes it investigates deeply
 
@@ -118,7 +123,7 @@ Read from the environment or `backend/.env`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `AUTH_MODE` | `disabled` | `oidc`, `token`, or `disabled` |
+| `AUTH_MODE` | `disabled` | `oidc`, `token`, or `disabled`. The default value looks worse than it behaves: **a fresh install with no configuration refuses to boot**, because `disabled` also requires the acknowledgement below |
 | `ALLOW_INSECURE_NO_AUTH` | `false` | Required to run with auth off. **Checked at startup**, so a misconfiguration refuses to boot rather than 500ing every request behind a green health check |
 | `OIDC_ISSUER` / `OIDC_AUDIENCE` | — | Required when `AUTH_MODE=oidc` |
 | `API_TOKENS` | — | `token:subject[:group\|group][:tenant]`, comma separated |
@@ -145,8 +150,12 @@ Read from the environment or `backend/.env`.
 | `CONSOLE_URL` | — | Used to link a notification to its investigation |
 
 **Impersonation matters.** With it on, every cluster read runs as the calling
-user, so the cluster applies *their* RBAC rather than the service account's. The
-service account needs `impersonate` on users and groups.
+user, so the cluster applies *their* RBAC rather than the service account's —
+which is what makes "the platform cannot see more than you can" true rather than
+aspirational. It works on both paths: `kubectl --as` locally, and
+`Impersonate-User` headers through a cluster agent. Either identity needs the
+`impersonate` verb on users and groups, and an agent enrolled before that
+existed says so in its logs until you re-apply its manifest.
 
 **Roles.** Four per tenant — `viewer` reads, `operator` may run investigations
 against a cluster, `admin` may enrol clusters and manage members, `owner` may
@@ -172,39 +181,128 @@ first time that person signs in.
 cd backend
 pip install -r requirements-dev.txt ruff
 ruff check . && ruff format --check .
-python -m pytest -q        # 438 tests
-python -m evals            # reasoning + grounding regression report
+python -m pytest -q        # 1,436 tests
+python -m evals            # 20 golden investigations, 11 grounding cases
 
 cd frontend
-npm test                   # 47 tests
+npm test                   # 230 tests
 npm run build              # tsc -b — the type gate
 ```
 
-CI runs all of the above on every pull request, plus a dependency audit that
+Two more that are worth knowing about, because they catch what the suites cannot:
+
+```bash
+python scripts/mutation_check.py      # ~4s: 16 shipped defects vs the tests that catch them
+./scripts/integration_verify.sh       # ~8min: kind + Helm + Prometheus + a real agent
+```
+
+`mutation_check.py` re-runs every hand-made mutation test: it reverts a defect
+that actually shipped and fails if the test written to catch it still passes. A
+passing suite is not evidence until you have seen it fail.
+
+CI runs all of the above on every pull request — including the integration job,
+which stands the chart up on kind and makes 48 assertions against the live
+deployment plus 40 differential agent tests — alongside a dependency audit that
 **fails the build** on a known vulnerability, a secret scan, and both Docker
 builds.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the five design rules this codebase
 holds to. They are load-bearing rather than stylistic.
 
+## Two deployment shapes
+
+The single-process default is *supported*, not a development fallback: nothing
+loads `psycopg` or `grpc` unless you configure them, so `uvicorn app.main:app`
+against nothing but a kubeconfig stays the getting-started path.
+
+| | Single process | Fleet |
+|---|---|---|
+| Set | nothing | `DATABASE_URL` + `REDIS_URL` |
+| Jobs | in memory, lost on restart | Postgres rows, reaped on worker death |
+| Reports | local disk | Postgres blobs, any worker serves any report |
+| Clusters | your kubeconfig | agents that dial out, no inbound port |
+| Tenants | one | `TENANCY_MODE=shared`, isolated by row-level security |
+
+Setting exactly one of `DATABASE_URL` / `REDIS_URL` is **refused at startup**
+rather than half-configured.
+
 ## Known limitations
 
 Stated plainly, because the alternative is you finding out during an incident.
+Everything here is current as of the last commit; a stale limitation is treated
+as a defect in this repository, not as harmless caution.
 
-- **Single process.** Jobs live in memory; they do not survive a restart and are
-  not shared between workers. Run one replica.
-- **No multi-tenancy** beyond per-user ownership of investigations.
-- **Peak memory scales with cluster size.** `kubectl` assembles a whole list
-  before writing it, so a very large cluster produces a large parse. Retention is
-  capped and truncation is reported; the ceiling needs a streaming client.
-- **No platform self-observability.** No metrics or traces of its own yet.
+- **Nobody has run this in production.** Not one deployment, not one user
+  besides its author. Every performance number came from kind clusters and
+  synthetic fleets on one machine, and nothing has run longer than a few
+  minutes. That is the largest gap between this and something you should trust
+  with an incident, and no amount of further code closes it.
+- **Peak memory scales with cluster size** on the kubeconfig path. `kubectl`
+  assembles a whole list before writing it. Item counts are capped and
+  truncation is recorded as an evidence gap, but the ceiling needs a streaming
+  client. The agent path does not have this problem.
 - **OpenAI only.** No provider abstraction, so no Anthropic, Bedrock, or local
-  models.
-- **`fix` and `prevention` are model-authored prose** and therefore influenceable
-  by injected cluster text. Commands never are.
+  models — and the reasoning corpus in CI exercises the deterministic path, not
+  a live model.
+- **`fix` and `prevention` are model-authored prose** and therefore
+  influenceable by injected cluster text. Grounding constrains them; it is not a
+  proof. Commands are never model-authored.
+- **Scale-out is flat past two workers on the kubeconfig path**, because each
+  investigation spawns ~15 kubectl processes and process creation is a host
+  resource. Add workers on an agent fleet, add hosts on a kubeconfig fleet.
+  Cross-host is unmeasured.
+- **`docs/SLO.md` proposes targets; it does not report attainment.** There is no
+  production signal to measure against.
 
 The full backlog, with severity and effort, is in
-[docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md).
+[docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md); the measured
+numbers and what was *not* measured are in
+[docs/PERFORMANCE_ENVELOPE.md](docs/PERFORMANCE_ENVELOPE.md).
+
+## Documentation
+
+Every document here is reachable from this page, and a test fails the build if
+one stops being — an unreferenced document is one nobody reads and everybody
+stops updating.
+
+**Understanding it**
+[Evidence](docs/EVIDENCE_ARCHITECTURE.md) ·
+[Reasoning](docs/REASONING_ARCHITECTURE.md) ·
+[Playbooks](docs/PLAYBOOKS.md) ·
+[Dependency graph](docs/DEPENDENCY_GRAPH.md) ·
+[Remediation](docs/REMEDIATION.md) ·
+[Reports](docs/INCIDENT_REPORTS.md) ·
+[Console](docs/SRE_CONSOLE.md) ·
+[API](docs/INVESTIGATION_API.md) ·
+[MCP tools](docs/MCP.md)
+
+**Running it**
+[Upgrade](docs/UPGRADE.md) ·
+[Backup and restore](docs/RUNBOOK_BACKUP_RESTORE.md) ·
+[Data protection](docs/DATA_PROTECTION.md) ·
+[SLOs](docs/SLO.md) ·
+[SSO group mapping](docs/SSO_GROUP_MAPPING.md) ·
+[Tenant usage reporting](docs/TENANT_USAGE_REPORTING.md) ·
+[Observability backends](docs/OBSERVABILITY.md) ·
+[What Prometheus must scrape](docs/OBSERVABILITY_INTEGRATIONS.md)
+
+**Trusting it**
+[Production readiness](docs/PRODUCTION_READINESS.md) — the backlog, honestly scored ·
+[Performance envelope](docs/PERFORMANCE_ENVELOPE.md) — measured, and what was *not* ·
+[Integration verification](docs/INTEGRATION_VERIFICATION.md) — what CI stands up and asserts ·
+[Evaluation](docs/EVALUATION.md) — the corpus gating reasoning quality ·
+[Live-cluster audit](docs/QA_AUDIT_2026-08-03.md) — 26 findings against a real cluster, including five of the auditor's own that were wrong
+
+**Design records**, kept as written rather than edited with hindsight:
+[Enterprise architecture](docs/ENTERPRISE_ARCHITECTURE.md) ·
+[Console redesign](docs/CONSOLE_REDESIGN.md)
+
+## Releases
+
+Versions are tagged and described in [CHANGELOG.md](CHANGELOG.md). While the
+major version is `0`, a minor bump may carry a breaking change; each release
+says which. `docs/UPGRADE.md` covers migrations, what a drain does and does not
+cover, and the per-version behaviour changes.
 
 ## License
 

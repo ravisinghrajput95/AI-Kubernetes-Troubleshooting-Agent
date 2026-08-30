@@ -1,6 +1,26 @@
 # Enterprise Platform Architecture
 
-**Status:** Proposed · **Audience:** Engineering leadership, platform architects
+**Status: designed 2026-07-26, and M1–M9 shipped.** This document is the design
+record — the reasoning, the alternatives rejected, and the ADRs the code still
+cites by number. It is **not** a roadmap, and the README used to link it as one.
+
+| Read this for | Read instead |
+|---|---|
+| Why the architecture is shaped this way | this document |
+| What actually exists today | [`../CLAUDE.md`](../CLAUDE.md), which documents the shipped system section by section |
+| What does **not** exist yet | [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md) |
+| What was measured, and what was not | [`PERFORMANCE_ENVELOPE.md`](PERFORMANCE_ENVELOPE.md) |
+| What is still weak | [`../SECURITY.md`](../SECURITY.md) |
+
+Two statements in §0 were true when written and have since been overtaken by the
+work this document proposed: the dependency graph of §3.6 is built
+(`app/graph/`, and [`DEPENDENCY_GRAPH.md`](DEPENDENCY_GRAPH.md)), and phase
+timing replaced the trace export §8 assumed. The rejection of multi-agent
+investigation in §0 and §3.4 still stands. Sections are left as written rather
+than edited in place, because a design document that quietly acquires hindsight
+stops being evidence of what was actually decided and why.
+
+**Audience:** Engineering leadership, platform architects
 **Scope:** Deployment and platform architecture. Investigation *functionality* is
 not redesigned.
 
