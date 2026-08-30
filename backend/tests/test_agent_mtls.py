@@ -393,3 +393,70 @@ class TestRevocation:
             await asyncio.wait_for(call.read(), timeout=10)
         assert refusal.value.code() == grpc.StatusCode.UNAUTHENTICATED
         assert harness.registry.get(CLUSTER) is None
+
+
+class TestTheCertificateLifetimeIsReachableFromAConfiguration:
+    """Renewal is testable only if a deployment can be told to renew soon.
+
+    Renewal happens at two-thirds of certificate life, and `AGENT_CERT_TTL_HOURS`
+    was an **integer**, so the shortest certificate a *deployment* could issue
+    was an hour and its renewal point was forty minutes out. That put the
+    property beyond any harness that stands the platform up and watches it, and
+    left it covered only by tests that construct `AgentIdentityService`
+    directly with a `timedelta` — which proves the mechanism but not that a
+    deployment can ever be configured into it.
+
+    Making the setting a float costs nothing (existing integer values parse
+    unchanged) and puts a ninety-second certificate within reach:
+    `AGENT_CERT_TTL_HOURS=0.025` renews at sixty seconds.
+    """
+
+    def test_a_fractional_ttl_survives_the_setting(self, monkeypatch):
+        from datetime import timedelta
+
+        from app.core.config import Settings
+
+        assert timedelta(hours=Settings(AGENT_CERT_TTL_HOURS="0.025").agent_cert_ttl_hours) == (
+            timedelta(seconds=90)
+        )
+
+    def test_an_integer_ttl_still_means_what_it_did(self):
+        from datetime import timedelta
+
+        from app.core.config import Settings
+
+        assert timedelta(hours=Settings(AGENT_CERT_TTL_HOURS="2160").agent_cert_ttl_hours) == (
+            timedelta(days=90)
+        )
+        assert timedelta(hours=Settings().agent_cert_ttl_hours) == timedelta(days=90)
+
+    def test_the_lifetime_reaches_the_certificate_the_gateway_would_issue(
+        self, tmp_path, monkeypatch
+    ):
+        """Asserted on an **issued certificate**, not on the setting.
+
+        A setting that parses and is never passed on reads identically to a
+        working one — the same shape as the `X-Scope-OrgID` header that was
+        built correctly and never handed to the client. So this builds the
+        service `AgentGateway` builds, enrols through it, and reads the leaf's
+        own validity. `NotBefore` is backdated for clock skew, so the check is
+        against `not_after` rather than the span.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        from app.core.config import settings
+        from app.gateway.server import build_identity_service
+
+        monkeypatch.setattr(settings, "agent_cert_ttl_hours", 0.025)
+        monkeypatch.setattr(settings, "agent_identity_dir", str(tmp_path))
+        monkeypatch.setattr(settings, "agent_ca_cert_file", "")
+        monkeypatch.setattr(settings, "agent_ca_key_file", "")
+        monkeypatch.setattr(settings, "agent_gateway_port", 19999)
+
+        service = build_identity_service()
+        _, csr = new_key_and_csr()
+        issued = service._issue(csr, CLUSTER)
+
+        leaf = x509.load_pem_x509_certificate(issued.certificate_pem)
+        remaining = leaf.not_valid_after_utc - datetime.now(UTC)
+        assert timedelta(seconds=60) < remaining <= timedelta(seconds=95), remaining

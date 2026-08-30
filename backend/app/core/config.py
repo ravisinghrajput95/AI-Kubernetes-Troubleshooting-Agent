@@ -433,7 +433,16 @@ class Settings(BaseSettings):
 
     # Issued certificate life, per ADR-005. Agents renew at 2/3 of it, so the
     # default leaves a 30-day overlap window.
-    agent_cert_ttl_hours: int = Field(default=24 * 90, validation_alias="AGENT_CERT_TTL_HOURS")
+    #
+    # A **float**, and the reason is testability rather than anyone wanting
+    # fractional hours in production. As an `int` the shortest deployable
+    # certificate was one hour, whose renewal point is forty minutes away —
+    # which put renewal out of reach of any harness that stands the platform up
+    # and watches it, and left the property covered only by tests that
+    # construct `AgentIdentityService` directly. `AGENT_CERT_TTL_HOURS=0.025`
+    # is ninety seconds, renewing at sixty. Existing integer values parse
+    # unchanged.
+    agent_cert_ttl_hours: float = Field(default=24 * 90, validation_alias="AGENT_CERT_TTL_HOURS")
 
     # How often the gateway re-reads the revocation list and drops any live
     # stream whose certificate has since been revoked. Revocation that only

@@ -217,13 +217,18 @@ Renewal, specifically, is *not* the gap it was thought to be: it is covered by
 `TestRenewalHappensAtTwoThirdsOfLife` (Go, arbitrary clock) and
 `test_the_agent_renews_itself_without_dropping_the_stream` (real binary, real
 gateway, 30-second certificate, asserting the **same session object** still
-serves reads afterwards). Both pass. What blocks moving it into
-`integration_verify.sh` is that `AGENT_CERT_TTL_HOURS` is an **integer in
-hours**, so the shortest deployable certificate is one hour and its renewal
-point is forty minutes away. The test harness sidesteps this by constructing
-`AgentIdentityService(leaf_lifetime=timedelta(seconds=30))` directly. Making it
-reachable from a deployment is a one-line unit change to that setting, not a
-design problem.
+serves reads afterwards). Both pass. What blocked moving it into
+`integration_verify.sh` was that `AGENT_CERT_TTL_HOURS` was an **integer in
+hours**, so the shortest deployable certificate was one hour and its renewal
+point forty minutes away — the harness sidestepped it by constructing
+`AgentIdentityService(leaf_lifetime=timedelta(seconds=30))` directly, which
+proves the mechanism but not that a deployment can be configured into it. **The
+setting is now a float** (`AGENT_CERT_TTL_HOURS=0.025` is ninety seconds,
+renewing at sixty; existing integer values parse unchanged), asserted on the
+validity of a certificate `build_identity_service()` actually issues rather than
+on the setting. So a CI check is now a matter of standing the deployment up with
+that value and watching the serial change while the stream stays open — which
+is work, but no longer blocked.
 
 Missing: envtest / multi-version cluster fixtures · snapshot tests for the PDF
 and Markdown renderers · load tests inside the suite (throughput and chaos are
