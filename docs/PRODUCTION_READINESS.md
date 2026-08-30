@@ -199,6 +199,32 @@ second product to disagree with us — Prometheus's parser, nginx's buffering, t
 kubelet's probe path — had no way to fail a build. Mutation-tested by reverting
 `2f60f76` into a rebuilt image: 27/4 and exit 1 on the mutant, 32/0 restored.
 
+**`K8S_AGENT_CLUSTER_INTEGRATION` is set by nothing** — not CI, not
+`scripts/integration_verify.sh`. The differential agent suite (36 tests,
+including M4's stated exit criterion that an agent-collected investigation
+produces the same evidence as the same read performed locally, and the two
+certificate-renewal tests that run the real Go binary against a real gateway)
+therefore runs only when someone remembers. Running it found a shipped defect
+within minutes: the agent mapped every 404 to `EMPTY`, a *usable* status, so an
+absent metrics-server read as an idle cluster and raised the confidence of a
+diagnosis that had seen less. Fixed, mutation-tested three ways, and pinned by
+a Go test plus a tripwire in `tests/test_metrics_parity.py`. **Wiring the suite
+into the `integration-verify` job is the remaining work** — that job already has
+kind, Docker and a Python environment; what it does not have is a host-built
+agent binary.
+
+Renewal, specifically, is *not* the gap it was thought to be: it is covered by
+`TestRenewalHappensAtTwoThirdsOfLife` (Go, arbitrary clock) and
+`test_the_agent_renews_itself_without_dropping_the_stream` (real binary, real
+gateway, 30-second certificate, asserting the **same session object** still
+serves reads afterwards). Both pass. What blocks moving it into
+`integration_verify.sh` is that `AGENT_CERT_TTL_HOURS` is an **integer in
+hours**, so the shortest deployable certificate is one hour and its renewal
+point is forty minutes away. The test harness sidesteps this by constructing
+`AgentIdentityService(leaf_lifetime=timedelta(seconds=30))` directly. Making it
+reachable from a deployment is a one-line unit change to that setting, not a
+design problem.
+
 Missing: envtest / multi-version cluster fixtures · snapshot tests for the PDF
 and Markdown renderers · load tests inside the suite (throughput and chaos are
 opt-in scripts, not tests) · **automated** mutation testing — every invariant

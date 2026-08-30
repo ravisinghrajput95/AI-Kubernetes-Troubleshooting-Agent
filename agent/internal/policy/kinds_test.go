@@ -118,3 +118,36 @@ func TestALogReadNeedsAPod(t *testing.T) {
 		t.Error("previous did not reach the query")
 	}
 }
+
+func TestAListReadIsDistinguishableFromANamedOne(t *testing.T) {
+	// A 404 means two different things and the resolved read is the only place
+	// that knows which. On a named read it means that object is gone; on a list
+	// read it means the API is not served by this cluster at all. The platform
+	// treats EMPTY as *usable*, so conflating them makes an absent
+	// metrics-server read as an idle cluster and raises the confidence of a
+	// diagnosis that saw less. See statusFor in internal/collectors.
+	list, err := Resolve("k8s.metrics.nodes", "", "", nil)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if list.Named {
+		t.Error("a read with no name was marked as naming an object")
+	}
+
+	named, err := Resolve("k8s.pods", "default", "web-0", nil)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !named.Named {
+		t.Error("a read of one pod was not marked as naming an object")
+	}
+
+	// Logs always name a pod; resolveLogs refuses without one.
+	logs, err := Resolve("k8s.logs", "default", "web-0", nil)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !logs.Named {
+		t.Error("a log read was not marked as naming an object")
+	}
+}

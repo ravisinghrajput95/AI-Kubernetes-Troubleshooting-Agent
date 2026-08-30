@@ -70,7 +70,7 @@ func (c *Collector) Collect(ctx context.Context, spec *agentv1.EvidenceSpec) *ag
 	record.DurationMs = time.Since(started).Milliseconds()
 
 	if err != nil {
-		record.Status = statusFor(err)
+		record.Status = statusFor(err, read.Named)
 		record.Detail = detailFor(err)
 		return record
 	}
@@ -93,14 +93,38 @@ func wrap(body []byte, text bool) []byte {
 	return []byte(`{"text":` + encoded + `}`)
 }
 
-func statusFor(err error) agentv1.EvidenceStatus {
+// statusFor maps an API error onto the evidence status the platform reasons
+// over.
+//
+// **A 404 means two different things and only one of them is EMPTY.** On a
+// named read it means that object is gone, which the platform can treat as a
+// successful empty observation. On a *list* read it means the API itself is
+// not served by this cluster — metrics-server not installed, a group version
+// this agent hardcodes that the cluster does not have — and reporting that as
+// EMPTY says "we looked and there is nothing" about a thing nobody could look
+// at.
+//
+// EMPTY is a *usable* status on the platform, so the difference is not
+// cosmetic. It raises evidence completeness, which raises the confidence score
+// of a diagnosis that saw less of the cluster, and it makes an absent
+// metrics-server read as an idle one — the exact thing
+// `docs/OBSERVABILITY_INTEGRATIONS.md` states must never happen: missing
+// metrics must not look like healthy metrics.
+//
+// Found by running the differential suite against a real cluster with no
+// metrics-server: the agent reported k8s.metrics.nodes usable and the
+// kubeconfig path reported it unavailable, for the same cluster at the same
+// moment.
+func statusFor(err error, named bool) agentv1.EvidenceStatus {
 	switch {
 	case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
 		return agentv1.EvidenceStatus_EVIDENCE_STATUS_FORBIDDEN
 	case apierrors.IsTimeout(err), apierrors.IsServerTimeout(err), errors.Is(err, context.DeadlineExceeded):
 		return agentv1.EvidenceStatus_EVIDENCE_STATUS_TIMEOUT
-	case apierrors.IsNotFound(err):
+	case apierrors.IsNotFound(err) && named:
 		return agentv1.EvidenceStatus_EVIDENCE_STATUS_EMPTY
+	case apierrors.IsNotFound(err):
+		return agentv1.EvidenceStatus_EVIDENCE_STATUS_UNAVAILABLE
 	default:
 		return agentv1.EvidenceStatus_EVIDENCE_STATUS_FAILED
 	}

@@ -277,6 +277,33 @@ MUTATIONS = [
         new="        pass",
         tests="tests/test_provider_parity.py",
     ),
+    Mutation(
+        name="agent-404-on-a-list-is-not-empty",
+        why=(
+            "The agent mapped every 404 to EMPTY, which the platform counts as "
+            "*usable*. metrics-server is absent from most clusters, so an agent "
+            "reported 'we looked and there is no usage' where kubectl reported "
+            "'we could not look' — inflating evidence completeness, and with it "
+            "the confidence of a diagnosis that had seen less. Found by running "
+            "tests/test_agent_transport.py against a real cluster, which "
+            "nothing in CI does."
+        ),
+        # The mapping lives in Go; `test_metrics_parity.py` carries a tripwire
+        # reading that source, so this mutation is observable from pytest.
+        # `agent/internal/collectors/status_test.go` is the primary check.
+        path="../agent/internal/collectors/collector.go",
+        old=(
+            "\tcase apierrors.IsNotFound(err) && named:\n"
+            "\t\treturn agentv1.EvidenceStatus_EVIDENCE_STATUS_EMPTY\n"
+            "\tcase apierrors.IsNotFound(err):\n"
+            "\t\treturn agentv1.EvidenceStatus_EVIDENCE_STATUS_UNAVAILABLE"
+        ),
+        new=(
+            "\tcase apierrors.IsNotFound(err):\n"
+            "\t\treturn agentv1.EvidenceStatus_EVIDENCE_STATUS_EMPTY"
+        ),
+        tests="tests/test_metrics_parity.py",
+    ),
 ]
 
 

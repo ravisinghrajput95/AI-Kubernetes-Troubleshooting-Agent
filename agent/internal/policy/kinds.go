@@ -27,6 +27,11 @@ type Read struct {
 	EquivalentCommand string
 	// True when the response is plain text rather than JSON (logs).
 	Text bool
+	// True when the read names a single object, so a 404 means *that object*
+	// is gone. On a list read a 404 means the API itself is not served here,
+	// which is a different fact and must not be reported as an empty result.
+	// See `statusFor` in internal/collectors.
+	Named bool
 }
 
 // resource describes how one evidence kind maps onto the API.
@@ -141,7 +146,8 @@ func Resolve(kind, namespace, name string, parameters map[string]string) (Read, 
 	}
 
 	path += "/" + entry.plural
-	if name != "" {
+	named := name != ""
+	if named {
 		path += "/" + url.PathEscape(name)
 	}
 
@@ -160,6 +166,7 @@ func Resolve(kind, namespace, name string, parameters map[string]string) (Read, 
 		Path:              path,
 		Query:             query,
 		EquivalentCommand: command(entry, name, scope, query),
+		Named:             named,
 	}, nil
 }
 
@@ -191,6 +198,7 @@ func resolveLogs(namespace, name string, parameters map[string]string) (Read, er
 	}
 
 	return Read{
+		Named:             true,
 		Path:              path,
 		Query:             query,
 		EquivalentCommand: fmt.Sprintf("kubectl logs %s -n %s%s", name, namespace, suffix),

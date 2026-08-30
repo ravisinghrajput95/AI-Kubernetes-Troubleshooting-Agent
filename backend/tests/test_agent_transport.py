@@ -18,6 +18,19 @@ Opt-in, because it needs a real cluster and a built agent binary:
     (cd agent && go build -o /tmp/k8s-agent ./cmd/agent)
     K8S_AGENT_CLUSTER_INTEGRATION=1 AGENT_BINARY=/tmp/k8s-agent \\
       AGENT_TEST_CONTEXT=kind-m4b python -m pytest tests/test_agent_transport.py
+
+It creates the one workload it compares against, in a namespace of its own, and
+removes it afterwards — see `differential_workload`. It used to assume a pod
+called `web` already existed, so an otherwise-empty cluster produced three
+failures that looked exactly like a divergence.
+
+**Nothing sets `K8S_AGENT_CLUSTER_INTEGRATION`** — not CI, not
+`scripts/integration_verify.sh`. This suite runs when a person remembers to run
+it, which is the same standing this repository's mutation tests had before
+`scripts/mutation_check.py`. Running it is worth it: it is what found the agent
+reporting an absent metrics-server as an *empty* result rather than an
+unavailable one, which made an uninstalled metrics-server read as an idle
+cluster and raised the confidence of a diagnosis that had seen less.
 """
 
 import asyncio
@@ -66,6 +79,89 @@ async def wait_for_agent(registry: AgentRegistry, process, timeout: float = 20.0
     process.terminate()
     _, stderr = process.communicate(timeout=5)
     pytest.fail(f"The agent never connected: {stderr.decode()[-1500:]}")
+
+
+# The workload the differential comparison needs, created by the suite rather
+# than assumed.
+#
+# Three tests compare a *specific* object across both providers and look for a
+# pod whose name starts with `web`. The module docstring said only
+# `kind create cluster`, so a cluster without one produced three failures
+# indistinguishable from a real divergence — which is precisely the judgement
+# this suite exists to make. It cost a real investigation to separate them the
+# first time: two of the three failures that day were a genuine shipped defect
+# (the agent reporting an absent metrics-server as an empty result) and the
+# third was only this missing fixture.
+DIFFERENTIAL_NAMESPACE = "k8s-agent-differential"
+DIFFERENTIAL_MANIFEST = f"""apiVersion: v1
+kind: Namespace
+metadata:
+  name: {DIFFERENTIAL_NAMESPACE}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-differential
+  namespace: {DIFFERENTIAL_NAMESPACE}
+  labels:
+    app: web
+    differential: "true"
+spec:
+  containers:
+    - name: web
+      image: registry.k8s.io/pause:3.9
+"""
+
+
+@pytest.fixture(scope="module", autouse=True)
+def differential_workload():
+    """Its own namespace, created and removed, so the suite leaves no trace.
+
+    A pod in `default` would linger in whatever cluster someone pointed this
+    at; a namespace of its own is deleted whole. `pause` because the comparison
+    is about the object's *fields* — image, labels, container spec — and not
+    about anything it runs.
+    """
+    apply = subprocess.run(
+        ["kubectl", "--context", CONTEXT, "apply", "-f", "-"],
+        input=DIFFERENTIAL_MANIFEST,
+        capture_output=True,
+        text=True,
+    )
+    if apply.returncode != 0:
+        pytest.skip(f"could not create the differential workload: {apply.stderr[-300:]}")
+
+    subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            CONTEXT,
+            "-n",
+            DIFFERENTIAL_NAMESPACE,
+            "wait",
+            "--for=condition=Ready",
+            "pod/web-differential",
+            "--timeout=60s",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        yield
+    finally:
+        subprocess.run(
+            [
+                "kubectl",
+                "--context",
+                CONTEXT,
+                "delete",
+                "namespace",
+                DIFFERENTIAL_NAMESPACE,
+                "--wait=false",
+            ],
+            capture_output=True,
+            text=True,
+        )
 
 
 @pytest.fixture

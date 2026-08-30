@@ -14,6 +14,8 @@ thousand clusters.
 Hermetic; the payloads are what the two sources actually return.
 """
 
+from typing import ClassVar
+
 import pytest
 
 from app.collectors.kubernetes import ResourceMetricsCollector
@@ -166,3 +168,87 @@ class TestPercentagesAreDerived:
 
         assert rows[0]["cpu"] == "250m"
         assert rows[0]["memory"] == "2048Mi"
+
+
+class TestAnAbsentMetricsServerLooksAbsentOnBothPaths:
+    """The divergence a real cluster found, pinned from this side of the wire.
+
+    metrics-server is absent from most clusters. kubectl's `top` fails, the
+    collector records `UNAVAILABLE`, and a diagnosis says metrics were not
+    consulted. The agent 404s on `apis/metrics.k8s.io/v1beta1/nodes` — and
+    mapped *every* 404 to `EMPTY`, which the platform counts as **usable**. So
+    the same cluster, read the same moment, was "we could not look" through a
+    kubeconfig and "we looked and there is no usage" through an agent.
+
+    That is the rule `docs/OBSERVABILITY_INTEGRATIONS.md` states outright:
+    missing metrics must never read as healthy metrics. It also inflates
+    `evidence_coverage.completeness`, which feeds the confidence score — so the
+    agent path reported *more* confidence for having seen *less*.
+
+    Fixed in the agent (`statusFor` now distinguishes a named read from a list
+    read: a 404 on a list means the API is not served here). These tests hold
+    the platform half of the coupling, which is what makes that Go change
+    load-bearing rather than cosmetic.
+    """
+
+    def _evidence_for(self, result: ProviderResult):
+        import asyncio
+
+        from app.collectors.base import CollectionContext, InvestigationScope
+
+        class Fixed:
+            cluster_id = "prod"
+            executed_commands: ClassVar[list] = []
+            truncations: ClassVar[list] = []
+
+            async def fetch(self, request):
+                return result
+
+            async def fetch_many(self, requests):
+                return [result for _ in requests]
+
+        context = CollectionContext(scope=InvestigationScope(context="prod"), provider=Fixed())
+        records = asyncio.run(ResourceMetricsCollector().collect(context))
+        return {record.kind: record for record in records}
+
+    def test_a_failed_top_is_unavailable_not_empty(self):
+        records = self._evidence_for(
+            ProviderResult(success=False, error="Metrics API not available")
+        )
+        assert not records["k8s.metrics.nodes"].usable
+        assert str(records["k8s.metrics.nodes"].status) == "unavailable"
+
+    def test_empty_is_a_usable_status_which_is_why_the_agent_mapping_matters(self):
+        """The load-bearing half. If `EMPTY` ever stopped being usable this
+        coupling would quietly stop mattering, and the Go fix would look like a
+        cosmetic status rename to whoever read it next."""
+        from app.evidence.models import EvidenceStatus
+
+        assert EvidenceStatus.EMPTY.usable
+        assert not EvidenceStatus.UNAVAILABLE.usable
+
+    def test_the_agent_status_for_a_missing_api_is_not_treated_as_a_read(self):
+        """`RemoteAgentProvider` must turn an unavailable record into a failed
+        result, so the collector takes the same branch kubectl's failure does."""
+        from app.providers.remote_agent import _USABLE
+        from app.wire.gen.agent.v1 import evidence_pb2
+
+        assert evidence_pb2.EVIDENCE_STATUS_UNAVAILABLE not in _USABLE
+        assert evidence_pb2.EVIDENCE_STATUS_EMPTY in _USABLE
+
+    def test_the_go_agent_still_makes_the_distinction(self):
+        """Read from the Go source, because the mapping lives there and a
+        Python-only assertion would pass with the defect restored.
+
+        Not a substitute for `internal/collectors/status_test.go` — a
+        tripwire, so someone editing the Python side sees the coupling.
+        """
+        from pathlib import Path
+
+        source = (
+            Path(__file__).resolve().parents[2] / "agent/internal/collectors/collector.go"
+        ).read_text()
+        assert "apierrors.IsNotFound(err) && named:" in source, (
+            "the agent no longer distinguishes a 404 on a named read from one on a "
+            "list read, so an absent metrics-server reads as an idle cluster again"
+        )
