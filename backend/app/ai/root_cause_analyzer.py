@@ -65,10 +65,10 @@ class RootCauseAnalyzer:
         messages = self.prompt_builder.build_messages(investigation, analysis)
         llm_result = self.llm_client.complete(messages)
 
-        metrics.llm_call("succeeded" if llm_result["success"] else "failed")
+        metrics.llm_call("succeeded" if llm_result.success else "failed")
 
-        if llm_result["success"]:
-            parsed = self._parse_llm_json(llm_result["content"])
+        if llm_result.success:
+            parsed = self._parse_llm_json(llm_result.content)
             if parsed is None:
                 metrics.grounding_rejected("unparseable")
             else:
@@ -88,7 +88,7 @@ class RootCauseAnalyzer:
 
         metrics.diagnosis("fallback")
         logger.warning("Using deterministic diagnosis fallback")
-        return self._fallback(investigation, analysis, llm_result.get("error", ""))
+        return self._fallback(investigation, analysis, llm_result.error)
 
     def _parse_llm_json(self, content: str) -> dict[str, Any] | None:
         cleaned = content.strip()

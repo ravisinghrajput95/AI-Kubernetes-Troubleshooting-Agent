@@ -131,8 +131,13 @@ Read from the environment or `backend/.env`.
 | `RBAC_DEFAULT_ROLE` | `admin` | Role for a caller with no binding and no matching group |
 | `RBAC_STORE_DIR` | `data/rbac` | Where role bindings live without `DATABASE_URL` |
 | `IMPERSONATE_USERS` | `true` | Run cluster reads as the calling user |
+| `LLM_PROVIDER` | inferred | `openai`, `anthropic` or `compatible`. Unset infers from whichever key is set, OpenAI first |
 | `OPENAI_API_KEY` | — | Optional; without it the deterministic path runs |
 | `OPENAI_MODEL` | `gpt-4o-mini` | |
+| `ANTHROPIC_API_KEY` | — | Selects the Anthropic provider when `LLM_PROVIDER` is unset |
+| `ANTHROPIC_MODEL` | `claude-opus-5` | |
+| `LLM_BASE_URL` | — | Point the OpenAI wire format somewhere else — vLLM, Ollama, a gateway. Required for `compatible` |
+| `LLM_MAX_TOKENS` | `16000` | Output ceiling; Anthropic requires one and truncates at it |
 | `KUBECONFIG_PATH` | — | Defaults to the standard kubeconfig |
 | `PROMETHEUS_URL` / `LOKI_URL` | — | Optional; absent is recorded, not fatal |
 | `MAX_LIST_ITEMS` | `2000` | Cap on objects retained per list read |
@@ -241,9 +246,12 @@ as a defect in this repository, not as harmless caution.
   assembles a whole list before writing it. Item counts are capped and
   truncation is recorded as an evidence gap, but the ceiling needs a streaming
   client. The agent path does not have this problem.
-- **OpenAI only.** No provider abstraction, so no Anthropic, Bedrock, or local
-  models — and the reasoning corpus in CI exercises the deterministic path, not
-  a live model.
+- **No live-model evaluation in CI.** The golden corpus gates the deterministic
+  reasoning path — signals, hypotheses, ranking, grounding — on every push, and
+  the model path has been exercised against a real cluster by hand. It is not
+  gated automatically, so a prompt change that degrades a real model's answers
+  would not fail a build. Three providers exist (`openai`, `anthropic`, and any
+  OpenAI-compatible endpoint), but only one of them has ever been run in anger.
 - **`fix` and `prevention` are model-authored prose** and therefore
   influenceable by injected cluster text. Grounding constrains them; it is not a
   proof. Commands are never model-authored.

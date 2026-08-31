@@ -214,6 +214,9 @@ def build_state() -> StateBackend:
     settings.validate_rate_limits()
     settings.validate_event_sources()
     settings.validate_notify_destinations()
+    # A typo'd LLM_PROVIDER would otherwise boot, stay green, and take the
+    # deterministic path on every investigation.
+    settings.validate_llm()
 
     from app.authz.resolver import reset_resolver
 

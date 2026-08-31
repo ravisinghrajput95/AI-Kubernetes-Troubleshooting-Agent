@@ -340,6 +340,39 @@ MUTATIONS = [
         new="",
         tests="tests/test_provider_parity.py",
     ),
+    Mutation(
+        name="anthropic-system-prompt-inline",
+        why=(
+            "F11's provider abstraction. PromptBuilder emits OpenAI's shape, "
+            "where the system prompt is a message; Anthropic takes it as a "
+            "top-level parameter and rejects that role in messages. Copying the "
+            "OpenAI body across is the obvious mistake and fails every request."
+        ),
+        path="app/ai/providers/anthropic.py",
+        old="        system, conversation = split_system(messages)",
+        new='        system, conversation = "", [dict(m) for m in messages]',
+        tests="tests/test_llm_providers.py",
+    ),
+    Mutation(
+        name="llm-provider-inference-order",
+        why=(
+            "An unset LLM_PROVIDER infers from whichever key is set, OpenAI "
+            "first. That order is today's behaviour preserved, not a "
+            "preference: a deployment migrating between providers has both keys "
+            "set for a while, and must keep going to OpenAI until it says "
+            "otherwise. Same discipline as RBAC_DEFAULT_ROLE=admin."
+        ),
+        path="app/ai/providers/factory.py",
+        old=(
+            '    if config.openai_api_key:\n        return "openai"\n'
+            '    if config.anthropic_api_key:\n        return "anthropic"'
+        ),
+        new=(
+            '    if config.anthropic_api_key:\n        return "anthropic"\n'
+            '    if config.openai_api_key:\n        return "openai"'
+        ),
+        tests="tests/test_llm_providers.py",
+    ),
 ]
 
 

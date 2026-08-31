@@ -1,54 +1,30 @@
-import json
-import time
-from typing import Any
+"""The reasoning layer's one call to a model.
 
-import httpx
-from loguru import logger
+Reduced to provider selection since F11. Everything about *how* a request is
+shaped, retried and read now lives in `app/ai/providers/`, so choosing a
+different model is configuration rather than an edit to the class that talks to
+the network.
 
-from app.core.config import settings
+Kept as a class rather than collapsed into `build_provider` because the provider
+is resolved **once per analyzer**, not once per process: a test that
+monkeypatches `settings` gets the provider it configured, and a deployment that
+reloads settings does not have to reach into a module global.
+"""
+
+from collections.abc import Sequence
+
+from app.ai.providers import Completion, LLMProvider, build_provider
 
 
 class LLMClient:
-    def __init__(self) -> None:
-        self.base_url = "https://api.openai.com/v1/chat/completions"
+    def __init__(self, provider: LLMProvider | None = None) -> None:
+        self._provider = provider
 
-    def complete(self, messages: list[dict[str, str]]) -> dict[str, Any]:
-        if not settings.openai_api_key:
-            logger.warning("OPENAI_API_KEY is not configured")
-            return {
-                "success": False,
-                "error": "OPENAI_API_KEY is not configured",
-                "content": "",
-            }
+    @property
+    def provider(self) -> LLMProvider:
+        if self._provider is None:
+            self._provider = build_provider()
+        return self._provider
 
-        payload = {
-            "model": settings.openai_model,
-            "messages": messages,
-            "temperature": 0.1,
-            "response_format": {"type": "json_object"},
-        }
-
-        headers = {
-            "Authorization": f"Bearer {settings.openai_api_key}",
-            "Content-Type": "application/json",
-        }
-
-        last_error = ""
-        for attempt in range(1, 4):
-            try:
-                with httpx.Client(timeout=settings.llm_timeout_seconds) as client:
-                    response = client.post(self.base_url, headers=headers, json=payload)
-                    response.raise_for_status()
-                    data = response.json()
-                    content = data["choices"][0]["message"]["content"]
-                    return {"success": True, "error": "", "content": content}
-            except (httpx.HTTPError, KeyError, IndexError, json.JSONDecodeError) as exc:
-                last_error = str(exc)
-                logger.error(
-                    "OpenAI request failed on attempt {attempt}: {error}",
-                    attempt=attempt,
-                    error=last_error,
-                )
-                time.sleep(0.5 * attempt)
-
-        return {"success": False, "error": last_error, "content": ""}
+    def complete(self, messages: Sequence[dict[str, str]]) -> Completion:
+        return self.provider.complete(messages)

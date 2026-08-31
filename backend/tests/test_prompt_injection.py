@@ -14,6 +14,7 @@ import json
 
 import pytest
 
+from app.ai.providers import Completion
 from app.ai.root_cause_analyzer import RootCauseAnalyzer
 from app.kubernetes.command_policy import CommandClass, classify_command
 
@@ -60,7 +61,7 @@ class StubLLM:
 
     def complete(self, messages):
         self.messages = messages
-        return {"success": True, "error": "", "content": json.dumps(self.payload)}
+        return Completion(success=True, content=json.dumps(self.payload))
 
 
 @pytest.fixture
@@ -106,11 +107,7 @@ def test_remediation_plan_is_unaffected_by_model_output(analyzer):
     with_injection = analyzer.analyze(INVESTIGATION)
 
     analyzer.llm_client = StubLLM(None)
-    analyzer.llm_client.complete = lambda messages: {
-        "success": False,
-        "error": "offline",
-        "content": "",
-    }
+    analyzer.llm_client.complete = lambda messages: Completion(success=False, error="offline")
     deterministic = analyzer.analyze(INVESTIGATION)
 
     assert with_injection["remediation"] == deterministic["remediation"]

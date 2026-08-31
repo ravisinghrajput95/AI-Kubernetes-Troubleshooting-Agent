@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from prometheus_client.openmetrics import parser as openmetrics_parser
 
 import app.kubernetes.kubectl_executor as executor_module
+from app.ai.providers import Completion
 from app.auth.dependencies import reset_authenticator
 from app.core.config import settings
 from app.main import app
@@ -172,7 +173,7 @@ class TestGroundingReasonsAreCategories:
         )
         monkeypatch.setattr(
             "app.ai.llm_client.LLMClient.complete",
-            lambda self, messages: {"success": True, "content": "{}"},
+            lambda self, messages: Completion(success=True, content="{}"),
         )
 
         api.post("/investigate", json={"context": "test-cluster"})

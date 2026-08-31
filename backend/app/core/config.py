@@ -16,6 +16,37 @@ class Settings(BaseSettings):
         default="gpt-4o-mini",
         validation_alias=AliasChoices("OPENAI_MODEL", "OPENAI-MODEL"),
     )
+    # --- Reasoning model ----------------------------------------------------
+    # Which provider answers. Leave unset and it is inferred from whichever key
+    # is set, OpenAI first — today's behaviour preserved exactly, so nobody who
+    # configured `OPENAI_API_KEY` and nothing else finds their investigations
+    # going somewhere different after an upgrade. Naming one turns inference
+    # off; an unknown name is refused at startup. See `app/ai/providers/`.
+    llm_provider: str = Field(default="", validation_alias="LLM_PROVIDER")
+    anthropic_api_key: str = Field(default="", validation_alias="ANTHROPIC_API_KEY")
+    anthropic_model: str = Field(default="claude-opus-5", validation_alias="ANTHROPIC_MODEL")
+    # Overrides the provider's endpoint. Required for `compatible`, which is how
+    # a deployment that cannot send its cluster's interior to a third party
+    # points at vLLM, Ollama or a gateway on its own network.
+    llm_base_url: str = Field(default="", validation_alias="LLM_BASE_URL")
+    # Anthropic requires an output ceiling and truncates silently at it; a
+    # truncated diagnosis is indistinguishable from a malformed one by the time
+    # it reaches the JSON parser, so the provider reports the ceiling by name.
+    llm_max_tokens: int = Field(default=16000, validation_alias="LLM_MAX_TOKENS")
+
+    def validate_llm(self) -> None:
+        """Refuse a provider that cannot be built, at startup.
+
+        The same reasoning as `validate_auth`: the alternative is a service that
+        boots, keeps `/health` green, and quietly takes the deterministic path
+        on every investigation while an operator wonders why the model never
+        runs. A misconfiguration that degrades instead of failing is the hardest
+        shape to notice.
+        """
+        from app.ai.providers import build_provider
+
+        build_provider(self)
+
     kubeconfig_path: str = Field(default="", validation_alias="KUBECONFIG_PATH")
     kubectl_timeout_seconds: int = 30
     llm_timeout_seconds: int = 45

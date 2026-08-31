@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from app.ai.providers import Completion
 from app.ai.root_cause_analyzer import RootCauseAnalyzer
 
 INVESTIGATION = {
@@ -71,8 +72,8 @@ class StubLLM:
     def complete(self, messages):
         self.messages = messages
         if self.payload is None:
-            return {"success": False, "error": self.error, "content": ""}
-        return {"success": True, "error": "", "content": json.dumps(self.payload)}
+            return Completion(success=False, error=self.error)
+        return Completion(success=True, content=json.dumps(self.payload))
 
 
 @pytest.fixture
@@ -164,7 +165,7 @@ def test_invented_hypothesis_is_discarded(analyzer):
 def test_malformed_model_json_falls_back(analyzer):
     class BadJSON(StubLLM):
         def complete(self, messages):
-            return {"success": True, "error": "", "content": "not json at all"}
+            return Completion(success=True, content="not json at all")
 
     analyzer.llm_client = BadJSON()
     assert analyzer.analyze(INVESTIGATION)["ai_generated"] is False
