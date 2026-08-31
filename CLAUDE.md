@@ -683,6 +683,25 @@ M8a's own refusal and unlike the rate limiter. Found by verifying revocation
 against a live deployment, where the post-revoke investigation came back
 `provider=kubeconfig`.
 
+**Both the routing and the refusal require *this* worker to run a gateway,
+and that is a real limit rather than a subtlety.** The presence index is
+installed inside `if settings.agent_gateway_enabled` in `app/state.py`, so on a
+worker without one `get_agent_presence()` is `None`, `agent_affinity` returns
+the shared queue, and `select_provider` goes straight to `LocalKubectlProvider`
+— no presence lookup, no refusal. In the shipped topology this cannot happen:
+one Deployment, one config, N replicas, so either every worker has a gateway or
+none does. It *can* happen in a fleet mid-way through enabling
+`AGENT_GATEWAY_PORT`, and there the M8a guarantee is silently absent — tenant
+A's `prod` answered from a local context that merely shares the name, which is
+the exact harm the refusal exists to prevent. Found by a soak that gave the
+first worker a gateway and the second none: a third of investigations reported
+`provider=kubeconfig` with an agent attached and no refusal anywhere. Not
+fixed, because moving presence out of that branch changes startup wiring on a
+load-bearing path; recorded in `docs/PRODUCTION_READINESS.md`. With every
+worker running a gateway, the same soak measured **100% agent-path collection
+across two workers** — the first live number for M8a routing, against
+synthetic ones before.
+
 **A presence record naming *this* worker is never a routing target.**
 `holder()` is consulted only after the local registry has said no, so a record
 still claiming us means the agent disconnected here within the TTL. Returning it
