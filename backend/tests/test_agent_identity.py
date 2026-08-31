@@ -338,3 +338,103 @@ class TestRevocation:
         """TLS already refuses it; counting it would misreport the blast radius."""
         store.record_certificate("old", "prod-eu-1", datetime.now(UTC) - timedelta(days=1))
         assert store.revoke_cluster("prod-eu-1") == 0
+
+
+class TestACertificateTooShortToHaveARenewalWindow:
+    """A soak finding: a ninety-second certificate renews on every check, forever.
+
+    The CA backdates `NotBefore` by five minutes so a clock-skewed agent does
+    not reject a certificate it has just been handed. The agent renews at two
+    thirds of `NotBefore` → `NotAfter`. Put those together and for a short
+    enough lifetime the renewal point is already in the past when the
+    certificate is issued — measured at twelve renewals a minute against
+    `AGENT_CERT_TTL_HOURS=0.025` with `--renewal-check 5s`, each one a CA
+    signature and a row in `agent_certificates`, indefinitely.
+
+    The agent now bounds its own renewal *rate*, which is the fix that holds
+    regardless of who is misconfigured. This side warns, because it is the only
+    side that can: the backdate lives here, the fraction lives in Go, and a
+    certificate records when it became valid rather than when it was issued.
+    """
+
+    def test_the_floor_is_derived_from_the_cas_own_backdate(self):
+        """Not a written-down 150.
+
+        The number is `backdate * (1 - f) / f`. Typing the answer instead of
+        the derivation is how two constants come to disagree — the same shape
+        as the agent kind table F7 found eight gaps in.
+        """
+        from app.core.config import (
+            AGENT_RENEWAL_FRACTION,
+            CLOCK_SKEW_BACKDATE_SECONDS,
+            MINIMUM_SENSIBLE_CERT_SECONDS,
+        )
+        from app.security.ca import BACKDATE
+
+        assert BACKDATE.total_seconds() == CLOCK_SKEW_BACKDATE_SECONDS, (
+            "the config's idea of the clock-skew allowance has drifted from the CA's"
+        )
+        expected = (
+            CLOCK_SKEW_BACKDATE_SECONDS * (1 - AGENT_RENEWAL_FRACTION) / AGENT_RENEWAL_FRACTION
+        )
+        assert pytest.approx(expected) == MINIMUM_SENSIBLE_CERT_SECONDS
+
+    def test_a_certificate_at_the_floor_still_has_a_renewal_window(self):
+        """The floor is where the window closes, checked against a real leaf.
+
+        Asserting the arithmetic against itself would pass with the constant
+        wrong, so this issues certificates either side of the floor and reads
+        the renewal point off them the way the agent does.
+        """
+        from app.core.config import AGENT_RENEWAL_FRACTION, MINIMUM_SENSIBLE_CERT_SECONDS
+
+        authority = CertificateAuthority.create("soak.test")
+        csr, _ = make_csr()
+
+        def renews_after_issue(seconds: float) -> bool:
+            issued = datetime.now(UTC)
+            certificate = authority.issue_from_csr(csr, "prod", lifetime=timedelta(seconds=seconds))
+            leaf = x509.load_pem_x509_certificate(certificate.certificate_pem)
+            # Read the renewal point exactly as `identity.RenewAt` does in Go.
+            life = leaf.not_valid_after_utc - leaf.not_valid_before_utc
+            renew_at = leaf.not_valid_before_utc + life * AGENT_RENEWAL_FRACTION
+            return renew_at > issued
+
+        assert renews_after_issue(MINIMUM_SENSIBLE_CERT_SECONDS * 4), (
+            "a comfortably long certificate has no renewal window"
+        )
+        assert not renews_after_issue(MINIMUM_SENSIBLE_CERT_SECONDS / 2), (
+            "a certificate well below the floor is expected to be born overdue"
+        )
+
+    def test_the_platform_says_so_at_startup(self, caplog):
+        from app.core.config import Settings
+
+        settings = Settings(AGENT_GATEWAY_PORT=1, AGENT_CERT_TTL_HOURS=0.025)
+        messages = _warnings_from(settings.validate_agent_gateway)
+        assert any("AGENT_CERT_TTL_HOURS" in message for message in messages), messages
+        assert any("overlap window" in message for message in messages), messages
+
+    def test_and_stays_quiet_about_a_normal_one(self):
+        from app.core.config import Settings
+
+        settings = Settings(AGENT_GATEWAY_PORT=1)
+        assert settings.agent_cert_ttl_hours == 24 * 90
+        assert _warnings_from(settings.validate_agent_gateway) == []
+
+
+def _warnings_from(call) -> list[str]:
+    """Collect loguru WARNINGs raised by `call`.
+
+    loguru does not go through `logging`, so `caplog` sees nothing — a test
+    written against it passes whether the warning exists or not.
+    """
+    from loguru import logger
+
+    captured: list[str] = []
+    sink = logger.add(lambda message: captured.append(str(message)), level="WARNING")
+    try:
+        call()
+    finally:
+        logger.remove(sink)
+    return captured

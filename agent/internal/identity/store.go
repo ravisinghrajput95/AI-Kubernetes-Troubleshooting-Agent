@@ -195,6 +195,15 @@ func (h *Holder) DueForRenewal(now time.Time) bool {
 	return DueForRenewal(material.Leaf, now)
 }
 
+// MinRenewalInterval is the shortest gap to leave before renewing again.
+func (h *Holder) MinRenewalInterval(now time.Time) time.Duration {
+	material := h.Material()
+	if material == nil {
+		return 0
+	}
+	return MinRenewalInterval(material.Leaf, now)
+}
+
 // Degradation is what to report on AgentHealth, or "".
 func (h *Holder) Degradation(now time.Time) string {
 	material := h.Material()

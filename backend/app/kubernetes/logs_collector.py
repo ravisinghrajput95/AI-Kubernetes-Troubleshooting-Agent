@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from typing import Any
 
-from app.providers.base import ProviderResult, ReadVerb, ResourceRequest
+from app.providers.base import OutputFormat, ProviderResult, ReadVerb, ResourceRequest
 
 LOG_FAILURE_KEYWORDS = (
     "exception",
@@ -37,6 +37,20 @@ class LogsCollector:
                 verb=ReadVerb.LOGS,
                 name=pod["name"],
                 namespace=pod.get("namespace", "default"),
+                # Logs are text. `OutputFormat` defaults to JSON, and on the
+                # kubeconfig path that default is what decides whether the
+                # executor calls `json.loads` on the result — so this read used
+                # to fail for exactly the pods that had anything to say, and
+                # succeed for the silent ones whose empty output parsed as
+                # `{}`. The failure carried no reason, because kubectl had
+                # exited 0 with nothing on stderr.
+                #
+                # `PreviousPodLogsCollector` had it right; the baseline read did
+                # not, and the two are the same read. Found by comparing an
+                # agent-served investigation against a kubeconfig-served one of
+                # the same cluster during a soak — the agent path was
+                # unaffected, which is why no test caught it.
+                output=OutputFormat.TEXT,
                 options={"tail": 120, "all_containers": True},
             )
             for pod in self.targets(problematic_pods)

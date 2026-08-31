@@ -170,8 +170,53 @@ func KeepFresh(
 	interval time.Duration,
 	log *slog.Logger,
 ) {
+	keepFresh(ctx, holder, interval, time.Now, func() error {
+		return Renew(ctx, store, holder, endpoint, clusterID, agentVersion, log)
+	}, log)
+}
+
+// keepFresh is the scheduling half, separated from the network half so a test
+// can drive it.
+//
+// The seam takes a clock and a renew function rather than the pieces Renew
+// needs, because what is under test is *when* the agent asks and how often —
+// and a test of a helper that KeepFresh might or might not call would prove
+// nothing. `KeepFresh` above has no logic left to disagree with it.
+func keepFresh(
+	ctx context.Context,
+	holder *identity.Holder,
+	interval time.Duration,
+	now func() time.Time,
+	renew func() error,
+	log *slog.Logger,
+) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	// The earliest the next attempt may happen, so the renewal *rate* is
+	// bounded by certificate life rather than by how often the agent looks at
+	// the clock.
+	//
+	// A certificate whose renewal point is already behind it is due on every
+	// single tick, and without this the agent mints one certificate per tick
+	// for as long as it runs — measured at twelve a minute against a
+	// ninety-second certificate with `--renewal-check 5s`, each one a CA
+	// signature and a row in `agent_certificates`. The agent cannot tell that
+	// case apart by arithmetic: a certificate records when it became valid,
+	// never when it was issued, and the platform's CA backdates NotBefore by
+	// five minutes for clock skew. So the bound is on the rate, which the
+	// agent can always guarantee.
+	//
+	// Fixed at the moment of an attempt rather than recomputed each tick.
+	// Recomputing shrinks the gap as the certificate ages — the remaining life
+	// it takes a fraction of is itself shrinking — so the interval converges
+	// on a quarter of the life instead of the third it reads as. Deciding
+	// once, off the certificate the agent now holds, is the schedule it says
+	// it is.
+	//
+	// It bounds *attempts*, not successes. A gateway refusing renewals is
+	// exactly when a retry loop costs most, and it is the same loop.
+	var nextAttempt time.Time
 
 	for {
 		select {
@@ -180,10 +225,17 @@ func KeepFresh(
 		case <-ticker.C:
 		}
 
-		if !holder.DueForRenewal(time.Now()) {
+		at := now()
+		if !holder.DueForRenewal(at) {
 			continue
 		}
-		if err := Renew(ctx, store, holder, endpoint, clusterID, agentVersion, log); err != nil {
+		if !nextAttempt.IsZero() && at.Before(nextAttempt) {
+			continue
+		}
+		err := renew()
+		// Off the certificate now held, which after a success is the new one.
+		nextAttempt = at.Add(holder.MinRenewalInterval(at))
+		if err != nil {
 			// Not fatal, and deliberately quiet about retrying: the current
 			// certificate is good for another third of its life, so there is
 			// time for many more attempts before anything breaks.

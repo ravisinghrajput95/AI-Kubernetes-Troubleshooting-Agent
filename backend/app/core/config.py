@@ -3,6 +3,18 @@ from pathlib import Path
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# The CA backdates a leaf's NotBefore by this much to tolerate clock skew
+# (`app/security/ca.py`), and the Go agent renews at two thirds of NotBefore →
+# NotAfter. Neither side can see the other's constant and a certificate records
+# only when it became valid, never when it was issued — so a lifetime short
+# enough for the backdate to swallow the renewal point is only detectable here.
+#
+#   renew_at <= issued  ⟺  ttl <= backdate * (1 - f) / f,  which at f = 2/3
+#                                is backdate / 2.
+CLOCK_SKEW_BACKDATE_SECONDS = 300.0
+AGENT_RENEWAL_FRACTION = 2 / 3
+MINIMUM_SENSIBLE_CERT_SECONDS = CLOCK_SKEW_BACKDATE_SECONDS / 2
+
 
 class Settings(BaseSettings):
     service_name: str = "ai-kubernetes-agent"
@@ -507,6 +519,29 @@ class Settings(BaseSettings):
             missing = "AGENT_CA_KEY_FILE" if self.agent_ca_cert_file else "AGENT_CA_CERT_FILE"
             raise RuntimeError(
                 f"Only one half of the agent CA is configured; {missing} is also required."
+            )
+
+        # A certificate short enough that its renewal point is already behind
+        # it. Warned about here because this is the only side that knows both
+        # halves of the arithmetic: the CA's skew backdate lives in
+        # `app/security/ca.py` and the two-thirds renewal fraction lives in the
+        # Go agent, and a certificate carries neither. The agent bounds its own
+        # renewal *rate* so this is no longer a signing storm, but an operator
+        # who set the value should be told the overlap window they think they
+        # have does not exist.
+        from loguru import logger
+
+        floor = MINIMUM_SENSIBLE_CERT_SECONDS / 3600.0
+        if 0 < self.agent_cert_ttl_hours < floor:
+            logger.warning(
+                "AGENT_CERT_TTL_HOURS={hours} is {seconds:.0f}s, below the {floor:.0f}s at which "
+                "the CA's {backdate:.0f}s clock-skew backdate leaves a renewal point in the "
+                "future. Agents will treat every certificate as immediately due for renewal, so "
+                "there is no overlap window. Fine for a test; not a deployment setting.",
+                hours=self.agent_cert_ttl_hours,
+                seconds=self.agent_cert_ttl_hours * 3600,
+                floor=MINIMUM_SENSIBLE_CERT_SECONDS,
+                backdate=CLOCK_SKEW_BACKDATE_SECONDS,
             )
 
     @property

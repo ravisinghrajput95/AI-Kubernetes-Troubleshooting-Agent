@@ -123,6 +123,40 @@ func DueForRenewal(leaf *x509.Certificate, now time.Time) bool {
 	return !now.Before(RenewAt(leaf))
 }
 
+// MinRenewalInterval is the shortest gap the agent will leave between two
+// renewals, derived from what is left of the certificate rather than from how
+// often the agent happens to look at the clock.
+//
+// It exists because the renewal point can be in the past the moment a
+// certificate is issued, and then nothing stops the agent asking again on
+// every tick. The platform's CA backdates NotBefore by five minutes to
+// tolerate clock skew (`app/security/ca.py`), and `RenewAt` counts that
+// backdate as life — so for any certificate lifetime under two and a half
+// minutes, `NotBefore + 2/3 of life` is already behind us at issue. Measured:
+// a ninety-second certificate with `--renewal-check 5s` renewed twelve times a
+// minute, indefinitely, each one a fresh CA signature and a fresh row in
+// `agent_certificates`. Across a fleet that is a signing storm produced by one
+// configuration value, and the agent cannot detect it from arithmetic alone: a
+// certificate does not record when it was issued, only when it became valid,
+// so "issued 90 seconds ago, backdated five minutes" and "issued five minutes
+// ago with a 390-second life" are the same certificate.
+//
+// What the agent *can* guarantee is that its renewal rate is a function of
+// certificate life. One third of the remaining life is the natural period —
+// at a healthy lifetime the next renewal is due well after it, so this never
+// binds; at a pathological one it turns an unbounded loop into three renewals
+// per certificate.
+func MinRenewalInterval(leaf *x509.Certificate, now time.Time) time.Duration {
+	if leaf == nil {
+		return 0
+	}
+	remaining := leaf.NotAfter.Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	return time.Duration(float64(remaining) * (1.0 - RenewalFraction))
+}
+
 // Degradation describes an expiring certificate for AgentHealth, or "" when
 // there is nothing worth saying.
 //

@@ -373,6 +373,37 @@ MUTATIONS = [
         ),
         tests="tests/test_llm_providers.py",
     ),
+    Mutation(
+        name="agent-record-pairing",
+        why=(
+            "fetch_many matched records to requests by kind alone and took "
+            "them in arrival order, so a wave of pod-log reads could file one "
+            "pod's logs under another pod's name. Measured over an hour "
+            "against a real agent: 5.5% of pod-log entries carried another "
+            "pod's result, counting only the ones detectable because the "
+            "message named a different pod. The target was on the wire the "
+            "whole time."
+        ),
+        path="app/providers/remote_agent.py",
+        old="            by_slot.setdefault(_slot(record.kind, record.target), []).append(record)",
+        new='            by_slot.setdefault((record.kind, "", None), []).append(record)',
+        tests="tests/test_remote_agent_matching.py",
+    ),
+    Mutation(
+        name="baseline-pod-logs-are-text",
+        why=(
+            "The baseline log read left OutputFormat at its JSON default, so "
+            "the kubeconfig path ran json.loads over log text: the read failed "
+            "for every pod that had output and succeeded for the silent ones, "
+            "with an empty reason. Through an agent the same read worked, so "
+            "the two providers disagreed about the most useful evidence a "
+            "CrashLoopBackOff has."
+        ),
+        path="app/kubernetes/logs_collector.py",
+        old="                output=OutputFormat.TEXT,\n",
+        new="",
+        tests="tests/test_remote_agent_matching.py",
+    ),
 ]
 
 
