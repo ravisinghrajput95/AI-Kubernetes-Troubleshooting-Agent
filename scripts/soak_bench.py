@@ -929,7 +929,16 @@ def main() -> int:
     parser.add_argument("--context", default="kind-aiops-test")
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--concurrency", type=int, default=2, help="Clients per transport.")
-    parser.add_argument("--pause", type=float, default=1.0, help="Seconds between a client's runs.")
+    parser.add_argument(
+        "--pause",
+        type=float,
+        default=7.0,
+        help=(
+            "Seconds a client waits between investigations. The default is a sustained "
+            "rate, not a peak one: an hour is the point, and 180/min against a single "
+            "kind cluster took the Docker daemon down twice before it was reached."
+        ),
+    )
     parser.add_argument("--refresh-rate", type=float, default=0.2)
     parser.add_argument("--sample-seconds", type=float, default=10.0)
     parser.add_argument("--agent", action="store_true", help="Run a real Go agent as well.")
@@ -969,16 +978,24 @@ def main() -> int:
 
     try:
         for index in range(args.workers):
-            extra: dict = {}
-            if index == 0:
-                extra = {
-                    "AGENT_GATEWAY_PORT": "18443",
-                    "AGENT_ENROLMENT_PORT": "18444",
-                    "AGENT_GATEWAY_ADVERTISE": "127.0.0.1:18443",
-                    "AGENT_GATEWAY_DNS_NAMES": "localhost",
-                    "AGENT_GATEWAY_IP_ADDRESSES": "127.0.0.1",
-                    "AGENT_CERT_TTL_HOURS": str(args.cert_ttl_hours),
-                }
+            # Every worker runs a gateway, because that is the shipped
+            # topology: one Deployment, one config, N replicas. It also matters
+            # for what is measured. `select_provider` consults the fleet
+            # presence index — and refuses to answer an agent-held cluster from
+            # a same-named local context — only on a worker that has a gateway
+            # of its own, since that is the branch presence is installed under.
+            # Giving the first worker a gateway and not the second made a third
+            # of this run's investigations fall back to the local kubeconfig
+            # silently, which measured the harness rather than the platform.
+            gateway = 18443 + index * 2
+            extra: dict = {
+                "AGENT_GATEWAY_PORT": str(gateway),
+                "AGENT_ENROLMENT_PORT": str(gateway + 1),
+                "AGENT_GATEWAY_ADVERTISE": f"127.0.0.1:{gateway}",
+                "AGENT_GATEWAY_DNS_NAMES": "localhost",
+                "AGENT_GATEWAY_IP_ADDRESSES": "127.0.0.1",
+                "AGENT_CERT_TTL_HOURS": str(args.cert_ttl_hours),
+            }
             worker = start_worker(
                 f"worker-{index + 1}", 18000 + index, kubeconfig, workdir, **extra
             )

@@ -155,6 +155,68 @@ jobs:
   # with us — Prometheus's parser, nginx's buffering, the kubelet's probe path,
   # the operator's label selector — and can only be observed from outside the
   # pod.
+  live-model-evals:
+    name: Reasoning against a real model
+    runs-on: ubuntu-latest
+    # Gated on the secret being present, because there is nothing to run
+    # without one. **Not** gated by making the program skip: `evals/live.py`
+    # exits 2 when no model is configured, so if this job runs at all it either
+    # calls a model or goes red. A suite that can report success without doing
+    # its work is the failure this repository keeps finding in its own
+    # harnesses, and a live model suite is the easiest place in the world to
+    # ship one.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # A fork's pull request cannot read secrets, and neither can a repository
+      # that has not set one. Saying which it is beats a job that silently does
+      # nothing under a green tick.
+      - name: Is a model configured?
+        id: model
+        env:
+          OPENAI_API_KEY: ${{ secrets.EVAL_OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.EVAL_ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$OPENAI_API_KEY" ] || [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No EVAL_OPENAI_API_KEY or EVAL_ANTHROPIC_API_KEY is set, so the reasoning layer was not scored against a real model. The deterministic corpus in the backend job still ran."
+          fi
+
+      # The gate itself is exercised on every run, key or no key: the guards
+      # that stop it passing vacuously are unit-tested against a local stub
+      # speaking the chat-completions shape, so a broken gate fails here even
+      # when there is no model to score.
+      - name: The gate's own guards
+        run: python -m pytest -q tests/test_live_evals.py
+
+      - name: Score the corpus against the model
+        if: steps.model.outputs.configured == 'true'
+        env:
+          OPENAI_API_KEY: ${{ secrets.EVAL_OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.EVAL_ANTHROPIC_API_KEY }}
+          LLM_PROVIDER: ${{ vars.EVAL_LLM_PROVIDER }}
+          OPENAI_MODEL: ${{ vars.EVAL_OPENAI_MODEL }}
+          ANTHROPIC_MODEL: ${{ vars.EVAL_ANTHROPIC_MODEL }}
+        run: python -m evals.live --min-grounded 0.8
+
   integration-verify:
     name: Integration (kind + Helm + Prometheus)
     runs-on: ubuntu-latest
