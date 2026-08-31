@@ -52,10 +52,17 @@ K8S_AGENT_INTEGRATION=1 python -m pytest
 Without that variable the distributed-store tests skip, so `python -m pytest` **never needs a database**. There is deliberately no fake Postgres and no SQLite stand-in: the store depends on `jsonb`, `bigserial` and a conditional UPDATE for claiming, so a substitute would prove the tests pass rather than that the store works. `tests/test_job_store_contract.py` runs the *same* assertions against both stores, which is what stops them diverging.
 
 ```bash
-python -m evals    # reasoning + grounding regression report
+python -m evals         # reasoning + grounding regression report, no model called
+python -m evals.live    # the same corpus, scored against the configured model
 ```
 
 `evals/` is a golden corpus enforced by `tests/test_evals.py` and printed in CI. It exists because rules, prompts and grounding checks can all change without breaking a unit test while making the platform worse at reasoning. **The grounding corpus must keep cases that are expected to be *accepted*** — a corpus of only-rejections passes while an over-strict check has silently routed every investigation to the deterministic fallback. See `docs/EVALUATION.md`.
+
+`evals.live` measures the one thing the offline corpus cannot see: **of the cases where the model actually answered, how many survived grounding.** That is the same failure stated the other way round — an over-strict check does not fail loudly, it routes everything to the fallback while 20/20 golden cases keep passing, and a prompt edit that degrades a real model has the identical signature. Gated on that rate; agreement with the deterministic ranking is *reported and not gated*, because the model is asked to select and explain and a defensible disagreement is not a defect.
+
+**It refuses rather than skips.** No configured model is exit 2, never exit 0, and a run where every call failed is refused rather than reported as zero rejections — which is what it looks like. Both guards are unit-tested against a local HTTP stub speaking the chat-completions shape, reached through `LLM_BASE_URL`, so the gate is exercised on every CI run whether or not a key is set. The workflow decides whether the job runs; the program decides whether it passed.
+
+Two values must be read at their seams rather than from the diagnosis, and both were wrong first: a failed call and a rejected answer both return `ai_generated: false` carrying the *deterministic fallback's own* grounding block, so the payload cannot tell an outage from a reasoning regression — the first version scored a total provider outage as twenty perfectly grounded answers.
 
 Docker: `docker compose up --build` starts the backend, console, Postgres and Redis. The image installs a pinned `kubectl` and compose mounts `~/.kube/config` read-only (override with `KUBECONFIG_FILE`). `docker compose up --scale backend=3` is the multi-worker demonstration. Local processes remain the getting-started path and need none of it.
 
@@ -740,6 +747,7 @@ Four things here are load-bearing:
 - **The agent refuses a kind it does not know** (`agent/internal/policy`). The platform names a *kind* of evidence; it cannot describe an operation. This is a security control rather than validation, and it is why the agent is a separate process at all — enforced only on the platform, the read-only guarantee would be a promise the customer cannot verify. Mutation-tested in Go.
 - **Raw JSON, not typed objects.** client-go's typed structs drop unknown fields and reorder keys, which would make an agent's evidence differ from the same read performed locally. Raw reads keep the two comparable and still avoid subprocess-per-call.
 - **Correlation is on the envelope, not the record.** `EvidenceEnvelope` carries `request_id`; `EvidenceRecord` stays the storage and audit format, which has no such thing.
+- **A record is matched back to its request by kind *and target*, never by kind alone.** A wave routinely holds several reads of one kind differing only by target — `LogsCollector` issues one `k8s.logs` per problematic pod — and nothing obliges an agent to answer them in the order they were asked. `fetch_many` used to group by kind and hand records out in arrival order, which filed one pod's logs under another pod's name: **5.5% of pod-log entries over an hour against a real agent**, counting only the ones detectable because the message named a different pod. A mis-paired *success* is the same defect with no trace at all — a diagnosis quoting the wrong container's output, with a citation. The information was on the wire the whole time: the agent copies `spec.target` onto every record it returns, refusals included. An unmatched request is now a gap naming what is missing, which is what the comment there always claimed.
 - **kubectl rewrites list envelopes.** `kubectl get pods -o json` returns `kind: List`; the API server returns `PodList`. Evidence is therefore compared on objects, never bytes — see `tests/test_agent_transport.py`.
 - **A `rest.Config` that leaves QPS and Burst at zero is not unlimited — it is client-go's 5/10.** One investigation issues ~20 reads, so everything past the tenth waited about a second and the agent logged `client-side throttling`; collection time tracked the rate limiter rather than the cluster. `--api-qps`/`--api-burst` (50/100) are applied **inside `loadConfig`, the only constructor**, not at the call site: as a separate step in `main()` they were correct, tested, and deletable without a single test noticing, because `main()` is not under test. Mutation-tested both ways — removing the call site survived until it was folded in.
 
@@ -808,6 +816,8 @@ Five things here are load-bearing:
 - **The CSR contributes a public key and nothing else.** Subject, SANs and extensions are discarded; the leaf is built from the token's cluster binding. Its self-signature is verified, because a CA that skips proof-of-possession is a signing oracle.
 - **Single-use is a conditional `UPDATE`** (`WHERE consumed_at IS NULL`) on Postgres — the same mutual exclusion as the job claim — or an in-process lock plus atomic replace on the file store. Tokens are stored SHA-256 hashed, never in the clear. Pinned by a *concurrent* test; a read-then-write passes every other assertion and fails that one.
 - **Renewal is authenticated by the current certificate**, at 2/3 of its life, and **never touches the running stream**. The new material is swapped into a `Holder` that Go's `GetClientCertificate` consults per handshake, so the *next* dial picks it up while the open connection keeps the old certificate — still valid for the remaining third. That overlap is why rotation drops no in-flight collection and needs no restart. Do not revoke on renewal; that would kill the stream this design exists to protect.
+
+  **The renewal *rate* is bounded by certificate life, not by how often the agent checks the clock, and it has to be.** The CA backdates `NotBefore` by five minutes for clock skew and `RenewAt` counts that backdate as life, so for any certificate lifetime under 150 seconds the renewal point is already in the past when the certificate is issued — and then every check tick mints another one. Measured against a real agent at `AGENT_CERT_TTL_HOURS=0.025` with `--renewal-check 5s`: twelve certificates a minute, indefinitely, each a CA signature and a row in `agent_certificates`. The agent cannot detect this by arithmetic — a certificate records when it became *valid*, never when it was *issued* — so it bounds what it can, at a third of the certificate's remaining life, fixed at the moment of an attempt rather than recomputed each tick (recomputing shrinks the gap as the certificate ages and converges on a quarter of the life instead of the third it reads as). It bounds attempts, not successes: a gateway refusing renewals is exactly when a retry loop costs most. `Settings.validate_agent_gateway()` warns below the floor, being the only side that holds both constants — the backdate lives in `app/security/ca.py`, the fraction in Go, and `MINIMUM_SENSIBLE_CERT_SECONDS` is derived from the CA's own value rather than typed, with a test asserting they have not drifted.
 - **Revocation is swept, not just checked at connect.** A transport built around a stream that stays open for weeks makes revocation-at-reconnect close to meaningless, so `AgentGateway._sweep_revocations()` ends live sessions whose serial was revoked. Both this and the connect-time check are pinned by tests.
 
 Two listeners, because gRPC's Python bindings offer only "never request a client certificate" or "require and verify one" — there is no request-but-don't-require mode. The **gateway** port requires a certificate and serves `Connect` plus renewals; the **enrolment** port (default: gateway + 1) requests none and serves only token bootstrap. A fleet that has finished enrolling can firewall the enrolment port off.
@@ -983,6 +993,8 @@ Collectors declare `provides` / `requires` / `optional_requires`; `CollectorRegi
 - **Redaction happens here, at the collection boundary** — so reports on disk, the HTTP API, and the LLM all see the same scrubbed payload. Do not reintroduce redaction at the prompt boundary; that leaves the persistence and API paths uncovered.
 
 The inspectors are **adapted, not rewritten** (`app/collectors/kubernetes.py`). `InspectorCollector` runs one inspector — fetch what it declares, then let it analyse — and maps the established `{"error": ...}` contract onto evidence status through `app/kubernetes/errors.py`. Everything except pod logs is independent and runs as one concurrent wave; logs form a second wave because `PodLogsCollector` declares `requires={PODS}`.
+
+**A log read must say `OutputFormat.TEXT`, and the baseline one did not.** `OutputFormat` defaults to JSON and that default is what decides whether `KubectlExecutor` calls `json.loads` on the output — so on the kubeconfig path the baseline pod-log read *failed for every pod that had anything to say* and succeeded for the silent ones, whose empty output parsed as `{}`. The failure carried no reason: kubectl exited 0 with an empty stderr. Exactly inverted — the pods whose logs matter are the crashing ones. `PreviousPodLogsCollector` had it right and the baseline read did not, which is why nothing compared them. Found by putting an agent-served investigation next to a kubeconfig-served one of the same cluster in the same minute: the agent path was unaffected, so this was a provider divergence on the single most useful piece of evidence a CrashLoopBackOff has.
 
 An inspector's reads now go out as a **batch** (`fetch_many`). `WorkloadInspector` made four sequential kubectl calls; it issues one round trip, which matters on a stream that may cross a continent.
 
@@ -1255,6 +1267,8 @@ Two properties are load-bearing and must not regress:
 - **Never display evidence the backend did not report.** `ConfidenceEvidence` previously fell back to a hardcoded `["Events", "Pod Logs", …]`; panels now render an empty state instead. In a product whose premise is that nothing is asserted without evidence, placeholder content is a correctness bug.
 - **Progress is real.** The old `progressSteps` array advanced on a 900ms timer with no relationship to backend work. Every row in `LiveTimeline` is an event the backend actually emitted.
 
+Both are pinned by `src/components/panels.test.tsx`, along with the cache-and-transport visibility rule, and each is mutation-tested against the defect as it actually shipped. **Assert on what only a real value can produce, not on prose**: "the words 'evidence strength' are absent" fails when someone edits the panel's subtitle — which names the three weights — and passes when a placeholder row is reinstated. It asserts on the score-times-weight arithmetic instead.
+
 The env prefix is `react_PUBLIC_` (not `VITE_`), registered in `vite.config.ts`'s `envPrefix`; `react_PUBLIC_API_BASE_URL` sets the backend base URL and is also used to build the absolute `EventSource` URL. Backend CORS defaults to `http://localhost:3000` only (`settings.cors_origins`).
 
 Response shapes are typed in `src/types/investigation.ts`, but the backend returns `dict[str, Any]` for `investigation` and `diagnosis` — **the TS types are the only contract and Pydantic will not catch drift.** `scratchpad/contract_check.py` style verification (run the backend against a fake cluster, assert every field the console reads is present) is the way to check it.
@@ -1308,6 +1322,66 @@ Two things here are load-bearing and both fail silently:
   holder crosses that boundary; `correlation_scope()` installs a *new* holder
   so a background investigation cannot rename the request that started it.
   Same family as `require_principal` having to stay `async`.
+
+### Sustained operation (`scripts/soak_bench.py`)
+
+Every other harness here finishes in seconds and answers "how fast". This one
+answers "what happens if you leave it on", which is the question
+`docs/PERFORMANCE_ENVELOPE.md` had recorded as unmeasured for nine milestones.
+
+```bash
+docker run -d --name pg -e POSTGRES_PASSWORD=postgres -p 5433:5432 postgres:17-alpine
+docker compose up -d redis
+(cd agent && go build -o /tmp/k8s-agent ./cmd/agent)
+python scripts/soak_bench.py --minutes 60 --context kind-aiops-test --agent
+```
+
+Four things are watched because each is a claim no short run can test: resident
+memory with the F18 cache on, whether the retention sweep fires and what it
+costs, whether certificate renewal survives repetition under load, and whether
+the SSE and polling transports produce the same outcomes.
+
+**The vacuity guard is why the output is worth reading.** A soak of a platform
+doing nothing reports beautifully — flat memory, no errors, no leak — and every
+harness failure in this repository has had that shape. The run therefore
+*refuses* to publish unless a floor of investigations actually succeeded **and
+collected usable evidence**. Trends computed from fewer are withheld rather
+than printed.
+
+Four things it had to be taught, three of them by being wrong first:
+
+- **The caller needs RBAC, or the whole run is vacuous in the most convincing
+  way available.** Impersonation is on by default, the soak's subject is in no
+  binding, every read comes back FORBIDDEN, and the platform correctly reports
+  a locked door — for an hour. The ClusterRole it binds is lifted from the
+  platform's *own* enrolment manifest rather than written here, because a third
+  list of resources is the mistake F7 already cost eight reads.
+- **Every worker runs a gateway, because that is the shipped topology.** Giving
+  one worker a gateway and not the other made a third of investigations fall
+  back to the local kubeconfig — which measured the harness. It also found F21.
+- **SSE sequences are not contiguous.** `investigation_events.seq` is a
+  `bigserial` shared by every investigation in the database, so one stream's ids
+  are naturally sparse and the first version reported a 10% "gap rate" that was
+  other investigations interleaving. The properties that exist are monotonicity
+  and uniqueness.
+- **The retention sweep's cost needs the store the platform actually installs.**
+  `get_report_store()` returns the *filesystem* store — the Postgres one is a
+  startup step, not something `DATABASE_URL` implies — so the first measurement
+  reported "0 blobs in 0 ms", a plausible number for a store that was never
+  pointed at the rows.
+
+**Probes fail soft, and that is not defensive coding.** The Docker daemon on
+the development machine died three times during this work, twice mid-run,
+taking Postgres with it — and because every probe read the database, an
+unreachable database ended the run with a traceback and reported *nothing*.
+Fifty minutes of measurement lost to the instrumentation rather than to the
+subject. The run now ends with a `TRUNCATED` line naming when and why, and an
+absent sample is recorded as absent rather than as a database that shrank to
+zero. Same rule as `_safe()` in `app/observability`.
+
+**Load is a sustained rate, not a peak one.** 180 investigations a minute
+against one kind cluster is a stress test of Docker Desktop, not a workload;
+it took the daemon down twice before an hour was reached. An hour is the point.
 
 ### Chaos and scale-out (`scripts/chaos_bench.py`, `scripts/scaleout_bench.py`)
 
