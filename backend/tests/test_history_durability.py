@@ -167,17 +167,17 @@ class TestHistorySeverityAgreesWithTheReport:
             "severity": {"severity": "Unknown"},
             "health": {"status": "error", "message": "Kubernetes investigation failed."},
         }
-        assert service._report_severity(unreadable) == "Unknown"
+        assert service._renderer.severity(unreadable) == "Unknown"
 
     def test_a_real_finding_is_still_reported_as_found(self, service):
         investigation = {"severity": {"severity": "Critical"}, "health": {"status": "error"}}
-        assert service._report_severity(investigation) == "Critical"
+        assert service._renderer.severity(investigation) == "Critical"
 
     def test_a_legacy_report_claiming_health_after_a_failure_is_corrected(self, service):
         # Written before severity accounted for failed collectors.
         legacy = {"severity": {"severity": "Healthy"}, "health": {"status": "error"}}
-        assert service._report_severity(legacy) == "Unknown"
+        assert service._renderer.severity(legacy) == "Unknown"
 
     def test_a_genuinely_healthy_cluster_stays_healthy(self, service):
         healthy = {"severity": {"severity": "Healthy"}, "health": {"status": "healthy"}}
-        assert service._report_severity(healthy) == "Healthy"
+        assert service._renderer.severity(healthy) == "Healthy"

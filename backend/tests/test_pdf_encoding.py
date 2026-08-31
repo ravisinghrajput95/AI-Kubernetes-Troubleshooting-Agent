@@ -14,14 +14,16 @@ real investigation; see `docs/QA_AUDIT_2026-08-03.md`.
 
 import re
 
-from app.services.history_service import InvestigationHistoryService
+from app.reports.rendering import ReportRenderer
 
 FONT_PATTERN = re.compile(rb"/Type\s*/Font[^>]*")
 
 
 def pdf_for(*lines: str) -> bytes:
-    service = InvestigationHistoryService.__new__(InvestigationHistoryService)
-    return service._pdf_bytes([list(lines)])
+    # The emitter moved to `ReportRenderer` when `history_service` was split
+    # into its three jobs. It needs no construction argument, so the
+    # `__new__` dance the old call site required is gone with it.
+    return ReportRenderer()._pdf_bytes([list(lines)])
 
 
 class TestEveryFontDeclaresAnEncoding:

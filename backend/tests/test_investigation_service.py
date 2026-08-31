@@ -498,7 +498,7 @@ class TestSeverityNeverOverclaims:
 
         investigation = await build_service(UnreachableCluster()).run()
         service = InvestigationHistoryService()
-        reported = service._report_severity(investigation)
+        reported = service._renderer.severity(investigation)
 
         # history_service escalates on a failed health check; what matters is
         # that neither surface calls an uninspectable cluster healthy.

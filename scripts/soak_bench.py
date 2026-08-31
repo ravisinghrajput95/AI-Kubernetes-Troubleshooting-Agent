@@ -182,14 +182,40 @@ def prepare_database(reset: bool) -> None:
             cursor.execute(f'CREATE DATABASE "{name}"')
 
 
+class ProbeFailed(Exception):
+    """The harness could not read something. Not the platform's problem."""
+
+
 def sql(statement: str, args: tuple = ()) -> list[tuple]:
     import psycopg
 
-    with psycopg.connect(DATABASE_URL, autocommit=True) as connection, connection.cursor() as cur:
-        cur.execute(statement, args)
-        if cur.description is None:
-            return []
-        return cur.fetchall()
+    try:
+        with (
+            psycopg.connect(DATABASE_URL, autocommit=True, connect_timeout=10) as connection,
+            connection.cursor() as cur,
+        ):
+            cur.execute(statement, args)
+            if cur.description is None:
+                return []
+            return cur.fetchall()
+    except Exception as exc:
+        raise ProbeFailed(f"{type(exc).__name__}: {exc}") from exc
+
+
+def _database_reachable() -> bool:
+    try:
+        sql("SELECT 1")
+    except ProbeFailed:
+        return False
+    return True
+
+
+def _try(call, *args, default):
+    """Run a probe, or give up on it. Never end the run over instrumentation."""
+    try:
+        return call(*args)
+    except ProbeFailed:
+        return default
 
 
 def pinned_kubeconfig(context: str, workdir: Path) -> Path:
@@ -746,6 +772,8 @@ def summarise(state: dict) -> int:
 
     print("\n" + "=" * 78)
     print(f"SOAK — {minutes:.1f} minutes, {len(runs)} investigations")
+    if state.get("interruption"):
+        print(f"TRUNCATED: {state['interruption']}")
     print("=" * 78)
 
     by_status = Counter(run.status for run in runs)
@@ -822,15 +850,16 @@ def summarise(state: dict) -> int:
         print(f"  {len(refreshed)} run with refresh=true; those served {forced} reads from cache")
 
     # --- storage -------------------------------------------------------------
-    if samples:
-        first, last = samples[0], samples[-1]
+    measured = [sample for sample in samples if sample.db_bytes > 0]
+    if measured:
+        first, last = measured[0], measured[-1]
         print("\nStorage")
         print(
             f"  postgres {first.db_bytes / 1e6:.1f} MB → {last.db_bytes / 1e6:.1f} MB "
             f"over {last.rows - first.rows} new rows"
         )
         print(f"  redis    {first.redis_bytes / 1e6:.1f} MB → {last.redis_bytes / 1e6:.1f} MB")
-        db_series = [(s.at, float(s.db_bytes)) for s in half if s.db_bytes]
+        db_series = [(s.at, float(s.db_bytes)) for s in half if s.db_bytes > 0]
         print(f"  postgres trend(2nd half) {trend_per_hour(db_series) / 1e6:+.1f} MB/h")
 
     # --- retention -----------------------------------------------------------
@@ -1087,14 +1116,36 @@ def main() -> int:
         seeded_at = 0.0
         retention = state["retention"]
         last_report = 0.0
+        interruption = ""
+        probe_failures = 0
         try:
             while time.time() < deadline:
                 time.sleep(5)
                 now = time.time()
 
+                # Every probe below reads Postgres, which on this machine lives
+                # in the same Docker daemon as the cluster under test — and that
+                # daemon died three times during this work, twice mid-run. A
+                # harness that loses fifty minutes of measurement because its
+                # *instrumentation* could not connect has reported nothing,
+                # which is worse than reporting a truncated hour. Same rule as
+                # `_safe()` in `app/observability`: instrumentation must not
+                # fail the thing it measures.
+                if not _database_reachable():
+                    probe_failures += 1
+                    if probe_failures >= 3:
+                        interruption = (
+                            f"the database became unreachable {(now - started) / 60:.0f}m in; "
+                            f"reporting what was measured up to that point"
+                        )
+                        print(f"  [{(now - started) / 60:.0f}m] {interruption}")
+                        break
+                    continue
+                probe_failures = 0
+
                 # Seed the retention sweep's work once there are real rows to copy.
                 if not seeded_at and now - started > 120:
-                    made = age_reports(10)
+                    made = _try(age_reports, 10, default=0)
                     if made:
                         seeded_at = now
                         _, with_result, blobs = aged_state()
@@ -1110,8 +1161,8 @@ def main() -> int:
                 # Watch for the sweep to take them.
                 if seeded_at and not retention.get("swept_at"):
                     probe = time.time()
-                    _, with_result, blobs = aged_state()
-                    if with_result < retention.get("with_result_before", 0):
+                    _, with_result, blobs = _try(aged_state, default=(0, -1, 0))
+                    if 0 <= with_result < retention.get("with_result_before", 0):
                         retention["swept_at"] = probe
                         retention["swept_after"] = probe - started
                         print(f"  [{(probe - started) / 60:.0f}m] the retention sweep fired")
@@ -1140,7 +1191,9 @@ def main() -> int:
         while not results.empty():
             runs.append(results.get())
 
-        _, with_result_after, blobs_after = aged_state() if seeded_at else (0, 0, 0)
+        _, with_result_after, blobs_after = (
+            _try(aged_state, default=(0, 0, 0)) if seeded_at else (0, 0, 0)
+        )
         retention["with_result_after"] = with_result_after
         retention["blobs_after"] = blobs_after
 
@@ -1148,14 +1201,14 @@ def main() -> int:
         # timer. Its *cost* needs rows to delete, and by now the platform has
         # probably taken them — so seed a second, larger batch and time the
         # store's own prune against it.
-        second = age_reports(25)
+        second = _try(age_reports, 25, default=0)
         if second:
-            removed, seconds = measure_sweep_cost()
+            removed, seconds = _try(measure_sweep_cost, default=(0, 0.0))
             retention.update({"cost_rows": second, "cost_blobs": removed, "cost_seconds": seconds})
 
         certificates: dict = {"enabled": bool(agent)}
         if agent:
-            serials = certificate_serials(args.context)
+            serials = _try(certificate_serials, args.context, default=[])
             certificates.update(
                 {
                     "cluster": args.context,
@@ -1174,6 +1227,7 @@ def main() -> int:
                 "worker_names": [w.name for w in workers],
                 "findings": log_findings(workers),
                 "certificates": certificates,
+                "interruption": interruption,
             }
         )
 
