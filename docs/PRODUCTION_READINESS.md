@@ -190,7 +190,7 @@ which had the dependency pointing backwards; the remediation builders moved to
 to mean rendering a panel and reading a `<pre>`, which is why 1,000 lines of
 console had none. Two dead components went with it (`MultiClusterPanel`,
 `investigationEvidence`), unreferenced anywhere in `src/`. ·
-`FixRecommendationEngine` vestigial ·
+~~`FixRecommendationEngine` vestigial~~ **the note was wrong, and this is the third one** (after `app/kubernetes/inspector.py` and "no frontend component tests"). It is live on `RootCauseAnalyzer._fallback()` — the path taken whenever there is no `OPENAI_API_KEY`, the model call fails, or grounding rejects the answer — and `prevention`, `next_steps` and `kubectl_commands` come from **nowhere else** on it. Verified by running rather than reading: a fallback diagnosis's `prevention` and `next_steps` are byte-identical to `FixRecommendationEngine.recommend()`'s. Only `fix` is usually superseded, by the hypothesis's more specific `remediation_hint`, which is presumably what the note saw. Deleting it on the strength of that word would have stripped the no-API-key diagnosis of its commands, prevention and next steps — the configuration the README calls fully functional ·
 ~~`history_service.py` ~900 lines doing three jobs~~ **done** · kubectl subprocess-per-call
 (**reduced, not removed**: F18 stops a *repeat* investigation paying for it —
 70 processes to 13 — but a cold one still spawns one per read) ·
