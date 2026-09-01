@@ -108,8 +108,17 @@ MUTATIONS = [
             "that must not be un-pinned."
         ),
         path="app/jobs/runner.py",
-        old="    if get_agent_registry().get(context) is not None:\n        return presence.worker_id\n\n",
-        new="",
+        old=(
+            "        if get_agent_registry().get(context) is not None:\n"
+            "            return presence.worker_id\n"
+        ),
+        # Re-anchored after F21 nested this block under
+        # `agent_gateway_enabled`. The registry lookup is unchanged; only
+        # its indentation moved. Removing the enclosing `if` instead would
+        # take the import with it and fail on a NameError rather than on
+        # the routing assertion — a different test passing for a different
+        # reason, which is what re-anchoring exists to avoid.
+        new="        if False:\n            return presence.worker_id\n",
         tests="tests/test_agent_routing.py",
     ),
     Mutation(
@@ -120,8 +129,8 @@ MUTATIONS = [
             "of what revoking asked for."
         ),
         path="app/services/investigation_service.py",
-        old="        if _agent_was_revoked(context):",
-        new="        if False and _agent_was_revoked(context):",
+        old="    if _agent_was_revoked(context):",
+        new="    if False and _agent_was_revoked(context):",
         tests="tests/test_agent_routing.py",
     ),
     Mutation(
@@ -447,6 +456,59 @@ MUTATIONS = [
         old="    marks = [started, *good, started + elapsed]",
         new="    marks = [started, *good]",
         tests="tests/test_soak_guard.py",
+    ),
+    Mutation(
+        name="f21-refusal-needs-no-gateway",
+        why=(
+            "F21. The presence index was installed inside the "
+            "`agent_gateway_enabled` branch of `app/state.py`, so on a worker "
+            "with no gateway of its own `select_provider` never consulted it "
+            "and answered an agent-held cluster from a local context that "
+            "merely shares the name — with no tenant, which is the "
+            "cross-tenant harm M8a's refusal exists to prevent. Unreachable "
+            "in the shipped topology, reachable mid-rollout."
+        ),
+        path="app/services/investigation_service.py",
+        old="    holder = _fleet_holder(context)\n    if holder:",
+        new=(
+            '    holder = _fleet_holder(context) if settings.agent_gateway_enabled else ""\n'
+            "    if holder:"
+        ),
+        tests="tests/test_agent_routing.py",
+    ),
+    Mutation(
+        name="f21-fleet-index-is-the-state-backends",
+        why=(
+            "The wiring half of F21, which behaviour cannot see: every routing "
+            "test installs a presence index by hand, so they all pass whether "
+            "or not startup would ever create one. That was the shape of the "
+            "original defect — the routing logic was right and the wiring was "
+            "wrong somewhere else entirely."
+        ),
+        path="app/state.py",
+        old="    install_fleet_index(database, bus, worker)\n\n",
+        new="",
+        tests="tests/test_agent_routing.py",
+    ),
+    Mutation(
+        name="f21-revocation-off-the-default-path",
+        why=(
+            "F21's fix moved the revocation check out from behind the gateway "
+            "flag, which put it on the single-process path — where "
+            "`get_enrolment_store()` lazily builds a file store and the check "
+            "*refuses on a read failure*. Ungated, an unreadable "
+            "AGENT_IDENTITY_DIR fails every investigation on the "
+            "getting-started path. The first test written for this guard used "
+            "a store with no records and passed with the guard removed; only "
+            "one that raises can tell the two apart."
+        ),
+        path="app/services/investigation_service.py",
+        old=(
+            "    if not (settings.agent_gateway_enabled or settings.distributed_state):\n"
+            "        return False\n\n"
+        ),
+        new="",
+        tests="tests/test_agent_routing.py",
     ),
 ]
 

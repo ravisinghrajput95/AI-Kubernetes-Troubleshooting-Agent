@@ -40,9 +40,6 @@ def agent_affinity(request: InvestigationRequest | None) -> str:
     Imported lazily so a deployment with no gateway never loads the presence
     index to answer a question that can only be "no".
     """
-    if not settings.agent_gateway_enabled:
-        return ""
-
     context = (request.context if request else "") or ""
     if not context:
         # No cluster named means the local kubeconfig's current context, which
@@ -50,7 +47,6 @@ def agent_affinity(request: InvestigationRequest | None) -> str:
         return ""
 
     from app.gateway.presence import get_agent_presence
-    from app.gateway.session import get_agent_registry
     from app.tenancy import current_tenant
 
     presence = get_agent_presence()
@@ -74,8 +70,16 @@ def agent_affinity(request: InvestigationRequest | None) -> str:
     # refusal is correct and the routing that should make it rare was
     # inverted: landing on the right worker was precisely the case that
     # un-pinned the job.
-    if get_agent_registry().get(context) is not None:
-        return presence.worker_id
+    # **The registry lookup is behind the gateway flag; the presence lookup is
+    # not** (F21). Only the first needs grpc, and a worker without a gateway
+    # holds no streams — but it can still be told that another worker does, and
+    # route the work there. Guarding the whole function on the flag, as this
+    # used to, made routing inert on exactly the workers that most needed it.
+    if settings.agent_gateway_enabled:
+        from app.gateway.session import get_agent_registry
+
+        if get_agent_registry().get(context) is not None:
+            return presence.worker_id
 
     return presence.holder(current_tenant(), context) or ""
 

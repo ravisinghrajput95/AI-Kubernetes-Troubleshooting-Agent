@@ -104,6 +104,14 @@ def select_provider(context: str | None, principal: Principal | None) -> Cluster
 
     Imported lazily, so a deployment with no agents never loads grpc.
     """
+    # **Only the first of these three needs a gateway** (F21). Collecting
+    # *through* an agent needs the stream, so it needs grpc and the local
+    # registry. Refusing does not: both refusals are reads of shared state —
+    # Redis for presence, Postgres for certificates — and they are the whole of
+    # the M8a guarantee. Guarding all three on `agent_gateway_enabled`, as this
+    # used to, meant a worker part-way through a rollout answered an
+    # agent-held cluster from a same-named local context, silently, which is
+    # the cross-tenant harm the refusal exists to prevent.
     if settings.agent_gateway_enabled:
         from app.gateway.session import get_agent_registry
         from app.providers.remote_agent import build_remote_provider
@@ -112,24 +120,24 @@ def select_provider(context: str | None, principal: Principal | None) -> Cluster
         if session is not None:
             return build_remote_provider(session, principal=principal)
 
-        holder = _fleet_holder(context)
-        if holder:
-            raise ClusterUnreachable(
-                f"The agent for cluster {context!r} is attached to worker {holder}, "
-                f"not this one. Reading the local kubeconfig instead could collect "
-                f"evidence from a different cluster with the same name, so this "
-                f"investigation is refused rather than answered wrongly. Retry — "
-                f"submissions are routed to the worker holding the agent."
-            )
+    holder = _fleet_holder(context)
+    if holder:
+        raise ClusterUnreachable(
+            f"The agent for cluster {context!r} is attached to worker {holder}, "
+            f"not this one. Reading the local kubeconfig instead could collect "
+            f"evidence from a different cluster with the same name, so this "
+            f"investigation is refused rather than answered wrongly. Retry — "
+            f"submissions are routed to the worker holding the agent."
+        )
 
-        if _agent_was_revoked(context):
-            raise ClusterUnreachable(
-                f"The agent for cluster {context!r} had its certificate revoked and "
-                f"has no valid one left. Falling back to the local kubeconfig would "
-                f"answer from a context that merely shares the name — which is the "
-                f"opposite of what revoking asked for. Enrol a replacement agent, or "
-                f"investigate the kubeconfig cluster under its own context name."
-            )
+    if _agent_was_revoked(context):
+        raise ClusterUnreachable(
+            f"The agent for cluster {context!r} had its certificate revoked and "
+            f"has no valid one left. Falling back to the local kubeconfig would "
+            f"answer from a context that merely shares the name — which is the "
+            f"opposite of what revoking asked for. Enrol a replacement agent, or "
+            f"investigate the kubeconfig cluster under its own context name."
+        )
 
     return LocalKubectlProvider(context=context, principal=principal)
 
@@ -157,6 +165,16 @@ def _agent_was_revoked(context: str | None) -> bool:
     are ones already without an agent.
     """
     if not context:
+        return False
+
+    # **Asked only where an agent could exist.** F21 moved this out from behind
+    # `agent_gateway_enabled` so a gatewayless worker in a distributed fleet
+    # still refuses a revoked cluster — but "no gateway *and* no shared state"
+    # is the single-process default, where no agent can ever have attached and
+    # `get_enrolment_store()` would build an empty file store to prove it. That
+    # store also *refuses on a read failure*, so leaving this ungated would put
+    # a new way to fail every investigation on the getting-started path.
+    if not (settings.agent_gateway_enabled or settings.distributed_state):
         return False
 
     from app.security.enrolment import get_enrolment_store

@@ -155,13 +155,21 @@ class TestWorkRoutesToTheWorkerHoldingTheStream:
         with tenant_scope("globex"):
             assert agent_affinity(InvestigationRequest(context="prod")) == "worker-b"
 
-    def test_without_a_gateway_routing_is_not_consulted(self, monkeypatch, presence):
-        """A kubeconfig-only deployment must not pay for a feature it cannot use."""
+    def test_a_worker_without_a_gateway_still_routes(self, monkeypatch, presence):
+        """F21. This test used to assert the opposite, and the docstring said
+        why: "a kubeconfig-only deployment must not pay for a feature it cannot
+        use". That reasoning is right and the guard was in the wrong place.
+
+        A worker with no gateway holds no streams — but it can still be *told*
+        that another worker holds one, and queue the work there. Presence is
+        JSON in Redis and needs no grpc. The thing a kubeconfig-only deployment
+        must not pay for is the presence index itself, and not having one is
+        already the guard: see the single-process test below."""
         monkeypatch.setattr(settings, "agent_gateway_port", 0)
         AgentPresence(presence.bus, "worker-b").announce(FakeSession("prod-eu"))
         presence("worker-a")
 
-        assert agent_affinity(InvestigationRequest(context="prod-eu")) == ""
+        assert agent_affinity(InvestigationRequest(context="prod-eu")) == "worker-b"
 
     def test_a_single_process_deployment_routes_nowhere(self, gateway, monkeypatch):
         """There is one worker, so affinity is already satisfied and naming it
@@ -649,3 +657,178 @@ class TestARevokedAgentIsNotQuietlyReplacedByTheKubeconfig:
 
         with pytest.raises(ClusterUnreachable):
             select_provider("prod-eu", None)
+
+
+class TestTheGuaranteeDoesNotDependOnThisWorkerRunningAGateway:
+    """F21: M8a's routing and its refusal were both inert on a worker whose own
+    `AGENT_GATEWAY_PORT` was unset.
+
+    The presence index and the enrolment store were installed inside the
+    gateway branch of `app/state.py`, so on such a worker `get_agent_presence()`
+    was `None` and the enrolment store fell back to an empty local file.
+    `agent_affinity` returned the shared queue and `select_provider` went
+    straight to `LocalKubectlProvider` — reading a local context that merely
+    shares the cluster's *name*, with no tenant, which is the exact
+    cross-tenant answer M8a's refusal exists to prevent.
+
+    The shipped topology cannot reach it: one Deployment, one config, N
+    replicas. A fleet part-way through enabling `AGENT_GATEWAY_PORT` can, and
+    there the guarantee was absent with no symptom at all. Found by a soak that
+    gave the first worker a gateway and the second none: a third of
+    investigations came back `provider=kubeconfig` with an agent attached and
+    no refusal logged anywhere.
+
+    Every test here runs with the gateway *off*, which is the point.
+    """
+
+    @pytest.fixture(autouse=True)
+    def no_gateway(self, monkeypatch):
+        monkeypatch.setattr(settings, "agent_gateway_port", 0)
+
+    def test_it_refuses_rather_than_reading_a_same_named_local_context(self, presence):
+        """The one that matters. Before F21 this returned a
+        `LocalKubectlProvider` for tenant A's `prod` pointed at whatever
+        context the platform's own kubeconfig calls `prod`."""
+        AgentPresence(presence.bus, "worker-b").announce(FakeSession("prod-eu"))
+        presence("worker-a")
+
+        with pytest.raises(ClusterUnreachable) as refusal:
+            select_provider("prod-eu", None)
+        assert "worker-b" in str(refusal.value)
+
+    def test_it_routes_to_the_holder(self, presence):
+        AgentPresence(presence.bus, "worker-b").announce(FakeSession("prod-eu"))
+        presence("worker-a")
+
+        assert agent_affinity(InvestigationRequest(context="prod-eu")) == "worker-b"
+
+    def test_a_cluster_with_no_agent_anywhere_still_uses_the_kubeconfig(self, presence):
+        """The other half. Refusing everything would be a different outage, and
+        a fleet with no agents at all must be unaffected by F21."""
+        presence("worker-a")
+
+        assert isinstance(select_provider("prod-eu", None), LocalKubectlProvider)
+
+    def test_the_single_process_default_is_untouched(self, monkeypatch):
+        """No gateway *and* no shared state is `uvicorn app.main:app` against a
+        kubeconfig — the getting-started path. There is no fleet to consult and
+        nothing may refuse.
+
+        """
+        from app.gateway import presence as presence_module
+
+        monkeypatch.setattr(presence_module, "_presence", None)
+        monkeypatch.setattr(settings, "database_url", "")
+        monkeypatch.setattr(settings, "redis_url", "")
+
+        assert isinstance(select_provider("prod-eu", None), LocalKubectlProvider)
+        assert agent_affinity(InvestigationRequest(context="prod-eu")) == ""
+
+    def test_an_unreadable_enrolment_store_does_not_refuse_the_default_path(self, monkeypatch):
+        """The guard that keeps F21's fix from becoming a different outage.
+
+        `_agent_was_revoked` **refuses when it cannot read the store** — right
+        when a revoked agent is possible, because answering from a same-named
+        local context is worse. F21 moved it out from behind the gateway flag,
+        which put it on the single-process path, where `get_enrolment_store()`
+        lazily builds a file store under `AGENT_IDENTITY_DIR`. An unreadable or
+        corrupt file there would then refuse *every* investigation on the
+        getting-started path — a deployment where no agent can ever have
+        attached, because there is no gateway for one to attach to.
+
+        Written after the first version of this test passed with the guard
+        removed: a store that merely has no records returns an empty list, so
+        it proved nothing. Only a store that *raises* can tell the two apart."""
+        from app.gateway import presence as presence_module
+        from app.security import enrolment as enrolment_module
+
+        class Unreadable:
+            def certificates(self, cluster: str):
+                raise OSError("enrolment.json is not readable")
+
+        monkeypatch.setattr(presence_module, "_presence", None)
+        monkeypatch.setattr(enrolment_module, "_store", Unreadable())
+        monkeypatch.setattr(settings, "database_url", "")
+        monkeypatch.setattr(settings, "redis_url", "")
+
+        assert isinstance(select_provider("prod-eu", None), LocalKubectlProvider)
+
+    def test_the_same_unreadable_store_does_refuse_where_an_agent_could_exist(
+        self, monkeypatch, presence
+    ):
+        """The control, without which the test above is satisfied by a
+        revocation check that never refuses at all."""
+        from app.security import enrolment as enrolment_module
+
+        class Unreadable:
+            def certificates(self, cluster: str):
+                raise OSError("enrolment.json is not readable")
+
+        presence("worker-a")
+        monkeypatch.setattr(enrolment_module, "_store", Unreadable())
+        monkeypatch.setattr(settings, "database_url", "postgres://stub")
+        monkeypatch.setattr(settings, "redis_url", "redis://stub")
+
+        with pytest.raises(ClusterUnreachable):
+            select_provider("prod-eu", None)
+
+    def test_a_revoked_agent_is_refused_here_too(self, monkeypatch, presence):
+        """Revocation is the second thing that was inert, for the same reason:
+        the enrolment store was the gateway's as well. A revoked agent leaves
+        no presence record, so without this the fallback reads a local context
+        — the opposite of what revoking asked for."""
+        from datetime import timedelta
+
+        presence("worker-a")
+        monkeypatch.setattr(settings, "database_url", "postgres://stub")
+        monkeypatch.setattr(settings, "redis_url", "redis://stub")
+
+        class Record:
+            def __init__(self, revoked: bool) -> None:
+                self.revoked = revoked
+                self.expires_at = datetime.now(UTC) + timedelta(hours=1)
+
+        class Store:
+            def certificates(self, cluster: str):
+                return [Record(revoked=True)]
+
+        from app.security import enrolment as enrolment_module
+
+        monkeypatch.setattr(enrolment_module, "_store", Store())
+
+        with pytest.raises(ClusterUnreachable) as refusal:
+            select_provider("prod-eu", None)
+        assert "revoked" in str(refusal.value)
+
+
+class TestTheFleetIndexIsInstalledWithTheStateBackend:
+    """The structural half of F21, asserted on the wiring rather than on
+    behaviour — because behaviour cannot see it.
+
+    Every test above monkeypatches a presence index into place, so they pass
+    whether or not startup would ever install one. That is precisely the shape
+    of the original defect: the tests proved the routing logic and the wiring
+    was wrong somewhere else entirely.
+    """
+
+    def test_build_state_installs_presence_and_the_enrolment_store(self):
+        import inspect
+
+        from app import state as state_module
+
+        source = inspect.getsource(state_module.install_fleet_index)
+        assert "set_agent_presence" in source
+        assert "set_enrolment_store" in source
+        # And `build_state` must call it, not just define it.
+        assert "install_fleet_index(" in inspect.getsource(state_module.build_state)
+
+    def test_the_gateway_no_longer_installs_them(self):
+        """If it does, the two can disagree about which store is in effect, and
+        the branch that shadowed them is back."""
+        import inspect
+
+        from app import state as state_module
+
+        source = inspect.getsource(state_module.start_agent_gateway)
+        assert "set_agent_presence" not in source
+        assert "set_enrolment_store" not in source

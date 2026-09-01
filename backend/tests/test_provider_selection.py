@@ -69,18 +69,11 @@ class TestSelection:
 
         assert isinstance(provider, LocalKubectlProvider)
 
-    def test_selection_does_not_load_grpc_when_no_gateway_is_configured(self, monkeypatch):
-        """The lazy-import discipline, asserted rather than trusted.
-
-        `app/gateway/` imports grpc. A deployment reading a local kubeconfig
-        must not pay for it, and the only way that stays true is if nothing on
-        this path imports it unconditionally.
-        """
-        monkeypatch.setattr(settings, "agent_gateway_port", 0)
-
-        imported = []
+    @staticmethod
+    def _imports_during_selection(monkeypatch, cluster: str = "prod-eu-1") -> list[str]:
         import builtins
 
+        imported: list[str] = []
         real_import = builtins.__import__
 
         def watched(name, *args, **kwargs):
@@ -88,9 +81,78 @@ class TestSelection:
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", watched)
-        select_provider("prod-eu-1", None)
+        try:
+            select_provider(cluster, None)
+        except Exception:  # a refusal still tells us what was imported
+            pass
+        finally:
+            monkeypatch.setattr(builtins, "__import__", real_import)
+        return imported
 
-        assert not [name for name in imported if name.startswith("app.gateway")]
+    def test_selection_does_not_load_grpc_when_no_gateway_is_configured(self, monkeypatch):
+        """The lazy-import discipline, asserted rather than trusted.
+
+        A deployment reading a local kubeconfig must not pay for grpc, and the
+        only way that stays true is if nothing on this path imports it
+        unconditionally.
+
+        **Asserted on grpc, not on the `app.gateway` package**, and F21 is why.
+        The package name was standing in for the cost, and the two came apart:
+        `app/gateway/presence.py` is JSON in Redis and imports no grpc, and it
+        is now consulted on a worker with no gateway of its own — which is the
+        whole of that fix. Keeping the prefix assertion would have meant either
+        reverting F21 or moving a hundred lines of Redis code to another
+        package to satisfy a test about a dependency it does not have.
+        """
+        monkeypatch.setattr(settings, "agent_gateway_port", 0)
+
+        imported = self._imports_during_selection(monkeypatch)
+
+        assert not [name for name in imported if name == "grpc" or name.startswith("grpc.")]
+        # The two modules that do import it, named so the assertion above
+        # cannot be satisfied by grpc merely being cached in sys.modules.
+        assert "app.gateway.session" not in imported
+        assert "app.gateway.server" not in imported
+
+    def test_the_import_watch_can_actually_see_the_gateway(self, monkeypatch, registry):
+        """The control. Without it the test above passes for a `select_provider`
+        that imports nothing at all, which is exactly what a future refactor
+        would produce on the way to breaking it."""
+        monkeypatch.setattr(settings, "agent_gateway_port", 5551)
+        registry.register(FakeSession("prod-eu-1"))
+
+        imported = self._imports_during_selection(monkeypatch)
+
+        assert "app.gateway.session" in imported
+
+    def test_presence_is_free_of_grpc(self):
+        """What makes the split in F21 possible at all, pinned at the source.
+
+        If `presence.py` ever grows a grpc import, the module a gatewayless
+        worker now loads on every investigation starts pulling in the
+        dependency this file exists to keep off that path — and the behavioural
+        test above would still pass, because grpc would by then be imported
+        under a different name in a module it does not check.
+        """
+        import ast
+        import inspect
+
+        from app.gateway import presence as presence_module
+
+        # Parsed, not grepped. A `"grpc" not in source` check fails when
+        # someone writes the word in a comment — and that module's own
+        # docstring already explains why a gRPC stream belongs to one worker.
+        # Asserting on prose is how a test comes to be edited away.
+        tree = ast.parse(inspect.getsource(presence_module))
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+        assert not [name for name in imported if name == "grpc" or name.startswith("grpc.")], (
+            f"presence.py imports grpc: {sorted(imported)}"
+        )
 
 
 class TestAnAgentBelongsToOneTenant:

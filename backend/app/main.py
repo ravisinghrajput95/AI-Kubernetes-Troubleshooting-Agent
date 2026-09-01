@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
     """
     reset_readiness()
     state = build_state()
-    state.gateway = await start_agent_gateway(state)
+    state.gateway = await start_agent_gateway()
     start_retention(state)
     app.state.backend = state
     # Last, and only on the success path: everything above can raise, and a

@@ -143,42 +143,44 @@ class StateBackend:
 
         reset_destinations()
 
-        if self.gateway is not None:
-            from app.gateway.presence import set_agent_presence
-            from app.security.enrolment import set_enrolment_store
+        # Cleared unconditionally, because they are no longer installed by
+        # the gateway (F21). A worker with no gateway still holds both.
+        from app.gateway.presence import set_agent_presence
+        from app.security.enrolment import set_enrolment_store
 
-            set_enrolment_store(None)
-            set_agent_presence(None)
+        set_enrolment_store(None)
+        set_agent_presence(None)
 
 
 def worker_identity() -> str:
     return settings.worker_id or f"{socket.gethostname()}:{os.getpid()}"
 
 
-async def start_agent_gateway(state: "StateBackend | None" = None):
+async def start_agent_gateway():
     """The gRPC endpoint cluster agents dial into, when one is configured.
 
     Off by default and imported lazily: a deployment reading a local kubeconfig
     needs no agent, and should not load grpc or the certificate machinery to
     find that out.
+
+    Takes no `StateBackend` any more. It used to, in order to install the
+    enrolment store and the presence index from the database and bus it
+    carries — which is exactly what F21 moved to `install_fleet_index`. Keeping
+    the parameter would leave a signature saying this function still depends on
+    state it no longer touches.
     """
     if not settings.agent_gateway_enabled:
         return None
 
     settings.validate_agent_gateway()
 
-    # Agent enrolment state follows the same decision the job store made: with
-    # Postgres it is a shared table whose conditional UPDATE is what makes a
-    # bootstrap token single-use across workers; without it, a file beside the
-    # reports. Installed here rather than in `build_state` so a deployment with
-    # no agents never imports any of it.
-    if state is not None and settings.distributed_state and state.database is not None:
-        from app.persistence.agent_identity import PostgresEnrolmentStore
-        from app.security.enrolment import set_enrolment_store
-
-        set_enrolment_store(PostgresEnrolmentStore(state.database))
-        logger.info("Agent enrolment state is in Postgres")
-    else:
+    # Enrolment state and the fleet presence index used to be installed here,
+    # and that was F21. Both are now `build_state`'s — see `install_fleet_index`
+    # — because neither needs grpc and both are needed by workers that have no
+    # gateway. What is left here is the file-backed fallback, which is the one
+    # case `build_state` cannot cover: it only runs for a distributed
+    # deployment, and a single-process one with a gateway still needs a store.
+    if not settings.distributed_state:
         logger.info(
             "Agent enrolment state is a file under {path}. Single-use survives a "
             "restart; it is not safe for two server processes, which is the "
@@ -186,19 +188,49 @@ async def start_agent_gateway(state: "StateBackend | None" = None):
             path=settings.agent_identity_dir,
         )
 
-    # The fleet index. Only meaningful with more than one worker, and only
-    # possible when Redis is configured — which is the same condition.
-    if state is not None and settings.distributed_state and state.bus is not None:
-        from app.gateway.presence import AgentPresence, set_agent_presence
-
-        set_agent_presence(AgentPresence(state.bus, worker_identity()))
-        logger.info("Agent presence is shared; the console sees the whole fleet")
-
     from app.gateway.server import AgentGateway
 
     gateway = AgentGateway(settings.agent_gateway_port)
     await gateway.start()
     return gateway
+
+
+def install_fleet_index(database, bus, worker: str) -> None:
+    """The two shared facts about the agent fleet: who holds a stream, and
+    which certificates exist.
+
+    **Installed with the state backend rather than with the gateway, and that
+    is F21.** Both used to live inside `start_agent_gateway`, so on a worker
+    where `AGENT_GATEWAY_PORT` was unset `get_agent_presence()` was `None` and
+    the enrolment store fell back to an empty local file. M8a's routing and its
+    refusal were then both inert there: `agent_affinity` returned the shared
+    queue, and `select_provider` went straight to `LocalKubectlProvider` —
+    reading a local context that merely shares the cluster's name, which is
+    precisely the cross-tenant answer the refusal exists to prevent. So did the
+    revocation refusal, for the same reason.
+
+    The shipped topology cannot reach it: one Deployment, one config, N
+    replicas, so either every worker runs a gateway or none does. A fleet
+    part-way through enabling one *can*, and there the guarantee was absent
+    with no symptom. Found by a soak that gave the first worker a gateway and
+    the second none — a third of investigations came back
+    `provider=kubeconfig` with an agent attached and no refusal logged.
+
+    Neither of these needs grpc. Presence is JSON in Redis; enrolment records
+    are rows. That is what makes the split possible at all, and it is why the
+    *registry* lookup — which does need grpc — stays behind the gateway flag in
+    both callers rather than moving here.
+    """
+    from app.gateway.presence import AgentPresence, set_agent_presence
+    from app.persistence.agent_identity import PostgresEnrolmentStore
+    from app.security.enrolment import set_enrolment_store
+
+    set_enrolment_store(PostgresEnrolmentStore(database))
+    set_agent_presence(AgentPresence(bus, worker))
+    logger.info(
+        "Fleet index installed: agent presence is shared and enrolment state is in "
+        "Postgres, whether or not this worker runs a gateway"
+    )
 
 
 def build_state() -> StateBackend:
@@ -278,6 +310,8 @@ def build_state() -> StateBackend:
     from app.events import RedisTriggerLedger, set_trigger_ledger
 
     set_trigger_ledger(RedisTriggerLedger(bus))
+
+    install_fleet_index(database, bus, worker)
 
     logger.info("State is distributed; this worker is {worker}", worker=worker)
     return StateBackend(
