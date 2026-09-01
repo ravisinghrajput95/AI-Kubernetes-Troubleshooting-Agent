@@ -14,7 +14,7 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ErrorBoundary } from "../components/ErrorBoundary";
-import { InvestigationPage } from "../App";
+import { InvestigationPage } from "./InvestigationPage";
 import { ReportsPage } from "./ReportsPage";
 import { SettingsPage } from "./SettingsPage";
 import * as api from "../services/api";

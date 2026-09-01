@@ -95,6 +95,15 @@ export interface InvestigationResponse {
  * to be visible rather than inferred. `oldest_evidence_seconds` is the honest
  * headline — the age of the oldest fact any conclusion here rests on.
  */
+/**
+ * The `investigation` half of a response.
+ *
+ * The backend types this as `dict[str, Any]`, so **these TS types are the only
+ * contract and Pydantic will not catch drift** — which is why it is an alias
+ * here rather than a hand-written interface pretending to know the shape.
+ */
+export type InvestigationData = InvestigationResponse["investigation"];
+
 export interface CollectionCache {
   enabled: boolean;
   ttl_seconds?: number;
