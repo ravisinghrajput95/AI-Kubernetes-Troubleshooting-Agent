@@ -319,7 +319,19 @@ handlers protect nothing.
 
 **Intermittent, because gRPC skips its handlers when another thread is inside
 gRPC at the moment of the fork.** A one-hour soak caught 3 of roughly 23,000
-reads; a tight loop reproduces it 40 times in 40. `tests/test_forked_reads.py`
+reads; a tight loop reproduces it 40 times in 40.
+
+**And it only reproduces on macOS, which was established after the fix rather
+than before it.** `ev_poll_posix` is the poll-based engine darwin uses; the
+identical script against the identical gRPC gives 40/40 polluted on darwin and
+0/40 in a `python:3.12-slim` container, with or without the fix. The soak ran
+on the development machine, so on current evidence this never affected a
+shipped Linux deployment — a finding measured on a laptop, attributed to the
+platform. The line is kept because it costs nothing and makes local runs match
+the containers, but the significance is development-environment, not
+production. **This is also why the behavioural test cannot be the only
+guard**: it skips where the defect does not reproduce, and pushed as the sole
+check it reported SURVIVED in CI on Linux while being caught locally. `tests/test_forked_reads.py`
 forks a real subprocess out of a real gRPC server and reads the stderr rather
 than asserting the variable is set — the latter passes with the fix inert —
 and carries a control requiring the defect to reproduce without the fix, or

@@ -12,10 +12,15 @@ agent-path `unknown` that `detailFor` exists to fix.
 Two things make this worth a dedicated file rather than an assertion on an
 environment variable.
 
-**It is intermittent.** gRPC skips the handlers whenever another thread is
-inside gRPC at the moment of the fork, so a one-hour soak caught 3 of roughly
-23,000 reads. A defect at that rate is never diagnosed from logs, and a test
-that reproduces it deterministically is worth more than the fix is on its own.
+**It is intermittent, and platform-specific.** gRPC skips the handlers whenever
+another thread is inside gRPC at the moment of the fork, so a one-hour soak
+caught 3 of roughly 23,000 reads. It also only reproduces on macOS:
+`ev_poll_posix` is the poll-based engine darwin uses, and the same script
+against the same gRPC gives 40/40 polluted there and 0/40 in a
+`python:3.12-slim` container either way. The soak ran on the development
+machine, so on current evidence this never affected a shipped Linux
+deployment — which is why the class below can *only* be a check that skips,
+and why the platform-independent one above exists.
 
 **The fix is an import-order property, which is the kind that goes inert in
 silence.** `GRPC_ENABLE_FORK_SUPPORT` is read when gRPC's core initialises;
@@ -86,6 +91,67 @@ def _forked_stderr_pollution(*, apply_fix: bool, runs: int = 40) -> int:
 
 
 pytest.importorskip("grpc", reason="the defect requires gRPC's fork handlers")
+
+
+STRUCTURAL_PROBE = textwrap.dedent(
+    """
+    import os, sys
+    import app  # noqa: F401
+    print(os.environ.get("GRPC_ENABLE_FORK_SUPPORT"))
+    print("grpc" in sys.modules)
+    """
+)
+
+
+class TestTheFixIsInPlaceWhereverThisRuns:
+    """The platform-independent half, and it exists because the behavioural
+    test below is not.
+
+    gRPC's poll engine differs by platform — `ev_poll_posix` is not what Linux
+    uses — so the defect reproduces on the machine this was found on and may
+    not on the machine CI runs. The behavioural test skips itself in that case,
+    which is honest and also makes it **unable to fail there**: pushed as the
+    only guard, `scripts/mutation_check.py` reported this entry SURVIVED on
+    Linux/3.12 while catching it locally. A check that cannot fail has not
+    passed, and that applies to a check that cannot fail *on some platforms*.
+
+    So this asserts the two conditions that make the fix work, both of which
+    are platform-independent and both of which are exactly what the regressions
+    break: the variable ends up set, and importing `app` has **not** already
+    pulled gRPC in — which is what an import added above the `setdefault` would
+    do, and is the difference between the fix working and being decoration.
+    """
+
+    def _probe(self) -> tuple[str | None, bool]:
+        done = subprocess.run(
+            [sys.executable, "-c", STRUCTURAL_PROBE],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+            env={k: v for k, v in os.environ.items() if k != "GRPC_ENABLE_FORK_SUPPORT"},
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        )
+        assert done.returncode == 0, f"probe failed: {done.stderr[-2000:]}"
+        value, imported = done.stdout.strip().splitlines()[-2:]
+        return (None if value == "None" else value), imported == "True"
+
+    def test_importing_app_sets_the_variable(self):
+        value, _ = self._probe()
+        assert value == "0", (
+            "app/__init__ must set GRPC_ENABLE_FORK_SUPPORT; without it gRPC's "
+            "fork handlers write into the stderr a kubectl read's error comes from"
+        )
+
+    def test_importing_app_has_not_already_loaded_grpc(self):
+        """The load-bearing half. The variable is read at gRPC's core
+        initialisation, so a value set after `import grpc` does nothing at all —
+        measured at 0/40 polluted before the import and 40/40 after it."""
+        _, grpc_loaded = self._probe()
+        assert not grpc_loaded, (
+            "importing `app` pulled in grpc, so anything app/__init__ sets "
+            "afterwards is too late and the fix is inert"
+        )
 
 
 class TestAForkedReadKeepsItsOwnStderr:

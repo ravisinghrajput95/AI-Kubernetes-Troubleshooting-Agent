@@ -10,6 +10,20 @@ to. A change that fixed a defect names the defect.
 
 ## [Unreleased]
 
+### Fixed
+
+- **F23**: M8a's fail-open is countable. `k8sagent_agent_presence_failopen_total`
+  plus `AgentPresenceUnreadableEnoughToMisroute`. The existing 10% rule is for
+  routing being *broken*; `cluster_access_total` structurally cannot express a
+  fail-open, since it and a correct local read are both `provider=kubeconfig`.
+- **F22**: a kubectl read forked from a process holding gRPC keeps its own
+  stderr (`GRPC_ENABLE_FORK_SUPPORT=0`, set in `app/__init__` because the
+  variable is read at gRPC's first initialisation and after `import grpc` is
+  already too late). **Reproduces on macOS only** — 40/40 polluted on darwin,
+  0/40 in a Linux container with or without the fix — so the soak that found it
+  was measuring the development machine, and this never affected a shipped
+  deployment. Kept anyway; it costs one line.
+
 ### Breaking
 
 - **`AUTH_MODE` has no default.** An unset value is refused at startup, naming
