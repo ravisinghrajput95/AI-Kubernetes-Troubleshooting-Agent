@@ -699,6 +699,21 @@ inherited from a changed default.
 at tens of megabytes. Streaming ingest would shave a 5× multiple off a 13 MB
 base — real, and not the constraint.
 
+**`payload_bench` cannot see F5's remaining half, which is why that half went
+unmeasured for so long.** Its fake overrides `KubectlExecutor.run`, so neither
+`json.loads` nor `_cap_items` executes and `MAX_LIST_ITEMS` is never applied —
+run it above 2,000 pods and it reports a stored result that keeps growing,
+because in that harness nothing caps anything. It measures the *derived*
+payload, which is what M8b wanted. `--parse-scan` measures the read instead,
+through the real executor: peak parse is **5.9 MB at 2,000 pods, 29.7 MB at
+10,000, 74.3 MB at 25,000** — ~2.95 KB per pod — while *retained* stays flat at
+1.09 MB. The cap truncates a document already built in full, so it bounds the
+payload and not the spike, and raising or lowering it changes nothing here. The
+lever on a very large cluster is scoping to a namespace. Deferred deliberately:
+at 10,000 pods four concurrent investigations transiently touch ~119 MB against
+a 159 MB resident platform, while the ceiling that actually binds is per-worker
+throughput at ~12/s with the worker 92% idle in socket waits.
+
 ### Routing an investigation to the right worker (M8a)
 
 A gRPC stream belongs to whichever worker holds the socket, so a cluster

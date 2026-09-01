@@ -114,6 +114,52 @@ Roughly **76 concurrent investigations per GB**. This is what sizes
 `JOB_MAX_CONCURRENT`, and it is why streaming ingest was measured and not built
 — see `docs/ENTERPRISE_ARCHITECTURE.md` §9, M8b.
 
+**These numbers stop at 2,000 pods for a reason, and it is not only that the
+cap is there.** `payload_bench` drives a fake whose `run()` overrides
+`KubectlExecutor.run`, so neither `json.loads` nor `_cap_items` executes in it
+and `MAX_LIST_ITEMS` is never applied — the harness measures the *derived*
+payload, which is what M8b wanted, and is blind to the read that produced it.
+Run it above the cap and it reports a stored result that keeps growing, because
+in that harness nothing caps anything.
+
+### One list read, through the real executor (F5)
+
+```bash
+python scripts/payload_bench.py --parse-scan
+```
+
+| pods | kubectl stdout | peak parse | retained after cap |
+|---|---|---|---|
+| 500 | 0.27 MB | 1.5 MB | 0.27 MB |
+| 2,000 | 1.09 MB | 5.9 MB | 1.09 MB |
+| 5,000 | 2.73 MB | 14.9 MB | 1.09 MB |
+| 10,000 | 5.46 MB | 29.7 MB | 1.09 MB |
+| 25,000 | 13.67 MB | **74.3 MB** | 1.09 MB |
+
+**The cap does exactly what it claims and nothing more.** What is *retained* is
+flat at 1.09 MB from 2,000 pods upward. What is *parsed* is linear and
+unbounded — about 2.95 KB per pod, 5.5× kubectl's own output — because
+`_cap_items` truncates a document `json.loads` has already built in full. That
+is F5's remaining half, and this is the first measurement of it; the 13.4 MB
+above is a whole investigation at the cap, not a transient spike on a cluster
+past it.
+
+**Deferred rather than built, and the reason is the shape of the number.** At
+10,000 pods the spike is 29.7 MB, so a worker at the default
+`JOB_MAX_CONCURRENT=4` transiently touches ~119 MB against a 159 MB resident
+platform — real, and not the constraint. The measured ceiling is per-worker
+throughput at ~12/s with the worker 92% idle in socket waits, which is CPU and
+the GIL, not memory; five days spent on memory would not move it. Removing the
+spike needs a streaming client, because kubectl assembles the whole list before
+writing a byte, and it would replace the only path in the platform that shells
+out.
+
+**What an operator has today is scope, not a setting.** Raising or lowering
+`MAX_LIST_ITEMS` does not change the spike — it is applied after the parse — so
+on a cluster of this size the lever is investigating a namespace rather than
+the cluster. That is worth knowing before the 5 days are spent, and it is why
+this is written down rather than left as an effort estimate.
+
 ### Routing
 
 ```bash

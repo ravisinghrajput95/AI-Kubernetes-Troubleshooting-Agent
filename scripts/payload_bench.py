@@ -122,6 +122,87 @@ STATUS_KEYS = {
 }
 
 
+def parse_scan(sizes: tuple[int, ...]) -> list[dict]:
+    """Peak heap across `json.loads` + `_cap_items` for one list read.
+
+    F5's remaining half is *parse* memory, and nothing here could measure it.
+    The rest of this file drives a fake whose `run()` **overrides**
+    `KubectlExecutor.run` — so neither `json.loads` nor `_cap_items` executes,
+    and `MAX_LIST_ITEMS` is never applied. That is fine for what it measures,
+    the derived payload, and useless for this: the numbers it publishes above
+    2,000 pods describe a pipeline with no cap in it.
+
+    So this goes through the real executor method with a realistic PodList.
+    The result is the distinction F5 turns on — what is *retained* is capped
+    and flat, what is *parsed* is not.
+    """
+    from app.kubernetes.kubectl_executor import KubectlExecutor
+
+    pod = {
+        "metadata": {
+            "name": "web-0",
+            "namespace": "prod",
+            "labels": {"app": "web", "tier": "frontend"},
+            # Real pods carry this and it is routinely the largest field.
+            "annotations": {"kubectl.kubernetes.io/last-applied-configuration": "{}" * 20},
+        },
+        "spec": {
+            "nodeName": "node-1",
+            "containers": [
+                {
+                    "name": "web",
+                    "image": "registry.example.com/web:1.2.3",
+                    "resources": {"limits": {"cpu": "500m", "memory": "512Mi"}},
+                }
+            ],
+        },
+        "status": {
+            "phase": "Running",
+            "podIP": "10.1.2.3",
+            "containerStatuses": [
+                {
+                    "name": "web",
+                    "restartCount": 3,
+                    "ready": True,
+                    "state": {"running": {"startedAt": "2026-08-02T10:00:00Z"}},
+                }
+            ],
+        },
+    }
+
+    executor = KubectlExecutor(context="bench")
+    rows = []
+    for count in sizes:
+        listing = {
+            "apiVersion": "v1",
+            "kind": "PodList",
+            "items": [
+                {**pod, "metadata": {**pod["metadata"], "name": f"web-{index}"}}
+                for index in range(count)
+            ],
+        }
+        text = json.dumps(listing)
+        del listing
+
+        tracemalloc.start()
+        parsed = json.loads(text)
+        capped, truncated, _total = executor._cap_items(parsed, ["kubectl", "get", "pods"])
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+
+        rows.append(
+            {
+                "pods": count,
+                "kubectl_stdout_mb": round(len(text) / 1024 / 1024, 2),
+                "peak_parse_mb": round(peak / 1024 / 1024, 1),
+                "retained_mb": round(len(json.dumps(capped).encode()) / 1024 / 1024, 2),
+                "capped": truncated,
+            }
+        )
+        del parsed, capped, text
+    return rows
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--pods", type=int, default=200)
@@ -133,7 +214,35 @@ def main(argv: list[str] | None = None) -> int:
         help="Also report peak heap held during the run, which sizes JOB_MAX_CONCURRENT.",
     )
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--parse-scan",
+        action="store_true",
+        help=(
+            "Measure peak heap through the real parse-and-cap path across cluster "
+            "sizes. This is F5's remaining half and the rest of this harness "
+            "cannot see it."
+        ),
+    )
     arguments = parser.parse_args(argv)
+
+    if arguments.parse_scan:
+        rows = parse_scan((500, 2000, 5000, 10000, 25000))
+        if arguments.json:
+            print(json.dumps(rows, indent=2))
+            return 0
+        print("One `kubectl get pods -o json`, through the real executor:\n")
+        print(f"{'pods':>8} {'stdout':>10} {'peak parse':>12} {'retained':>10}  capped")
+        for row in rows:
+            print(
+                f"{row['pods']:>8} {row['kubectl_stdout_mb']:>9}M "
+                f"{row['peak_parse_mb']:>11}M {row['retained_mb']:>9}M  {row['capped']}"
+            )
+        print(
+            "\nRetained is flat above MAX_LIST_ITEMS; peak parse is not, because "
+            "the cap\napplies after `json.loads` has already built the whole "
+            "document. That is F5."
+        )
+        return 0
 
     os.environ.setdefault("OPENAI_API_KEY", "")
 
