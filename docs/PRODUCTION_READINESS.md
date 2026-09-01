@@ -185,7 +185,7 @@ console had none. Two dead components went with it (`MultiClusterPanel`,
 ~~`history_service.py` ~900 lines doing three jobs~~ **done** · kubectl subprocess-per-call
 (**reduced, not removed**: F18 stops a *repeat* investigation paying for it —
 70 processes to 13 — but a cold one still spawns one per read) ·
-no frontend component tests · no runtime plugin discovery (entry points).
+~~no frontend component tests~~ **done**: 19 test files, 256 tests, including `panels.test.tsx` (the three invariants rendering can break), `shell.test.tsx`, `SignIn.test.tsx`, `ReportDocument.test.tsx` and per-route suites · no runtime plugin discovery (entry points).
 
 ---
 
