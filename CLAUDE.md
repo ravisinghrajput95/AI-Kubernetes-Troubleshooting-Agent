@@ -297,6 +297,38 @@ Testing note: `TestClient` must be used as a context manager (`with TestClient(a
 
 Every collected fact is an `Evidence` record with a **deterministic id** (`kind:target.key`), a `status`, and its originating command. This is the citation spine: conclusions reference evidence ids rather than copying payloads. `EvidenceStatus.usable` covers `OK` and `EMPTY`; everything else (`UNAVAILABLE`, `FORBIDDEN`, `TIMEOUT`, `NOT_APPLICABLE`, `FAILED`) records *why* a fact is missing, so a degraded backend becomes citable data instead of an exception. `EvidenceStore.coverage()` reports completeness and is the intended input for evidence-completeness confidence scoring.
 
+### Forking out of a process that holds gRPC (`app/__init__.py`, F22)
+
+Every `kubectl` read is a `subprocess.run`, and gRPC installs
+`pthread_atfork` handlers — so on a worker that also runs an agent gateway, the
+child writes gRPC diagnostics to the stderr `capture_output` is collecting the
+command's own error from. The read is still recorded as failed evidence and
+nothing is misreported; what is lost is the reason, which reads
+`ev_poll_posix.cc:593 FD from fork parent still in poll list`. Same cost as the
+agent-path `unknown` that `detailFor` fixes.
+
+**`GRPC_ENABLE_FORK_SUPPORT=0`, and where it is set is the whole fix.** The
+variable is read when gRPC's core initialises, so setting it after `import
+grpc` does nothing — measured at 0/40 polluted before the import, 40/40 after
+it. `app/__init__` is the only module guaranteed to run before any `app.*`
+module, `app/gateway/` included. **Do not add an import above that
+`setdefault`**: it makes the fix inert while every other test passes, and the
+symptom is an intermittent line in a stderr nobody reads. Nothing here uses
+gRPC in a forked child — fork is immediately followed by exec — so the
+handlers protect nothing.
+
+**Intermittent, because gRPC skips its handlers when another thread is inside
+gRPC at the moment of the fork.** A one-hour soak caught 3 of roughly 23,000
+reads; a tight loop reproduces it 40 times in 40. `tests/test_forked_reads.py`
+forks a real subprocess out of a real gRPC server and reads the stderr rather
+than asserting the variable is set — the latter passes with the fix inert —
+and carries a control requiring the defect to reproduce without the fix, or
+both arms come back clean and the check proves nothing.
+
+The suggested fix in the backlog, "give the subprocess its own stderr pipe
+rather than an inherited fd", was already true: `capture_output=True` has
+always given it a pipe, and the handler writes to that.
+
 ### Cluster access (`app/providers/`)
 
 `ClusterProvider` is the engine's **only** route to a cluster, reached through `CollectionContext.provider` / `context.fetch(request)`. A collector describes *what* evidence it needs as a `ResourceRequest`; the provider decides *how* to obtain it. `LocalKubectlProvider.to_args()` is the single place `ResourceRequest` → argv exists — a remote-agent provider replaces that translation and nothing above it changes. See `docs/ENTERPRISE_ARCHITECTURE.md` ADR-003.
@@ -1533,7 +1565,23 @@ an agent fleet; add hosts on a kubeconfig fleet. Cross-host is still unmeasured.
 
 ### Alerting (`deploy/alerts/k8s-agent-alerts.yaml`)
 
-17 rules on burn rate rather than instantaneous violation. `tests/test_metrics.py`
+18 rules on burn rate rather than instantaneous violation.
+
+**Two rules cover M8a, at opposite ends of the same guarantee, and the pair is
+the point.** `InvestigationsFallingBackToLocalKubeconfig` fires at a 10%
+kubeconfig share — routing *broken*, which before M8a was two thirds of
+agent-cluster investigations. `AgentPresenceUnreadableEnoughToMisroute` fires
+at 1% of a different series, because the refusal fails **open** when presence
+cannot be read and a soak measured that at 1 investigation in 1,168 (0.086%),
+~116x below the first rule. Lowering that threshold instead would not work:
+`cluster_access_total` records how the cluster *was reached*, so a fail-open
+and a correct local read are both `provider="kubeconfig"`, and a 0.5%
+threshold would fire on any deployment holding a few genuinely-kubeconfig
+clusters. The fail-open is therefore counted where it happens —
+`k8sagent_agent_presence_failopen_total`, unlabelled, exported from import.
+Its test carries a **control** (a readable index holding nothing must not
+count), because a recorder called unconditionally passes the positive
+assertion while making the series mean nothing. `tests/test_metrics.py`
 asserts every series and every filtered label value in the shipped rules
 appears in the **real exposition** — a rule naming a series the platform does
 not export is valid YAML, passes `promtool`, evaluates forever and fires never,

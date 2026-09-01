@@ -255,6 +255,7 @@ class TestTheEnvelopeIsObservable:
             "k8sagent_queue_depth",
             "k8sagent_agents_connected",
             "k8sagent_cluster_access_total",
+            "k8sagent_agent_presence_failopen_total",
             "k8sagent_collection_duration_seconds",
             "k8sagent_evidence_records_total",
             "k8sagent_llm_calls_total",
@@ -346,7 +347,7 @@ class TestTheEndpoint:
         imported from different modules. OpenMetrics requires a terminating
         `# EOF` and text format has none, so a real Prometheus rejected every
         scrape with `data does not end with # EOF` — both targets down, no
-        series stored, and all 17 rules in `deploy/alerts/` evaluating against
+        series stored, and every rule in `deploy/alerts/` evaluating against
         nothing. `curl` saw 200 and 16 KB of correct exposition throughout.
 
         So parse the payload with the parser the header selects, which is the
@@ -483,6 +484,93 @@ class TestPhaseTimingIsTotal:
             "protobuf was downgraded; the agent's generated bindings are "
             "validated against the runtime and this is how that breaks."
         )
+
+
+class TestTheFailOpenIsCountable:
+    """F23. M8a's refusal fails open when the presence index cannot be read,
+    and a one-hour soak measured that at 1 investigation in 1,168.
+
+    The gap was not that the behaviour is wrong — it is deliberate, because
+    refusing on a Redis hiccup turns a degraded index into an outage — but that
+    nothing could alert on it. `InvestigationsFallingBackToLocalKubeconfig`
+    fires at a 10% kubeconfig share, which is the *routing is broken* failure
+    (two thirds, before M8a); 0.086% is ~116x below it.
+
+    And no threshold on that metric could have worked, which is the part worth
+    pinning: `cluster_access_total` records how the cluster **was reached**, and
+    a fail-open and a correct local read are both `provider="kubeconfig"`. So
+    the assertions below are that the fail-open moves a series of its own and
+    that it is *not* inferable from the old one — the second is what makes the
+    first worth having.
+    """
+
+    def _failopen_count(self, api) -> float:
+        for line in scrape(api).splitlines():
+            if line.startswith("k8sagent_agent_presence_failopen_total "):
+                return float(line.split()[1])
+        raise AssertionError("k8sagent_agent_presence_failopen_total is not exported")
+
+    def test_an_unreadable_presence_index_is_counted(self, api, monkeypatch):
+        """The behaviour, driven through `_fleet_holder` rather than by calling
+        the recorder — a test that calls `metrics.agent_presence_failopen()`
+        directly passes with the `except` block never touching it."""
+        from app.services import investigation_service
+
+        class Unreadable:
+            def holder(self, tenant, cluster):
+                raise RuntimeError("redis is not answering")
+
+        monkeypatch.setattr(
+            "app.gateway.presence.get_agent_presence", lambda: Unreadable(), raising=False
+        )
+
+        before = self._failopen_count(api)
+        assert investigation_service._fleet_holder("prod") == "", (
+            "an unreadable index must fail open, not refuse"
+        )
+        assert self._failopen_count(api) == before + 1
+
+    def test_a_readable_index_that_holds_nothing_is_not_counted(self, api, monkeypatch):
+        """The control. Without it, a recorder called unconditionally — or on
+        every local read — satisfies the test above while making the metric
+        mean nothing."""
+        from app.services import investigation_service
+
+        class Empty:
+            def holder(self, tenant, cluster):
+                return ""
+
+        monkeypatch.setattr(
+            "app.gateway.presence.get_agent_presence", lambda: Empty(), raising=False
+        )
+
+        before = self._failopen_count(api)
+        assert investigation_service._fleet_holder("prod") == ""
+        assert self._failopen_count(api) == before
+
+    def test_the_old_metric_cannot_distinguish_the_two(self):
+        """Why this needed a new series rather than a lower threshold.
+
+        Both outcomes reach the cluster by kubeconfig, so both record the same
+        label value. Asserted on the label set itself, because it is the reason
+        the alert could not have been written against `cluster_access_total`.
+        """
+        from app.observability import metrics
+
+        seeded = {counter: values for counter, _label, values in metrics._KNOWN_LABELS}
+        assert seeded[metrics.cluster_access_total] == ("agent", "kubeconfig"), (
+            "if `provider` ever gains a value naming the fail-open, this test and "
+            "the separate counter should both be revisited"
+        )
+
+    def test_the_alert_rule_uses_the_new_series(self):
+        """A counter nothing alerts on is a number in an exposition. The
+        series-exists check above cannot see this: it passes whether or not any
+        rule mentions it."""
+        rules = (
+            Path(__file__).resolve().parents[2] / "deploy" / "alerts" / "k8s-agent-alerts.yaml"
+        ).read_text()
+        assert "k8sagent_agent_presence_failopen_total" in rules
 
 
 class TestTheShippedAlertRulesMatchTheShippedMetrics:

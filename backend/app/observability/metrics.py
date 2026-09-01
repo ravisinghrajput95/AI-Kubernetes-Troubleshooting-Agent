@@ -107,6 +107,30 @@ cluster_access_total = Counter(
     registry=REGISTRY,
 )
 
+# M8a's refusal fails *open*: when the presence index cannot be read, the
+# platform cannot prove another worker holds the agent, so it answers from the
+# local kubeconfig rather than turning a Redis hiccup into an outage. That is
+# deliberate and stays. What it needs is a number.
+#
+# It has to be its own series because `cluster_access_total` structurally
+# cannot carry it: a fail-open and a correct local read are both
+# `provider="kubeconfig"`, so no threshold on that metric separates "presence
+# was unreadable" from "this deployment has kubeconfig clusters, as intended".
+# Measured over a one-hour soak at 1 investigation in 1,168 — three orders of
+# magnitude below the 10% that `InvestigationsFallingBackToLocalKubeconfig`
+# fires at, which is the routing-is-broken alert and is correctly tuned for a
+# different failure.
+#
+# Unlabelled, so it exports zero from import with nothing to seed — a rule on
+# it is correct from a cold start rather than reading "no data" until the first
+# occurrence.
+agent_presence_failopen_total = Counter(
+    "k8sagent_agent_presence_failopen_total",
+    "Investigations that read the local kubeconfig because the agent presence "
+    "index could not be read, rather than because no agent exists.",
+    registry=REGISTRY,
+)
+
 collection_cache_reads_total = Counter(
     "k8sagent_collection_cache_reads_total",
     "Cluster reads served from the in-process collection cache, or not.",
@@ -297,6 +321,16 @@ def cluster_access(provider: str) -> None:
     _safe(lambda: cluster_access_total.labels(provider=provider).inc())
 
 
+def agent_presence_failopen() -> None:
+    """Presence was unreadable, so routing's guarantee was not applied.
+
+    Counted separately from `cluster_access` because that metric records how
+    the cluster *was* reached and both outcomes here are `kubeconfig`. This one
+    records *why*, which is the only thing an alert can act on.
+    """
+    _safe(agent_presence_failopen_total.inc)
+
+
 def collection_cache(outcome: str) -> None:
     """Whether one cluster read came from memory.
 
@@ -376,7 +410,7 @@ def render() -> tuple[bytes, str]:
     correct exposition, every series was present and correctly labelled, and
     the test asserted the *header* said openmetrics — which it did. Only a real
     Prometheus, parsing what the header promised, disagreed: both targets
-    `down`, no series stored, and all 17 rules in `deploy/alerts/` evaluating
+    `down`, no series stored, and every rule in `deploy/alerts/` evaluating
     against nothing forever. Import both names from one module so the pair
     cannot drift again.
     """

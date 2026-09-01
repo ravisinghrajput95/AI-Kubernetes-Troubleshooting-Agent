@@ -62,6 +62,35 @@ class Mutation:
 
 MUTATIONS = [
     Mutation(
+        name="forked-read-keeps-its-stderr",
+        why=(
+            "F22: gRPC's fork handlers wrote to the stderr `capture_output` "
+            "collects a kubectl read's own error from, so a failed read on a "
+            "gateway worker reported `ev_poll_posix.cc:593` instead of what "
+            "kubectl said. The fix is an import-order property — the variable "
+            "is read at gRPC's first initialisation — so an import added "
+            "above it makes it inert with every other test still passing."
+        ),
+        path="app/__init__.py",
+        old='os.environ.setdefault("GRPC_ENABLE_FORK_SUPPORT", "0")',
+        new="pass  # mutation: the fork handlers are back",
+        tests="tests/test_forked_reads.py",
+    ),
+    Mutation(
+        name="presence-failopen-is-counted",
+        why=(
+            "F23: M8a's refusal fails open when the presence index cannot be "
+            "read — measured at 1 investigation in 1,168 over an hour — and "
+            "nothing counted it. `cluster_access_total` cannot: a fail-open "
+            "and a correct local read are both `provider=kubeconfig`, so the "
+            "10% fleet alert is ~116x above it and structurally blind."
+        ),
+        path="app/services/investigation_service.py",
+        old='        metrics.agent_presence_failopen()\n        return ""',
+        new='        return ""',
+        tests="tests/test_metrics.py",
+    ),
+    Mutation(
         name="auth-mode-has-no-default",
         why=(
             "`AUTH_MODE` defaulted to `disabled`, so `ALLOW_INSECURE_NO_AUTH="

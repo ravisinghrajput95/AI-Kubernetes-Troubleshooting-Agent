@@ -218,11 +218,20 @@ def _fleet_holder(context: str | None) -> str:
 
     try:
         return presence.holder(current_tenant(), context or "") or ""
-    except Exception:  # pragma: no cover - an unreadable index must not refuse
+    except Exception:
         # If the index cannot be read we cannot prove another worker holds the
         # agent, and refusing on a Redis hiccup would turn a degraded index
         # into an outage. The local kubeconfig answer is the pre-M8a
         # behaviour, and `cluster_access` still reports which route was used.
+        #
+        # It is also the one path where M8a's guarantee is not applied, so it
+        # is counted. `cluster_access` cannot carry this: a fail-open and a
+        # correct local read are both `provider="kubeconfig"`, which is why a
+        # soak measured this at 1 investigation in 1,168 with the fleet alert
+        # — tuned at 10% for routing being broken — unable to see it at all.
+        from app.observability import metrics
+
+        metrics.agent_presence_failopen()
         return ""
 
 

@@ -314,6 +314,49 @@ spec:
               contexts the platform holds and has no tenant, one tenant's `prod` could be
               answered by another's.
 
+        # The rule above catches routing being *broken* — a large share, because
+        # before M8a roughly two thirds of agent-cluster investigations went
+        # local. This one catches the opposite end of the same guarantee: M8a's
+        # refusal fails **open** when the presence index cannot be read, which
+        # is deliberate (refusing on a Redis hiccup turns a degraded index into
+        # an outage) but means the routing guarantee was not applied to those
+        # investigations.
+        #
+        # It needs its own series and its own threshold. `cluster_access_total`
+        # cannot express it — a fail-open and a correct local read are both
+        # `provider="kubeconfig"` — and a one-hour soak measured the fail-open
+        # at 1 investigation in 1,168, or 0.086%, which is ~116x below the 10%
+        # above. Lowering that threshold instead would fire on every deployment
+        # holding a few genuinely-kubeconfig clusters.
+        #
+        # 1% over 6h is ~12x the measured baseline: quiet at the rate a healthy
+        # fleet already produces, and firing on an order-of-magnitude rise.
+        # Deliberately *not* gated on `agents_connected > 0`, unlike the rule
+        # above: this counter can only increment where a presence index exists,
+        # so it is already specific to a distributed fleet — and a Redis outage
+        # severe enough to drop every agent would silence the gate at exactly
+        # the moment the alert matters.
+        - alert: AgentPresenceUnreadableEnoughToMisroute
+          expr: |
+            (
+              sum(rate(k8sagent_agent_presence_failopen_total[6h]))
+              /
+              clamp_min(sum(rate(k8sagent_cluster_access_total[6h])), 0.001)
+            ) > 0.01
+          for: 1h
+          labels:
+            severity: ticket
+          annotations:
+            summary: Agent presence is unreadable often enough to route investigations wrongly
+            description: >-
+              These investigations read the platform's own kubeconfig without M8a's
+              refusal being applied, because the presence index could not be read to
+              prove another worker held the agent. Since a local context resolves a
+              cluster *name* and carries no tenant, one tenant's `prod` can be answered
+              from another's. Check Redis latency and the gateway heartbeat; readiness
+              reports Redis as degraded rather than unavailable, so the fleet stays in
+              rotation and this is the correctness cost of that choice.
+
     - name: k8s-agent.ingress
       rules:
         - alert: EventSourceRejectingDeliveries
