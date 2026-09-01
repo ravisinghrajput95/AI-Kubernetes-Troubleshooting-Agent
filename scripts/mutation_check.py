@@ -404,6 +404,50 @@ MUTATIONS = [
         new="",
         tests="tests/test_remote_agent_matching.py",
     ),
+    Mutation(
+        name="soak-guard-share",
+        why=(
+            "The soak's vacuity guard was an absolute count, so a 60-minute "
+            "run in which Docker Desktop killed the kind cluster four minutes "
+            "in cleared a floor of 60 with 81 usable investigations out of "
+            "1,172 — a platform failing 93% of the time — and published memory "
+            "trends taken from an hour of 'Unable to connect'. A floor cannot "
+            "see a share."
+        ),
+        path="../scripts/soak_bench.py",
+        old='    if share < state["min_share"]:',
+        new="    if False:",
+        tests="tests/test_soak_guard.py",
+    ),
+    Mutation(
+        name="soak-guard-continuity",
+        why=(
+            "The same run, seen the other way round: 81 good investigations is "
+            "the same 7% whether they were spread over the hour or all landed "
+            "before the cluster died. Offered load drops when a cluster dies "
+            "slowly, so a run can hold a high success *rate* while measuring "
+            "nothing after minute ten. Only a timeline separates them."
+        ),
+        path="../scripts/soak_bench.py",
+        old='    if timeline["longest_gap"] > allowed_gap:',
+        new="    if False:",
+        tests="tests/test_soak_guard.py",
+    ),
+    Mutation(
+        name="soak-guard-trailing-gap",
+        why=(
+            "Written the same day as the check above and inert on arrival. The "
+            "gap list was built only *between* good investigations, so run 3 — "
+            "whose last usable investigation was at minute 4 of 60 — reported a "
+            "longest quiet gap of six seconds. It was caught by running the "
+            "guard against the real run's shape, not by reading it; the share "
+            "check happened to fire and hid it."
+        ),
+        path="../scripts/soak_bench.py",
+        old="    marks = [started, *good, started + elapsed]",
+        new="    marks = [started, *good]",
+        tests="tests/test_soak_guard.py",
+    ),
 ]
 
 

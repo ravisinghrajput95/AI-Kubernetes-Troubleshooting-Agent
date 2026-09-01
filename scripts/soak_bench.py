@@ -43,6 +43,7 @@ trends computed from fewer are refused rather than published.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import queue
@@ -739,13 +740,26 @@ LOG_NOISE = re.compile(
 )
 
 
-def log_findings(workers: list[Worker]) -> dict[str, Counter]:
-    """Group the run's own log noise, so a soak reports what it saw.
+def collapse(text: str) -> str:
+    """Reduce a line to its shape, so identical events count as one finding.
 
-    Counted by shape rather than listed: an hour of investigations produces
-    thousands of identical lines, and "the same warning 4,000 times" is one
-    finding.
+    An hour of investigations produces thousands of lines differing only in a
+    timestamp, an id and a port. "The same failure 1,091 times" is one finding;
+    1,091 lines is a haystack.
     """
+    # UUIDs first, and specifically: every log line here carries a correlation
+    # id, whose 4-character groups the 8-or-more rule below does not touch. A
+    # five-minute smoke run reported six findings at "1x" each — six different
+    # investigations rather than six findings — because of exactly this.
+    shape = re.sub(r"\b[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}\b", "<uuid>", text)
+    shape = re.sub(r"\b[0-9a-f]{8,}\b", "<id>", shape)
+    shape = re.sub(r"\d{4}-\d{2}-\d{2}[ T][\d:.,]+", "", shape)
+    shape = re.sub(r"\b\d+(\.\d+)?\b", "<n>", shape)
+    return shape.strip()
+
+
+def log_findings(workers: list[Worker]) -> dict[str, Counter]:
+    """Group the run's own log noise, so a soak reports what it saw."""
     findings: dict[str, Counter] = {}
     for worker in workers:
         counter: Counter = Counter()
@@ -756,13 +770,62 @@ def log_findings(workers: list[Worker]) -> dict[str, Counter]:
         for line in text.splitlines():
             if not LOG_NOISE.search(line):
                 continue
-            # Strip the timestamp and any id-shaped token so shapes collapse.
-            shape = re.sub(r"\b[0-9a-f]{8,}\b", "<id>", line)
-            shape = re.sub(r"\d{4}-\d{2}-\d{2}[ T][\d:.,]+", "", shape)
-            shape = re.sub(r"\b\d+(\.\d+)?\b", "<n>", shape)
-            counter[shape.strip()[:200]] += 1
+            counter[collapse(line)[:200]] += 1
         findings[worker.name] = counter
     return findings
+
+
+def failure_reasons(runs: list[Run]) -> Counter:
+    """Why the investigations that did not succeed did not succeed.
+
+    Without this a refused run reports "failed 1091" and nothing else, which is
+    exactly what let a soak of a cluster that had been dead for 56 minutes look
+    publishable. The reason was in every one of those runs the whole time.
+    """
+    counter: Counter = Counter()
+    for run in runs:
+        if run.status == "succeeded" and run.usable > 0:
+            continue
+        if run.error:
+            reason = collapse(run.error)[:200]
+        elif run.status == "succeeded":
+            reason = "succeeded, but collected no usable evidence"
+        else:
+            reason = f"{run.status or 'no terminal status'}, no error reported"
+        counter[reason] += 1
+    return counter
+
+
+def usable_timeline(runs: list[Run], started: float, elapsed: float) -> dict:
+    """When the platform was actually working, not just how often.
+
+    A soak is a claim about *sustained* operation, so the share of runs that
+    worked is not enough on its own: 81 usable investigations out of 1,172 is
+    the same 7% whether they were spread over the hour or all landed in the
+    first four minutes before the cluster died. Only the second is a lie, and
+    only a timeline can tell them apart.
+    """
+    good = sorted(run.finished_at for run in runs if run.status == "succeeded" and run.usable > 0)
+    if not good:
+        return {
+            "count": 0,
+            "first": None,
+            "last": None,
+            "longest_gap": elapsed,
+        }
+    # Both edges count, and the trailing one is the whole point: run 3's last
+    # usable investigation was at minute 4 of 60, and a gap list built only
+    # *between* good runs reports a longest gap of six seconds for it. The
+    # first version of this function did exactly that, and the check sat inert
+    # behind a share check that happened to fire.
+    marks = [started, *good, started + elapsed]
+    gaps = [b - a for a, b in itertools.pairwise(marks)]
+    return {
+        "count": len(good),
+        "first": good[0] - started,
+        "last": good[-1] - started,
+        "longest_gap": max(gaps),
+    }
 
 
 def summarise(state: dict) -> int:
@@ -784,24 +847,77 @@ def summarise(state: dict) -> int:
     for status, count in by_status.most_common():
         print(f"  {status:<18} {count}")
 
+    # --- why the rest did not work -------------------------------------------
+    #
+    # Printed above the guard, and unconditionally, because a refused run is
+    # exactly the run whose failures someone needs to read.
+    reasons = failure_reasons(runs)
+    if reasons:
+        print(f"\nWhy {sum(reasons.values())} investigations did not produce usable evidence")
+        for reason, count in reasons.most_common(8):
+            print(f"  {count:>5}x  {reason[:150]}")
+
     # --- the vacuity guard ---------------------------------------------------
     #
     # Everything below is a measurement of a platform under load. If it was not
     # under load, the measurements are of an idle process and every one of them
     # looks healthy. Refuse rather than publish.
+    #
+    # Three questions, because each admits a run the other two accept:
+    #
+    #   volume       did enough happen to compute a trend from?
+    #   share        was the platform *working*, or failing most of the time?
+    #   continuity   was it working *throughout*, which is the only claim a
+    #                soak is entitled to make?
+    #
+    # The share and the continuity checks are here because an absolute floor
+    # alone published a run in which 81 of 1,172 investigations succeeded, all
+    # of them before the cluster died four minutes in. It cleared a floor of 60
+    # and every memory trend below it was computed from an hour of a platform
+    # returning "Unable to connect".
     floor = state["floor"]
-    if len(with_evidence) < floor:
+    share = len(with_evidence) / len(runs) if runs else 0.0
+    timeline = usable_timeline(runs, state["started"], state["elapsed"])
+    # Forgiving at the scale of a few investigations, strict at the scale of a
+    # soak: whichever is larger, five minutes or a tenth of the run.
+    allowed_gap = max(300.0, state["elapsed"] * 0.10)
+
+    print("\nSustained?")
+    print(
+        f"  {len(with_evidence)}/{len(runs)} runs collected usable evidence "
+        f"({100 * share:.0f}%), floor {floor}, minimum share {100 * state['min_share']:.0f}%"
+    )
+    if timeline["count"]:
         print(
-            f"\nREFUSED: {len(with_evidence)} investigations collected usable evidence, "
-            f"below the floor of {floor}."
+            f"  first at {timeline['first'] / 60:.1f}m, last at {timeline['last'] / 60:.1f}m "
+            f"of {minutes:.1f}m; longest quiet gap {timeline['longest_gap'] / 60:.1f}m "
+            f"(allowed {allowed_gap / 60:.1f}m)"
         )
+
+    refusals = []
+    if len(with_evidence) < floor:
+        refusals.append(
+            f"only {len(with_evidence)} investigations collected usable evidence, "
+            f"below the floor of {floor}"
+        )
+    if share < state["min_share"]:
+        refusals.append(
+            f"{100 * share:.0f}% of investigations collected usable evidence, "
+            f"below the required {100 * state['min_share']:.0f}%"
+        )
+    if timeline["longest_gap"] > allowed_gap:
+        refusals.append(
+            f"the platform went {timeline['longest_gap'] / 60:.1f} minutes without a usable "
+            f"investigation, which is longer than the {allowed_gap / 60:.1f} allowed — "
+            "this is not a soak, it is a run that stopped working part way"
+        )
+    if refusals:
+        print("\nREFUSED")
+        for refusal in refusals:
+            print(f"  - {refusal}")
         print("A soak of a platform that was not working measures nothing.")
         if succeeded:
-            print(f"  ({len(succeeded)} succeeded but collected nothing usable.)")
-        for run in runs[:5]:
-            if run.error:
-                print(f"  first error: {run.error}")
-                break
+            print(f"  ({len(succeeded)} succeeded, {len(with_evidence)} of those saw the cluster.)")
         return 1
 
     durations = sorted(run.seconds for run in succeeded)
@@ -975,12 +1091,29 @@ def main() -> int:
     parser.add_argument(
         "--cert-ttl-hours",
         type=float,
-        default=0.025,
-        help="90 seconds by default, which renews at 60 and exercises rotation repeatedly.",
+        default=0.5,
+        help=(
+            "Certificate lifetime for the soak's agent. Thirty minutes renews about three "
+            "times in an hour: enough to say rotation survives repetition under load, which "
+            "is the claim, without the CA becoming the subject. The shipped default is 90 "
+            "days and would renew never. 0.025 (90s) is the pathological setting kept for "
+            "stressing renewal itself — it mints a certificate every few seconds, because "
+            "the CA backdates NotBefore by five minutes and the renewal point of anything "
+            "under 150s is already in the past when it is issued."
+        ),
     )
     parser.add_argument("--workdir", default="")
     parser.add_argument("--json", default="", help="Write the raw series here.")
     parser.add_argument("--floor", type=int, default=0, help="Minimum useful investigations.")
+    parser.add_argument(
+        "--min-share",
+        type=float,
+        default=0.80,
+        help=(
+            "Share of investigations that must have collected usable evidence. An absolute "
+            "floor alone cannot see a platform that was failing most of the time."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument(
         "--keep-database",
@@ -1003,7 +1136,11 @@ def main() -> int:
     workers: list[Worker] = []
     agent: subprocess.Popen | None = None
     granted = False
-    state: dict = {"floor": args.floor or max(20, int(args.minutes)), "retention": {}}
+    state: dict = {
+        "floor": args.floor or max(20, int(args.minutes)),
+        "min_share": args.min_share,
+        "retention": {},
+    }
 
     try:
         for index in range(args.workers):
@@ -1223,6 +1360,7 @@ def main() -> int:
             {
                 "runs": runs,
                 "samples": samples,
+                "started": started,
                 "elapsed": elapsed,
                 "worker_names": [w.name for w in workers],
                 "findings": log_findings(workers),
