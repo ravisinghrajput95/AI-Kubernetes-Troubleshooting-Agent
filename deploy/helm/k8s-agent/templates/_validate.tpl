@@ -17,6 +17,9 @@ same mistake with a longer reach.
 {{- define "k8s-agent.validate" -}}
 
 {{- $mode := .Values.auth.mode -}}
+{{- if not $mode -}}
+{{- fail "auth.mode is not set and this service holds a kubeconfig, so the chart will not choose for you. Set auth.mode=oidc (with auth.oidc.issuer and audience), auth.mode=token (with auth.tokensSecret.name), or auth.mode=disabled together with auth.allowInsecureNoAuth=true for a throwaway environment. Read SECURITY.md first." -}}
+{{- end -}}
 {{- if not (has $mode (list "oidc" "token" "disabled")) -}}
 {{- fail (printf "auth.mode must be one of oidc|token|disabled, got %q" $mode) -}}
 {{- end -}}

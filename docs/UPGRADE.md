@@ -134,6 +134,50 @@ whose rows have moved on. Empty is correct.
 These change what the platform *does* without any configuration changing. They
 are the ones that surprise people.
 
+### Upgrading into v0.2.0 (`AUTH_MODE` has no default) — **Breaking**
+
+**This is the one change in this document that will stop an existing
+deployment from starting.** `AUTH_MODE` no longer defaults to `disabled`; an
+unset value is refused at startup, naming all three modes.
+
+**Who is affected:** any deployment that relied on the default — in practice,
+one that sets `ALLOW_INSECURE_NO_AUTH=true` and no `AUTH_MODE` at all. If your
+configuration already names a mode, nothing changes for you.
+
+**The migration is one variable:**
+
+```bash
+# before (started, and authenticated nobody)
+ALLOW_INSECURE_NO_AUTH=true
+
+# after
+AUTH_MODE=disabled
+ALLOW_INSECURE_NO_AUTH=true
+```
+
+The chart is the same shape — `auth.mode` was defaulted to `oidc` and is now
+required, so a values file that never set it is refused at `helm template`
+rather than at CrashLoopBackOff. Rehearse before upgrading:
+
+```bash
+helm template <release> deploy/helm/k8s-agent -f your-values.yaml >/dev/null
+```
+
+**Why, since the old default already refused to boot.** It did: `disabled` has
+always required `ALLOW_INSECURE_NO_AUTH`, so a fresh install with no
+configuration never started, and an audit that read this platform as shipping
+open was wrong about it. What the default *did* cost is that the
+acknowledgement doubled as the mode selection — `ALLOW_INSECURE_NO_AUTH=true`
+alone was enough to serve every endpoint unauthenticated, with nobody having
+chosen `disabled` in as many words — and that an `AUTH_MODE` which failed to
+arrive (an unmounted ConfigMap key, an unloaded `.env`, a misspelled variable)
+selected the insecure mode silently instead of saying it was missing. Absence
+now selects nothing, and the open deployment costs two deliberate statements
+rather than one.
+
+`disabled` is unchanged and still supported for local development. Nothing
+about `oidc` or `token` changes.
+
 ### Upgrading into M6.5 (authorisation)
 
 **Every authenticated caller previously could do everything.**
@@ -306,6 +350,7 @@ anything is deployed.
 
 Refused at startup, and worth re-checking on every upgrade:
 
+- `AUTH_MODE` unset — there is no default; the refusal names all three modes
 - `AUTH_MODE=disabled` without `ALLOW_INSECURE_NO_AUTH`
 - `AUTH_MODE=oidc` without `OIDC_ISSUER` / `OIDC_AUDIENCE`
 - exactly one of `DATABASE_URL` / `REDIS_URL`

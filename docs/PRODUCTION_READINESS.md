@@ -60,9 +60,16 @@ through the same builder the dependency uses. And `docker-compose.yml` no
 longer sets `ALLOW_INSECURE_NO_AUTH` for the operator — pre-setting it was the
 careless deployment this finding describes, shipped in the repository.
 
-**Remaining (P1):** none. `disabled` remains the *default mode*, but it now
-costs a deliberate acknowledgement that nothing in this repository supplies and
-that refuses the boot until given.
+**Remaining (P1):** none, and as of v0.2.0 there is no default mode at all.
+`AUTH_MODE` unset is refused at startup naming all three ways forward. The
+previous default of `disabled` was not the open deployment it read as — it has
+always also required an acknowledgement nothing in this repository supplies —
+but it made that acknowledgement *sufficient*: `ALLOW_INSECURE_NO_AUTH=true`
+alone served every endpoint unauthenticated, with nobody having chosen
+`disabled`, and an `AUTH_MODE` that failed to arrive selected it silently.
+Absence now selects nothing, in the platform, in `docker-compose.yml` and in
+the chart. Breaking for a deployment that relied on the default; two mutations
+in `scripts/mutation_check.py`, both caught.
 
 Phase timing closed the traces item, though not in the shape the finding
 assumed: `k8sagent_investigation_phase_seconds` answers "where did the time go"

@@ -23,10 +23,12 @@ What is true today:
 **It is still not a finished product.** The remaining gaps are listed under
 *Known gaps* below and tracked in
 [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md). The most important
-one for a reader skimming: `AUTH_MODE` still **defaults** to `disabled`, so a
-deployment that acknowledges the warning without reading it authenticates
-nobody. Set `AUTH_MODE=oidc` or `AUTH_MODE=token` for anything reachable by
-someone you do not trust.
+one for a reader skimming: the **agent CA is a development CA** unless you
+supply one. `AUTH_MODE` no longer defaults to anything — an unset value is
+refused at startup naming all three modes — so a deployment authenticates
+nobody only if someone typed `AUTH_MODE=disabled` and acknowledged it. Set
+`AUTH_MODE=oidc` or `AUTH_MODE=token` for anything reachable by someone you do
+not trust.
 
 ## Reporting a vulnerability
 
@@ -88,17 +90,23 @@ cluster content as hostile input.
 
 Not vulnerabilities to report — documented limitations.
 
-- **`AUTH_MODE`'s default *value* is `disabled`, which reads worse than it
-  behaves.** A fresh install with no configuration **does not start**:
-  `disabled` is refused unless `ALLOW_INSECURE_NO_AUTH=true` is also set, and
-  `token` with no `API_TOKENS` is refused too. The insecure state is reachable
-  only by an operator asking for it in as many words, and
-  `TestTheShippedDefaultCannotServeUnauthenticated` pins that. What remains is
-  a **documentation hazard**, not an open deployment: `default="disabled"` in
-  `config.py` reads as an insecure default to anyone who does not also read
-  `build_authenticator`. This bullet previously said "the default is still the
-  insecure one", which is how a reader — and one readiness assessment — came to
-  score the platform as shipping open.
+- **`AUTH_MODE` has no default, as of v0.2.0.** An unset value is refused at
+  startup, naming `oidc`, `token`, and `disabled`-plus-acknowledgement. This
+  bullet used to describe a documentation hazard: the default *value* was
+  `disabled`, which read as an insecure default while behaving safely, because
+  `disabled` has always also required `ALLOW_INSECURE_NO_AUTH` and a fresh
+  install refused to boot. That much was true, and an audit that scored this
+  platform as shipping open was wrong about it.
+
+  What the bullet missed is that the default made the acknowledgement
+  *sufficient*: `ALLOW_INSECURE_NO_AUTH=true` on its own served every endpoint
+  unauthenticated, so the insecure state was one variable away and nobody had
+  said the word `disabled` — and an `AUTH_MODE` that failed to arrive, from an
+  unmounted ConfigMap key or an unloaded `.env`, selected it silently rather
+  than reporting itself missing. Absence now selects nothing. The insecure
+  state costs two deliberate statements, and `TestNoModeIsChosenForYou` pins
+  the refusals, including the one this closed. Breaking for a deployment that
+  relied on the default — see `docs/UPGRADE.md`.
 - **The agent CA is a development CA** unless you supply one. It is generated on
   first start, says so loudly, and its private key sits on the gateway's disk.
   Supply `AGENT_CA_CERT_FILE`/`AGENT_CA_KEY_FILE` from an issuer you control.

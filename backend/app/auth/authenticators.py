@@ -8,6 +8,10 @@ authenticator is selected by configuration:
 - `disabled` — no authentication. Local development only, and refused at startup
                unless explicitly acknowledged, because this service holds a
                kubeconfig.
+
+There is no default. An unset `AUTH_MODE` is refused rather than resolved,
+because a mode nobody chose is how a deployment ends up open without anyone
+having said so.
 """
 
 import hmac
@@ -204,7 +208,22 @@ def build_authenticator(config: Settings | None = None) -> Authenticator:
     being closed.
     """
     config = config or settings
-    mode = (config.auth_mode or "disabled").strip().lower()
+    mode = (config.auth_mode or "").strip().lower()
+
+    # Unset is not a mode. It used to resolve to `disabled`, which meant
+    # `ALLOW_INSECURE_NO_AUTH=true` alone was enough to serve every endpoint
+    # unauthenticated — the acknowledgement selecting the mode as a side
+    # effect of acknowledging it. It also meant an `AUTH_MODE` that never
+    # arrived chose the insecure mode rather than saying so.
+    if not mode:
+        raise ValueError(
+            "AUTH_MODE is not set and this service holds a kubeconfig, so it "
+            "will not choose for you. Set AUTH_MODE=oidc (bearer tokens "
+            "validated against your identity provider), AUTH_MODE=token "
+            "(static bearer tokens in API_TOKENS), or AUTH_MODE=disabled "
+            "together with ALLOW_INSECURE_NO_AUTH=true for local development "
+            "only. Read SECURITY.md before exposing this beyond localhost."
+        )
 
     if mode == "oidc":
         return OIDCAuthenticator(

@@ -58,14 +58,20 @@ services:
       # shipped in the repository: a `docker compose up` that publishes a port
       # and authenticates nobody, with the acknowledgement supplied by us.
       #
-      # So `docker compose up` refuses to start until you choose:
+      # Neither does it supply a *mode*. It passed `${AUTH_MODE:-disabled}`
+      # until v0.2.0, which made the line below teach the wrong lesson: the
+      # first of these used to be enough on its own, so the open deployment was
+      # one variable away and nobody had said the word `disabled`.
       #
-      #   ALLOW_INSECURE_NO_AUTH=true docker compose up     # local, open
+      # So `docker compose up` refuses to start until you choose, in full:
+      #
+      #   AUTH_MODE=disabled ALLOW_INSECURE_NO_AUTH=true docker compose up
       #   AUTH_MODE=token API_TOKENS=tok:you@example.com docker compose up
       #
-      # The refusal is at startup and names the variable, so the fix is one
-      # line rather than a search. Read SECURITY.md before exposing this port.
-      AUTH_MODE: ${AUTH_MODE:-disabled}
+      # The refusal is at startup and names every way forward, so the fix is
+      # one line rather than a search. Read SECURITY.md before exposing this
+      # port.
+      AUTH_MODE: ${AUTH_MODE:-}
       ALLOW_INSECURE_NO_AUTH: ${ALLOW_INSECURE_NO_AUTH:-false}
       API_TOKENS: ${API_TOKENS:-}
       KUBECONFIG: /home/app/.kube/config

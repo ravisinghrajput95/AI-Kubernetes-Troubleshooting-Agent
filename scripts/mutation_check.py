@@ -62,6 +62,33 @@ class Mutation:
 
 MUTATIONS = [
     Mutation(
+        name="auth-mode-has-no-default",
+        why=(
+            "`AUTH_MODE` defaulted to `disabled`, so `ALLOW_INSECURE_NO_AUTH="
+            "true` on its own served every endpoint unauthenticated — the "
+            "acknowledgement selecting the mode as a side effect of "
+            "acknowledging it, with nobody ever choosing `disabled`. An "
+            "`AUTH_MODE` that failed to arrive chose it too, silently."
+        ),
+        path="app/core/config.py",
+        old='auth_mode: str = Field(default="", validation_alias="AUTH_MODE")',
+        new='auth_mode: str = Field(default="disabled", validation_alias="AUTH_MODE")',
+        tests="tests/test_auth.py",
+    ),
+    Mutation(
+        name="auth-mode-unset-is-not-resolved",
+        why=(
+            "The same defect from the other side: a fallback in "
+            "`build_authenticator` resolves an unset mode to `disabled` even "
+            "with no default in the settings, which leaves the guard above it "
+            "present, correct-looking and unreachable."
+        ),
+        path="app/auth/authenticators.py",
+        old='    mode = (config.auth_mode or "").strip().lower()',
+        new='    mode = (config.auth_mode or "disabled").strip().lower()',
+        tests="tests/test_auth.py",
+    ),
+    Mutation(
         name="metrics-content-type",
         why=(
             "2f60f76: the generator and the content type came from different "

@@ -119,9 +119,27 @@ class Settings(BaseSettings):
 
     # --- Authentication -----------------------------------------------------
     # "oidc" for production, "token" for simple deployments, "disabled" only for
-    # local development. `disabled` is refused unless explicitly acknowledged,
-    # because this service holds a kubeconfig.
-    auth_mode: str = Field(default="disabled", validation_alias="AUTH_MODE")
+    # local development and only with the acknowledgement below.
+    #
+    # **There is no default, and the empty string is not one.** This defaulted
+    # to "disabled" until v0.2.0, which was not the open deployment it read as
+    # — `disabled` has always required `ALLOW_INSECURE_NO_AUTH`, so a fresh
+    # install refused to boot, and an audit that scored this platform as
+    # shipping open was wrong about it (docs/QA_AUDIT_2026-08-03.md §5).
+    #
+    # What it *was* is a one-variable path to an open deployment. With a
+    # default mode, `ALLOW_INSECURE_NO_AUTH=true` on its own was sufficient:
+    # the acknowledgement doubled as the mode selection, so nobody ever chose
+    # `disabled` in as many words. And an `AUTH_MODE` that failed to arrive —
+    # a ConfigMap key not mounted, a `.env` not loaded, a misspelled variable
+    # name — silently selected it, which in an environment carrying the
+    # acknowledgement already starts open.
+    #
+    # So absence selects nothing. `build_authenticator` refuses an unset mode
+    # naming all three, and the insecure state now costs two deliberate
+    # statements rather than one. Same reasoning as the M6 refusals, and as
+    # `docker-compose.yml` declining to pre-set the acknowledgement for you.
+    auth_mode: str = Field(default="", validation_alias="AUTH_MODE")
     allow_insecure_no_auth: bool = Field(default=False, validation_alias="ALLOW_INSECURE_NO_AUTH")
 
     oidc_issuer: str = Field(default="", validation_alias="OIDC_ISSUER")

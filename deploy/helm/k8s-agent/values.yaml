@@ -31,8 +31,12 @@ fullnameOverride: ""
 # intended behaviour: a readiness probe passing while the service authenticates
 # nobody is the worst shape a misconfiguration can take.
 auth:
-  # "oidc" | "token" | "disabled"
-  mode: oidc
+  # "oidc" | "token" | "disabled". **Required — there is no default**, and an
+  # empty value is refused at render time, mirroring the platform's own startup
+  # refusal. A chart that picks a mode for you is a deployment authenticating
+  # by a decision nobody made; the platform stopped defaulting `AUTH_MODE` in
+  # v0.2.0 for the same reason.
+  mode: ""
 
   oidc:
     issuer: ""

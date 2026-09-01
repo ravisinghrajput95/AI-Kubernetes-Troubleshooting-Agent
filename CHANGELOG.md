@@ -8,6 +8,38 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
+## [Unreleased]
+
+### Breaking
+
+- **`AUTH_MODE` has no default.** An unset value is refused at startup, naming
+  `oidc`, `token`, and `disabled`-with-`ALLOW_INSECURE_NO_AUTH`. A deployment
+  that set only the acknowledgement and inherited the mode will not start until
+  it names one; a deployment that already names a mode is unaffected.
+  `docker-compose.yml` stops passing `${AUTH_MODE:-disabled}` and the Helm
+  chart's `auth.mode` becomes required, both refusing rather than choosing.
+  Migration in `docs/UPGRADE.md`.
+
+  The old default was **not** the open deployment it read as, and it is worth
+  being exact about that because an audit of this repository got it wrong and
+  scored the platform as shipping open: `disabled` has always also required
+  `ALLOW_INSECURE_NO_AUTH`, so a fresh install with no configuration refused to
+  boot. What the default actually cost is that the acknowledgement doubled as
+  the mode selection — `ALLOW_INSECURE_NO_AUTH=true` on its own was sufficient
+  to serve every endpoint unauthenticated, and `docker-compose.yml` taught that
+  one-liner — and that an `AUTH_MODE` which failed to arrive, from an unmounted
+  ConfigMap key or an unloaded `.env`, selected the insecure mode silently
+  instead of reporting itself missing. Absence now selects nothing, and the
+  open deployment costs two deliberate statements rather than one.
+
+  The test class that used to argue *for* keeping the default is the one that
+  now pins its removal, and one of its cases asserted the defect directly:
+  `test_the_acknowledgement_is_what_permits_it` set only
+  `allow_insecure_no_auth` and required `validate_auth()` to succeed. Two
+  mutations in `scripts/mutation_check.py` — the settings default and the
+  `or "disabled"` fallback in `build_authenticator`, which is the same defect
+  from the other side — both caught.
+
 ## [0.1.0] — 2026-09-01
 
 The first tagged release. Everything below already existed on `main`; this is

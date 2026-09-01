@@ -21,6 +21,13 @@ authenticated nobody, and supplied its own acknowledgement. A chart that does
 the same has a longer reach. `helm install` with `auth.mode=disabled` and no
 acknowledgement **fails at render time** and names the value to set.
 
+**It does not pre-set a *mode*, either.** `auth.mode` defaulted to `oidc` until
+v0.2.0 — secure, and still the chart deciding. The platform stopped defaulting
+`AUTH_MODE` in the same release because a default mode made the acknowledgement
+sufficient on its own, and a chart-supplied one has the same shape: a
+deployment authenticating by a decision nobody made. `auth.mode` is now
+required and an empty value is refused, naming all three.
+
 ## It refuses bad configurations at `helm template`, not at CrashLoopBackOff
 
 The platform already validates its own configuration at startup and refuses to
@@ -29,6 +36,7 @@ it adds is timing. Every refusal below is verified:
 
 | Configuration | Result |
 |---|---|
+| `auth.mode` not set at all | refused — the chart does not choose a mode for you |
 | `auth.mode=disabled` without `allowInsecureNoAuth` | refused |
 | `auth.mode=oidc` without issuer or audience | refused |
 | `auth.mode=token` without a secret name | refused |

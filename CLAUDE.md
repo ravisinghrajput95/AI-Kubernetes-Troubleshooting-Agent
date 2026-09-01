@@ -86,13 +86,29 @@ readiness probe passing while the service serves nothing is the hardest shape
 of misconfiguration to notice. `Settings.validate_auth()` calls the same
 `build_authenticator` the dependency does, so the two cannot drift.
 
+**`AUTH_MODE` has no default, and that is a decision rather than an
+omission.** It defaulted to `disabled`, which was never the open deployment it
+read as — `disabled` has always also required `ALLOW_INSECURE_NO_AUTH`, and an
+audit that scored this platform as shipping open was wrong about it. What the
+default cost is subtler and real: the acknowledgement doubled as the mode
+selection, so `ALLOW_INSECURE_NO_AUTH=true` **on its own** served every
+endpoint unauthenticated with nobody having chosen `disabled`, and an
+`AUTH_MODE` that failed to arrive — an unmounted ConfigMap key, an unloaded
+`.env`, a misspelled variable — selected the insecure mode instead of
+reporting itself missing. Absence selects nothing now, in the platform, in
+`docker-compose.yml` (which used to pass `${AUTH_MODE:-disabled}` and teach the
+one-variable form) and in the chart (whose `auth.mode` defaulted to `oidc` —
+secure, and still the chart deciding). Do not reintroduce a default in any of
+the three. `TestNoModeIsChosenForYou` pins the refusals and is the class that
+used to argue the other way.
+
 `docker-compose.yml` deliberately does **not** set `ALLOW_INSECURE_NO_AUTH` for
 you. Pre-setting it was the "careless deployment" F13 warns about, shipped in
 this repository — a `docker compose up` that publishes a port, authenticates
 nobody, and supplies its own acknowledgement. Compose now refuses to start
 until an operator chooses, and the refusal names the variable.
 
-**Security status:** authentication (F13), per-tenant authorisation, tenancy under row-level security, rate limiting and an append-only audit log are all built — see the sections below. What remains is in `SECURITY.md` (*Known gaps*) and `docs/PRODUCTION_READINESS.md`, chiefly `AUTH_MODE=disabled` still being the shipped **default**, a development agent CA unless one is supplied, and redaction being best-effort on free text. This line said "chiefly no rate limiting" for several milestones after rate limiting shipped; a stale status line is the same failure as a stale "this is dead" note.
+**Security status:** authentication (F13), per-tenant authorisation, tenancy under row-level security, rate limiting and an append-only audit log are all built — see the sections below. What remains is in `SECURITY.md` (*Known gaps*) and `docs/PRODUCTION_READINESS.md`, chiefly a development agent CA unless one is supplied and redaction being best-effort on free text. `AUTH_MODE` no longer defaults to `disabled` — it has no default and an unset value is refused at startup naming all three modes, because the old default made `ALLOW_INSECURE_NO_AUTH=true` sufficient on its own and let a mode that failed to arrive select the insecure one silently. This line said "chiefly no rate limiting" for several milestones after rate limiting shipped; a stale status line is the same failure as a stale "this is dead" note.
 
 `PyYAML` is a runtime dependency: generated patches are applied to production clusters, so YAML is serialised properly rather than string-formatted.
 

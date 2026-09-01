@@ -39,7 +39,14 @@ def acknowledged_local_auth(monkeypatch):
 
     That refusal is the point of F13 and is asserted elsewhere; here it is
     merely in the way of testing probes and correlation ids.
+
+    Both halves are set deliberately. This fixture used to set only the
+    acknowledgement and inherit the mode from `AUTH_MODE`'s default, which is
+    the one-variable path to an open deployment that `TestNoModeIsChosenForYou`
+    now closes — so with no default, the mode has to be named here as an
+    operator would have to name it.
     """
+    monkeypatch.setattr(settings, "auth_mode", "disabled")
     monkeypatch.setattr(settings, "allow_insecure_no_auth", True)
 
 

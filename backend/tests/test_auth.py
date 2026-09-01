@@ -440,22 +440,33 @@ class TestAuthIsValidatedAtStartup:
         assert "build_authenticator" in inspect.getsource(Settings.validate_auth)
 
 
-class TestTheShippedDefaultCannotServeUnauthenticated:
-    """`AUTH_MODE` defaults to `disabled`, and it is worth being precise about
-    what that does and does not mean — an audit of this repository initially
-    read the default as "ships open" and recommended changing it.
+class TestNoModeIsChosenForYou:
+    """`AUTH_MODE` has no default, and the history is the argument for it.
 
-    It does not ship open. `disabled` requires `ALLOW_INSECURE_NO_AUTH`, so a
-    fresh install with no configuration **refuses to start**, naming both ways
-    forward. The insecure state is reachable only by an operator asking for it
-    in as many words.
+    It defaulted to `disabled` until v0.2.0, and that was **not** the open
+    deployment it read as: `disabled` has always required
+    `ALLOW_INSECURE_NO_AUTH`, so a fresh install with no configuration refused
+    to boot. An audit that scored this platform as shipping open was wrong
+    about it and withdrew the finding (`docs/QA_AUDIT_2026-08-03.md` §5), which
+    is why this class previously argued *for* keeping the default.
 
-    That makes the default value a documentation hazard rather than a security
-    one, and the property worth protecting is the refusal itself — which is
-    behaviour, and therefore testable — rather than the string. Changing the
-    default to `token` would break every local-development deployment relying
-    on the acknowledgement while buying nothing, because both paths already
-    refuse. See `docs/QA_AUDIT_2026-08-03.md`.
+    What that argument missed is the shape underneath it. With a default mode,
+    `ALLOW_INSECURE_NO_AUTH=true` **on its own** was sufficient to serve every
+    endpoint unauthenticated — the acknowledgement selecting the mode as a side
+    effect of acknowledging it, so nobody ever chose `disabled` in as many
+    words. `docker-compose.yml` taught that one-liner. And an `AUTH_MODE` that
+    failed to arrive — an unmounted ConfigMap key, an unloaded `.env`, a
+    misspelled variable — selected the insecure mode silently rather than
+    saying it was missing.
+
+    So absence now selects nothing, and the insecure state costs two deliberate
+    statements. `test_the_acknowledgement_alone_is_not_enough` is the one that
+    carries this: the class used to assert the opposite, in
+    `test_the_acknowledgement_is_what_permits_it`.
+
+    The properties asserted are behaviour — which refusals fire and what they
+    name — never the default string, so the reasoning above is checkable rather
+    than merely written down.
     """
 
     def test_a_fresh_install_refuses_to_start(self):
@@ -463,23 +474,42 @@ class TestTheShippedDefaultCannotServeUnauthenticated:
 
         config = Settings(_env_file=None)
 
-        assert config.auth_mode == "disabled"
         assert config.allow_insecure_no_auth is False
         with pytest.raises((ValueError, RuntimeError)) as raised:
             config.validate_auth()
-        assert "ALLOW_INSECURE_NO_AUTH" in str(raised.value)
+        assert "AUTH_MODE" in str(raised.value)
 
-    def test_the_refusal_names_the_secure_alternatives(self):
+    def test_the_acknowledgement_alone_is_not_enough(self):
+        """The load-bearing one, and the defect as it actually shipped.
+
+        `ALLOW_INSECURE_NO_AUTH=true` with no `AUTH_MODE` used to start a
+        deployment that authenticated nobody, because the default supplied the
+        mode. Acknowledging a consequence is not the same act as choosing the
+        thing that has it.
+        """
+        from app.core.config import Settings
+
+        config = Settings(_env_file=None)
+        object.__setattr__(config, "allow_insecure_no_auth", True)
+
+        with pytest.raises((ValueError, RuntimeError)) as raised:
+            config.validate_auth()
+        assert "AUTH_MODE" in str(raised.value)
+
+    def test_the_refusal_names_every_way_forward(self):
         """A refusal that only names the escape hatch teaches operators to take
-        it. This one has to offer the ways out that are not insecure."""
+        it, and one that names no way forward is a puzzle. This one has to
+        offer all three, secure ones included."""
         from app.core.config import Settings
 
         with pytest.raises((ValueError, RuntimeError)) as raised:
             Settings(_env_file=None).validate_auth()
 
         message = str(raised.value)
-        assert "AUTH_MODE=oidc" in message or "oidc" in message
+        assert "oidc" in message
         assert "token" in message
+        assert "disabled" in message
+        assert "ALLOW_INSECURE_NO_AUTH" in message
 
     def test_token_mode_with_no_tokens_also_refuses(self):
         """The other half: falling back to an empty token set would
@@ -494,14 +524,28 @@ class TestTheShippedDefaultCannotServeUnauthenticated:
             config.validate_auth()
         assert "API_TOKENS" in str(raised.value)
 
-    def test_the_acknowledgement_is_what_permits_it(self):
-        """The escape hatch must still work, or local development breaks."""
+    def test_choosing_disabled_and_acknowledging_it_still_works(self):
+        """`disabled` stays reachable, or local development breaks. What
+        changed is that it takes both statements, not that it is gone."""
         from app.core.config import Settings
 
         config = Settings(_env_file=None)
+        object.__setattr__(config, "auth_mode", "disabled")
         object.__setattr__(config, "allow_insecure_no_auth", True)
 
         config.validate_auth()
+
+    def test_an_unrecognised_mode_is_refused_rather_than_resolved(self):
+        """A typo must not fall through to anything, least of all to the mode
+        the platform no longer defaults to."""
+        from app.core.config import Settings
+
+        config = Settings(_env_file=None)
+        object.__setattr__(config, "auth_mode", "oid")
+        object.__setattr__(config, "allow_insecure_no_auth", True)
+
+        with pytest.raises((ValueError, RuntimeError)):
+            config.validate_auth()
 
 
 class TestBothProvidersReadAsTheSamePerson:
