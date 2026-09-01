@@ -535,6 +535,37 @@ class TestNoModeIsChosenForYou:
 
         config.validate_auth()
 
+    def test_a_present_but_empty_value_is_not_a_mode_either(self):
+        """The shape `docker-compose.yml` actually produces.
+
+        Compose passes `AUTH_MODE: ""` — the variable is *present and empty*,
+        which is a different case from absent and is the one a deployment
+        actually hits. Whitespace is the same shape via a ConfigMap key that
+        picked up a trailing space.
+
+        What this guards is that neither ever yields a working authenticator —
+        specifically that nobody "helpfully" resolves a blank value to
+        `disabled`, which is the whole defect this class exists for.
+
+        It deliberately does **not** pin which refusal fires. Removing the
+        `.strip()` in `build_authenticator` was mutated and survived, and that
+        is correct rather than a hole: whitespace is refused either way, as
+        `Unknown AUTH_MODE '   '` instead of the missing-mode message. The
+        strip buys a better sentence — one that names the omission rather than
+        quoting invisible characters back at the operator — and a test that
+        failed on it would be asserting prose.
+        """
+        from app.core.config import Settings
+
+        for value in ("", "   ", "\t"):
+            config = Settings(_env_file=None)
+            object.__setattr__(config, "auth_mode", value)
+            object.__setattr__(config, "allow_insecure_no_auth", True)
+
+            with pytest.raises((ValueError, RuntimeError)) as raised:
+                config.validate_auth()
+            assert "AUTH_MODE" in str(raised.value), value
+
     def test_an_unrecognised_mode_is_refused_rather_than_resolved(self):
         """A typo must not fall through to anything, least of all to the mode
         the platform no longer defaults to."""
