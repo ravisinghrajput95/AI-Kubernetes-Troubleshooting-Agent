@@ -193,6 +193,83 @@ python scripts/payload_bench.py --pods 2000
 
 ---
 
+### Sustained operation — one hour, continuous
+
+```bash
+docker run -d --name pg -e POSTGRES_PASSWORD=postgres -p 5433:5432 postgres:17-alpine
+docker compose up -d redis
+(cd agent && go build -o /tmp/k8s-agent ./cmd/agent)
+python scripts/soak_bench.py --minutes 60 --concurrency 2 --pause 12 --agent
+```
+
+Two workers, a **real Go agent** against a **real kind cluster**, 19.5
+investigations a minute offered for sixty minutes. This is the first entry here
+that answers "what happens if you leave it on" rather than "how fast".
+
+| | |
+|---|---|
+| investigations | **1,168, all of which collected usable evidence** |
+| working throughout? | first at 0.0m, last at **59.9m**; longest quiet gap **0.2m** |
+| latency | p50 **0.26 s**, p95 **0.57 s**, max 3.82 s |
+| resident memory, worker-1 | 119.2 → 129.5 MB, trend **+0.8 MB/h** over the second half |
+| resident memory, worker-2 | 117.1 → 123.8 MB, trend **+7.9 MB/h** |
+| collection cache | 29,180 hits / 10,379 misses — **74% of reads reused** |
+| SSE | 23,589 frames, **0 out of order, 0 duplicates** |
+| transports | 594 SSE runs and 574 polling runs, all succeeded, same evidence range |
+| agent certificates | **3 renewals** on a 30-minute TTL, **0 stream drops**; 98 agent-served investigations after the last one |
+| retention sweep | fired **30m in**, on the platform's own timer |
+| sweep cost | **7 ms** to prune 25 investigations and 75 report blobs |
+
+**Memory is flat, which is the headline.** The F18 collection cache holds raw
+cluster reads in-process and bounds itself by bytes; nothing bounded what a
+leak *elsewhere* would do over an hour, and nothing had run long enough to tell
+the two apart. Both workers settle within about 10 MB of where they started and
+stay there. Worker-2's +7.9 MB/h is a trend fitted over the second half of a
+run whose total movement was 6.7 MB — it is noise at this scale, not a slope to
+extrapolate.
+
+**Postgres grows at 87.9 MB/h and retention is what bounds it.** 8.5 → 98.0 MB
+over 1,174 rows, or roughly **77 KB per investigation** on a 13-pod cluster
+(`payload_bench` measures 2.7 MB at the 2,000-pod ceiling — this figure is the
+small end of that range, not a contradiction of it). Nothing pruned it during
+the run: `REPORT_RETENTION_DAYS` was at its floor of 1 and the run's own rows
+were minutes old, so the sweep collected only the aged rows seeded for it. What
+the sweep *did* prove is F19 end to end — **after it ran, 0 of the aged
+investigations still carried a payload and 0 blobs remained**, which is the
+half of retention that used to be missing.
+
+**`refresh=true` bypasses the cache and it is measured, not assumed**: 218 of
+the 1,168 runs asked for a refresh and those served **0 reads from cache**,
+while the population as a whole reused 74%.
+
+Two things an hour found that a short run cannot:
+
+- **One investigation in 1,168 (0.09%) was answered from the local kubeconfig**
+  rather than through the agent, with no refusal. That is M8a's deliberate
+  fail-open: `_fleet_holder` returns nothing when the presence index cannot be
+  read, because refusing every investigation on a Redis hiccup would turn a
+  degraded dependency into an outage. Presence carries a 45-second TTL
+  refreshed by a 15-second heartbeat, and under host contention that window can
+  lapse. The behaviour is correct and documented; what is new is the **rate**,
+  and that `cluster_access` reported it honestly rather than hiding it. On this
+  harness the kubeconfig points at the same cluster, so the answer was right —
+  on a real fleet it is the same-named-cluster risk the refusal exists to
+  prevent, at 1-in-1,000 rather than the 2-in-3 M8a started from.
+- **Three kubectl reads failed with their own error message replaced by gRPC's.**
+  A worker that runs an agent gateway *and* falls back to kubectl forks a
+  subprocess out of a process holding gRPC channels; gRPC's fork handlers write
+  to the inherited stderr, so `kubectl logs` exits non-zero and the captured
+  stderr reads `ev_poll_posix.cc:593 FD from fork parent still in poll list`
+  instead of whatever kubectl was trying to say. The read is correctly recorded
+  as failed evidence — the defect is diagnosability, and it is the same shape as
+  the agent-path `unknown` that `detailFor` was written to fix. 3 of roughly
+  23,000 reads, all inside the single kubeconfig-fallback investigation above.
+  Recorded in `docs/PRODUCTION_READINESS.md`, not fixed here.
+
+**What this does not measure**: one cluster of 13 pods, two workers, one host,
+loopback. It is a claim about *duration*, not about scale — the scale numbers
+are above, and they were taken separately for that reason.
+
 ## What was **not** measured
 
 Stated plainly, because each is a real limit on how far the numbers above
@@ -207,27 +284,35 @@ travel.
   workers*, which found the answer depends on which collection path is in use.
 - **Scale-out across hosts.** Everything below is co-located on one machine.
   That turns out to matter more than expected.
-- **The Go agent.** Every agent here is a coroutine answering from a canned
-  payload over the published protobuf contract. This measures the platform's
-  side of the wire, not a real agent, a real API server, or a real cluster.
+- **The Go agent at *fleet* scale.** Every agent in the 1,000-cluster figures
+  is a coroutine answering from a canned payload over the published protobuf
+  contract, which measures the platform's side of the wire rather than a real
+  agent. The hour-long soak *does* use the real binary against a real API
+  server and a real cluster — 1,167 of its 1,168 investigations collected
+  through it — but that is **one** agent, so what remains unmeasured is a
+  thousand real ones, not the agent itself.
 - **mTLS at fleet scale.** Measured with `AGENT_GATEWAY_TLS=disabled`. mTLS
   changes the handshake cost, and the 1.04 s attach figure would move; steady
   state should not, but that is reasoning rather than measurement.
 - **Real networks.** Everything is loopback. No latency, no loss, no proxy, no
   egress filtering — which is precisely the environment ADR-004 shaped the
   transport around.
-- **Sustained operation.** The longest run here is under a minute. Nothing says
-  what happens over hours: no leak test, no certificate rotation under load, no
-  Postgres growth over a retention period.
+- **Sustained operation beyond one hour.** An hour is now measured — see
+  *Sustained operation* above — and it is flat. Nothing says what a day or a
+  week does, and the Postgres figure (+87.9 MB/h before retention collects
+  anything) is the number most likely to behave differently over one.
 - **Whether the cache helps a *fleet*.** The F18 figures above are one
   process investigating one cluster twice. The cache is per worker and per
   `(tenant, cluster, identity)`, so on a fleet the hit rate depends on how
   often the same cluster is investigated by the same caller within the TTL —
   which is a usage question, not a platform one, and nothing here measures it.
   What is measured is the saving *when* a read is reused.
-- **The cache under `refresh=true` load.** An alert storm bypasses reads and
-  still writes, so a hot cluster's entries are rewritten rather than reused.
-  Not benchmarked.
+- **The cache under a *storm* of `refresh=true`.** The soak ran 218 of 1,168
+  investigations with `refresh: true` and confirmed they served **0 reads from
+  cache** while the population reused 74% — so the bypass works and costs what
+  a cold read costs. What is still unmeasured is the pathological shape: an
+  alert storm in which *most* traffic refreshes, rewriting a hot cluster's
+  entries faster than anyone reuses them.
 - **Where the per-worker limit binds.** ~12/s per worker is measured and
   scale-out is linear, but which serialisation inside the process sets it —
   event loop, GIL, or gRPC stream handling — was not isolated. Ruled out: CPU,

@@ -1179,6 +1179,14 @@ product *feels*.
 
 Delete what the phases orphaned. Target: `App.tsx` under 100 lines, routes only.
 
+**Outcome: 1,747 → 98 lines, routes and the sign-in gate only** — the target,
+met. The last split was verified as a pure
+move: every extracted function compared byte-for-byte against its original and
+the built bundle came back on the same content hash. `MultiClusterPanel` went
+in that pass, along with `investigationEvidence`; `StatusPill` survived, moved
+next to its one remaining caller rather than merged into `Tag`, because merging
+two near-duplicate components is a redesign and this phase was a move.
+
 | Deleted | Why |
 |---|---|
 | `LoginScreen` | Authenticated nothing |

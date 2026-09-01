@@ -8,15 +8,34 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
-## [0.1.0] — 2026-08-30
+## [0.1.0] — 2026-09-01
 
 The first tagged release. Everything below already existed on `main`; this is
 the point at which it becomes something you can pin.
 
 **No production deployment exists.** Every number in this release was measured
-on kind clusters and synthetic fleets on one machine. Nothing has run longer
-than a few minutes, and there is no user but the author. Read
-`docs/PRODUCTION_READINESS.md` before trusting it with an incident.
+on kind clusters and synthetic fleets on one machine, and there is no user but
+the author. Read `docs/PRODUCTION_READINESS.md` before trusting it with an
+incident.
+
+What that caveat no longer has to say is "nothing has run longer than a few
+minutes". It has now run for **one hour continuously**: 1,168 investigations
+through a real Go agent against a real cluster, **all of which collected usable
+evidence**, spread evenly across the hour rather than bunched at the start —
+resident memory flat, three certificate renewals with no dropped stream, 23,589
+SSE frames with none out of order or duplicated, and the retention sweep firing
+on the platform's own timer. `docs/PERFORMANCE_ENVELOPE.md` has the table and,
+just as importantly, what an hour still does not tell you.
+
+It is worth saying how that number was earned, because the first attempt at it
+was not. A 60-minute run had already been declared: 1,172 investigations, and
+a report full of healthy-looking memory trends. Docker Desktop had killed the
+cluster four minutes in, 1,091 of those investigations failed with `Unable to
+connect`, and the harness's vacuity guard — an absolute floor — passed them.
+The guard now asks three questions instead of one (did enough happen, was the
+platform *working*, was it working *throughout*), prints a breakdown of why
+things failed above the verdict rather than below it, and is itself pinned by
+`tests/test_soak_guard.py` against the exact run that fooled it.
 
 ### Investigation
 
@@ -73,6 +92,16 @@ than a few minutes, and there is no user but the author. Read
 - Alert-triggered investigations, signed outbound notifications, and an MCP
   server exposing the platform's read capabilities as tools.
 - A Helm chart that reproduces the platform's startup refusals at render time.
+- **The reasoning layer is scored against a real model in CI**, not only against
+  a golden corpus. `python -m evals` proves the rules and the grounding checks
+  offline; `python -m evals.live` measures the one thing that corpus cannot see
+  — of the cases where the model actually answered, how many survived grounding.
+  An over-strict grounding check does not fail loudly, it routes every
+  investigation to the deterministic fallback while 20/20 golden cases keep
+  passing, and a prompt edit that degrades a real model has the same signature.
+  It **refuses rather than skips**: no configured model is exit 2, and a run
+  where every call failed is refused rather than reported as zero rejections,
+  which is what a total provider outage otherwise looks like.
 
 ### Performance
 
@@ -84,6 +113,15 @@ than a few minutes, and there is no user but the author. Read
   worker and scales linearly with workers on the agent path. The full envelope,
   including a throughput figure that was published wrong twice, is in
   `docs/PERFORMANCE_ENVELOPE.md`.
+- **One hour of continuous operation**: 1,168 investigations, 100% collecting
+  usable evidence, p50 0.26 s, resident memory flat (+0.8 MB/h on one worker
+  and +7.9 on the other, against 6-10 MB of total movement), 74% of cluster
+  reads served from the F18 cache, and Postgres growing at 87.9 MB/h before
+  retention collects anything.
+- The console's own bundle is 28.76 KB gzipped for the app chunk, and `App.tsx`
+  is 98 lines — the routing table and the sign-in gate. There is no HTTP client
+  library; the `fetch` wrapper that replaced axios saved more bytes than the
+  console's own code weighs.
 
 ### Breaking
 
@@ -115,5 +153,35 @@ pad the list. Each was found by *running* the system, not by reading it.
   comparing whichever cluster `current-context` happened to name, and ran
   nowhere: nothing in CI set the variable that enables it. Both fixed; it now
   runs on every push.
+- **An agent's evidence records were matched back to their requests by kind
+  alone**, and a collection wave routinely holds several reads of one kind
+  differing only by target — `LogsCollector` issues one `k8s.logs` per
+  problematic pod. Records were handed out in arrival order, so one pod's logs
+  were filed under another pod's name: **5.5% of pod-log entries over an hour
+  against a real agent**, counting only the ones detectable because the message
+  named a different pod. A mis-paired *success* is the same defect with no trace
+  at all — a diagnosis quoting the wrong container's output, with a citation.
+- **The baseline pod-log read asked for JSON.** `OutputFormat` defaults to it,
+  and that default decides whether the executor calls `json.loads`, so on the
+  kubeconfig path the read *failed for every pod that had anything to say* and
+  succeeded for the silent ones, whose empty output parsed as `{}`. Exactly
+  inverted: the pods whose logs matter are the crashing ones. kubectl exited 0
+  with an empty stderr, so the failure carried no reason. The agent path was
+  unaffected, which is why nothing compared them.
+- **Certificate renewal was unbounded below a certificate lifetime of 150
+  seconds.** The CA backdates `NotBefore` by five minutes for clock skew and
+  the renewal point counts that backdate as life, so the moment of renewal was
+  already past when the certificate was issued — and every check tick minted
+  another. Measured against a real agent: twelve certificates a minute,
+  indefinitely, each a CA signature and a row. The agent cannot detect this by
+  arithmetic, because a certificate records when it became *valid* and never
+  when it was *issued*, so it bounds what it can — attempts, not successes.
+- **M8a's routing and its refusal were both inert on a worker running no
+  gateway of its own** (F21), because the presence index and the enrolment
+  store were installed inside that branch of startup. Unreachable in the shipped
+  topology — one Deployment, one config, N replicas — and reachable by a fleet
+  mid-way through enabling `AGENT_GATEWAY_PORT`, where it is the cross-tenant
+  answer the refusal exists to prevent. Found by a soak that gave one worker a
+  gateway and not the other.
 
 [0.1.0]: https://github.com/ravisinghrajput95/ai-kubernetes-agent/releases/tag/v0.1.0

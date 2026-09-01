@@ -6,17 +6,23 @@ how strongly.
 
 ## Structure
 
-`src/App.tsx` holds the original panels and the `Dashboard` composition. New
-work lives in dedicated modules:
+`src/App.tsx` is **98 lines**: the authenticated routing table and the sign-in
+gate, and nothing else. Everything it used to hold lives in a dedicated module.
 
 | Path | Contains |
 |---|---|
+| `src/routes/` | One page per address, including `InvestigationPage` and `ReportsPage` |
 | `src/hooks/useInvestigationJob.ts` | Job submission, SSE, polling fallback, cancellation |
 | `src/lib/analysis.ts` | Grouping, filtering, ordering, formatting — no React |
+| `src/lib/remediation.ts` | The YAML, PR description and apply plan the remediation panel offers |
 | `src/services/http.ts` | JSON transport over `fetch` |
 | `src/components/` | Presentational panels |
 
-Pure logic is kept out of components so it can be tested without rendering.
+Pure logic is kept out of components so it can be tested without rendering, and
+that is not a style preference: `buildRemediationYaml` writes a manifest a
+person is invited to apply to a production cluster, and while it lived in
+`App.tsx` reaching it from a test meant rendering a panel, clicking a tab and
+reading a `<pre>` — so it had no tests at all. It has fifteen now.
 
 ## Bundle
 

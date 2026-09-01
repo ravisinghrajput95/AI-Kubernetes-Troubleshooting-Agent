@@ -690,21 +690,51 @@ M8a's own refusal and unlike the rate limiter. Found by verifying revocation
 against a live deployment, where the post-revoke investigation came back
 `provider=kubeconfig`.
 
-**Both the routing and the refusal require *this* worker to run a gateway,
-and that is a real limit rather than a subtlety.** The presence index is
-installed inside `if settings.agent_gateway_enabled` in `app/state.py`, so on a
-worker without one `get_agent_presence()` is `None`, `agent_affinity` returns
-the shared queue, and `select_provider` goes straight to `LocalKubectlProvider`
-— no presence lookup, no refusal. In the shipped topology this cannot happen:
-one Deployment, one config, N replicas, so either every worker has a gateway or
-none does. It *can* happen in a fleet mid-way through enabling
-`AGENT_GATEWAY_PORT`, and there the M8a guarantee is silently absent — tenant
-A's `prod` answered from a local context that merely shares the name, which is
-the exact harm the refusal exists to prevent. Found by a soak that gave the
-first worker a gateway and the second none: a third of investigations reported
-`provider=kubeconfig` with an agent attached and no refusal anywhere. Not
-fixed, because moving presence out of that branch changes startup wiring on a
-load-bearing path; recorded in `docs/PRODUCTION_READINESS.md`. With every
+**Neither the routing nor the refusal requires *this* worker to run a
+gateway, and making that true was F21.** The presence index and the enrolment
+store used to be installed inside `if settings.agent_gateway_enabled` in
+`app/state.py`, so on a worker without one `get_agent_presence()` was `None`,
+`agent_affinity` returned the shared queue, and `select_provider` went straight
+to `LocalKubectlProvider` — no presence lookup, no refusal, and no revocation
+check either. The shipped topology cannot reach it (one Deployment, one config,
+N replicas), but a fleet mid-way through enabling `AGENT_GATEWAY_PORT` can, and
+there the guarantee was silently absent: tenant A's `prod` answered from a local
+context that merely shares the name. Found by a soak that gave the first worker
+a gateway and the second none — a third of investigations reported
+`provider=kubeconfig` with an agent attached and no refusal anywhere.
+
+**The split is by dependency, not by feature.** `install_fleet_index()` is
+called from `build_state`, because presence is JSON in Redis and enrolment
+records are rows — neither needs grpc, which is the only thing the gateway flag
+was ever protecting against loading. What stays behind the flag, in *both*
+callers, is the local `AgentRegistry` lookup: collecting **through** an agent
+needs the stream, so it needs grpc. Refusing does not.
+
+Two things that fix had to avoid. `_agent_was_revoked` **refuses when it cannot
+read the store**, so moving it off the gateway flag put it on the single-process
+getting-started path, where `get_enrolment_store()` lazily builds a file store —
+an unreadable `AGENT_IDENTITY_DIR` would then have failed every investigation on
+the simplest deployment there is. It is gated on there being somewhere an agent
+could exist at all (`agent_gateway_enabled or distributed_state`). And
+`test_selection_does_not_load_grpc_when_no_gateway_is_configured` asserted that
+nothing under `app.gateway` was imported, which was the *package name* standing
+in for the *cost*; it now asserts on grpc itself, with a control proving the
+import watch can still see the gateway when there is one.
+
+**Verified by reproducing the misconfiguration, not only by unit test.** Two
+workers, one gateway between them, a real Go agent attached to the worker that
+has it, six investigations submitted to the worker that does not: **6/6
+refused**, each naming the holder. F21 reverted into the same harness: **6/6
+answered `provider=kubeconfig`** with the agent attached elsewhere. The mutant
+also showed a second symptom the unit tests cannot — `GET /agents` returned an
+empty worker attribution, because presence had never been installed at all.
+
+**What it costs**: a distributed fleet with no gateway anywhere now pays one
+`agent_certificates` read per investigation that reaches the fallback, where it
+previously paid none. That is the price of the fix rather than an oversight —
+the query is indexed and single-row against a table that is empty in such a
+deployment, and it is sub-millisecond beside a collection measured in hundreds.
+The shipped topology already paid it, because every worker there has a gateway. With every
 worker running a gateway, the same soak measured **100% agent-path collection
 across two workers** — the first live number for M8a routing, against
 synthetic ones before.
@@ -1250,7 +1280,34 @@ on upgrade that were previously kept** — see `docs/UPGRADE.md`.
 
 ### Frontend
 
-`src/App.tsx` still holds the original panels plus the `Dashboard` composition. **New work goes in `src/routes/`, `src/components/`, `src/hooks/`, and `src/lib/`** — do not grow `App.tsx` further. `InvestigatePage` was the last pre-redesign page living there and has moved to `src/routes/`; what remains is `InvestigationPage`, `ReportsPage`'s `HistoryTable`, and the old `Dashboard`.
+`src/App.tsx` is **98 lines and holds the shell only** — the authenticated
+routing table and the sign-in gate. **All work goes in `src/routes/`,
+`src/components/`, `src/hooks/`, and `src/lib/`.**
+
+The last split (1,053 → 98) was a *pure move*, verified the way the
+`history_service` split was: every extracted function compared byte-for-byte
+against its original, and the built bundle came back on the same content hash.
+Trimming the imports the move orphaned then took the app chunk from 28.94 KB
+gzipped to 28.76 — dead imports were not being tree-shaken away, which is
+exactly the kind of thing a passing `tsc -b` says nothing about (there is no
+`noUnusedLocals` here).
+What it corrected beyond size is a **backwards dependency** — `ReportsPage` and
+`routes.test.tsx` imported `HistoryTable` and `InvestigationPage` *from*
+`App.tsx`, so two routes reached into the shell that mounts them. Both now live
+in `src/routes/`.
+
+The remediation builders went to `src/lib/remediation.ts` and **gained their
+first tests in the move, which is the argument for it**: `buildRemediationYaml`
+writes a manifest a person is invited to apply to a production cluster, and
+reaching it used to mean rendering a panel, clicking a tab and reading a
+`<pre>`. Eight mutations against it, including the two that had already shipped
+— `diagnosis?.root_cause.toLowerCase()` guarding the diagnosis and not the
+field, and a Pod handed the Deployment manifest's `spec.template` nesting.
+
+Two components left entirely: `MultiClusterPanel` and `investigationEvidence`
+were referenced nowhere in `src/`, superseded by `FleetPage` and
+`lib/report.evidenceIndex`. Checked by grep **and** by the build, per the
+standing warning about stale "this is dead" notes.
 
 `/connect` (`ConnectClusterPage`) is the onboarding flow: name a cluster, mint an enrolment, copy the manifest, watch for the agent to check in. `AgentDot` renders agent reachability in three states — online, degraded, silent — and never in colour alone.
 
@@ -1333,7 +1390,7 @@ answers "what happens if you leave it on", which is the question
 docker run -d --name pg -e POSTGRES_PASSWORD=postgres -p 5433:5432 postgres:17-alpine
 docker compose up -d redis
 (cd agent && go build -o /tmp/k8s-agent ./cmd/agent)
-python scripts/soak_bench.py --minutes 60 --context kind-aiops-test --agent
+python scripts/soak_bench.py --minutes 60 --concurrency 2 --pause 12 --agent
 ```
 
 Four things are watched because each is a claim no short run can test: resident
@@ -1343,10 +1400,55 @@ the SSE and polling transports produce the same outcomes.
 
 **The vacuity guard is why the output is worth reading.** A soak of a platform
 doing nothing reports beautifully — flat memory, no errors, no leak — and every
-harness failure in this repository has had that shape. The run therefore
-*refuses* to publish unless a floor of investigations actually succeeded **and
-collected usable evidence**. Trends computed from fewer are withheld rather
-than printed.
+harness failure in this repository has had that shape. The run *refuses* to
+publish unless the platform was actually working, which takes **three**
+questions, because each admits a run the other two accept:
+
+| check | question | why the others miss it |
+|---|---|---|
+| volume | did enough happen to trend from? | a share is meaningless over ten runs |
+| share | was it *working*, or failing most of the time? | a floor cannot see a rate |
+| continuity | was it working *throughout*? | a rate cannot see when it stopped |
+
+**The first version had only the floor, and it published.** Docker Desktop
+killed the kind cluster four minutes into a 60-minute run; 81 investigations
+out of 1,172 collected usable evidence — a platform failing 93% of the time —
+and 81 cleared a floor of `max(20, minutes)`. Every memory trend in that report
+was taken from an hour of `Unable to connect`.
+
+The share alone would have caught that one. **Continuity is for the shape it
+cannot see**: offered load drops when a cluster dies slowly, so a run can hold a
+high success *rate* while measuring nothing after minute ten. It is the gap
+between usable investigations, and **both edges count** — the first version
+built its gap list only *between* good runs, so run 3's "last success at minute
+4 of 60" reported a longest gap of six seconds. That check was written the same
+day, looked right, and was inert; it was caught by driving the guard with the
+real run's shape rather than by reading it. Allowed gap is
+`max(5 minutes, 10% of the run)`.
+
+`tests/test_soak_guard.py` pins all three, each against a run the other two
+accept, plus the case that matters just as much: **a healthy hour must still
+publish.** An over-strict guard is not the safe direction here — it means no
+soak ever produces a number, which is indistinguishable from not running one.
+
+**The report says why things failed, and that is what let the first one look
+publishable.** "failed 1091" with no breakdown is a number; `1091x Unable to
+connect to the server` is a diagnosis, and it was in every one of those runs the
+whole time. Grouped by shape, the way `log_findings()` already grouped log
+noise, and printed **above** the guard — a refused run is precisely the one
+whose failures someone needs to read. Correlation ids collapse too: they are on
+every log line, and their four-character groups survive an eight-or-more hex
+rule, so a five-minute smoke run reported six findings at "1x" each — six
+investigations rather than six findings.
+
+**The headline run uses a production-like certificate TTL.**
+`--cert-ttl-hours` defaults to 0.5, which renews about three times in an hour:
+enough to say rotation survives repetition under load, which is the claim,
+without the CA becoming the subject. 0.025 (90 seconds) is kept as the
+pathological setting for stressing renewal itself — it mints a certificate every
+few seconds for the reason recorded under agent identity, and 120 renewals an
+hour measures the CA, not the platform. The shipped default is 90 days and would
+renew never.
 
 Four things it had to be taught, three of them by being wrong first:
 
@@ -1431,7 +1533,7 @@ It is also the discipline that decays first: a passing suite feels like
 evidence, and a mutation not run leaves no trace.
 
 ```bash
-python scripts/mutation_check.py          # ~4s, six mutations
+python scripts/mutation_check.py          # 26 mutations
 python scripts/mutation_check.py --list
 ```
 
