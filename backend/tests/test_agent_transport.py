@@ -486,16 +486,43 @@ class TestEveryCollectorAgrees:
         allocatable = metrics_module.allocatable_by_node(
             (local.data("k8s.nodes.raw", {}) or {}).get("items", [])
         )
+        # **Within one point, and that bound is arithmetic rather than a fudge.**
+        # The platform computes the percentage from the raw measurement; this
+        # test can only recompute it from `row["cpu"]`, which `format_cpu` has
+        # already rounded to whole millicores. When the raw value sits just
+        # under a boundary the two land either side of it: 299.5m of 4 cores is
+        # 7.4875% (7), renders as "300m", and recomputes as 7.5% (8). Exactly
+        # one point, never more, because that is all a half-millicore can move
+        # a percentage of a node.
+        #
+        # It shipped as an equality and failed in CI on a control-plane node
+        # reading exactly 300m — a flake in a required job, firing for a reason
+        # unrelated to the property under test.
+        #
+        # The budget costs nothing that matters, checked by mutating the
+        # *collector* rather than `percent()` — mutating the helper moves this
+        # test's own expectation with it, so it proves nothing. Dividing by the
+        # wrong capacity, deriving from memory instead of CPU, and an offset of
+        # two points are all still caught; only an offset of exactly one is not,
+        # and that is the whole of what was traded away.
         for rows in (remote_rows, local_rows):
             for row in rows:
                 capacity = allocatable.get(row["name"], {})
                 expected = metrics_module.percent(
                     metrics_module.parse_cpu(row["cpu"]), capacity.get("cpu_cores")
                 )
-                assert row["cpu_percent"] == (f"{expected}%" if expected is not None else "N/A"), (
+                if expected is None:
+                    assert row["cpu_percent"] == "N/A", (
+                        f"{row['name']} reports {row['cpu_percent']} with no allocatable "
+                        f"capacity to derive it from"
+                    )
+                    continue
+                actual = int(str(row["cpu_percent"]).rstrip("%"))
+                assert abs(actual - expected) <= 1, (
                     f"{row['name']} reports {row['cpu_percent']} for {row['cpu']} of "
-                    f"{capacity.get('cpu_cores')} cores — the percentage was not derived "
-                    f"from the usage beside it"
+                    f"{capacity.get('cpu_cores')} cores, where deriving it gives "
+                    f"{expected}% — the percentage was not derived from the usage "
+                    f"beside it"
                 )
 
     async def test_no_collector_needed_an_executor(self, connected_agent):
