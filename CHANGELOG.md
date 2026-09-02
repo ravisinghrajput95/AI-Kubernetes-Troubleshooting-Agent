@@ -12,6 +12,29 @@ to. A change that fixed a defect names the defect.
 
 ### Fixed
 
+- **F24: a pod with more than one container had no logs at all through an
+  agent.** Both log collectors send `all_containers`, which kubectl expands
+  client-side — read the pod, fetch each container's log, concatenate. The
+  agent had no such expansion, so it issued one read naming no container and
+  the API server answered `BadRequest: a container name must be specified`.
+  Sidecars are the common case, so an agent-reached cluster lost the single
+  most useful evidence a crash has while the same cluster read through a
+  kubeconfig kept it — silently, as a failed record inside an investigation
+  that succeeds.
+
+  The agent now performs the same expansion, with the pod read and every
+  per-container log read still resolved through `policy.Resolve`, so it adds no
+  capability that package would not already have allowed. kubectl's container
+  order — init containers first — was established against a live cluster rather
+  than assumed. Verified by reverting the defect into a live harness: with it
+  present the sidecar pod reads `a container name must be specified ... choose
+  one of: [app sidecar]` and no lines; with the fix, exactly what `kubectl logs
+  --all-containers=true` returns. A scoped differential over that pod gives 55
+  evidence records and zero status differences between the two providers.
+
+  Found by the parity check added for the `previous` defect below, which asks
+  whether a parameter the platform sends is one the agent reads at all.
+
 - **Previous-container logs were the current container's, through an agent.**
   `spec_for` serialised option booleans with Python's `str()`, so `previous`
   reached the agent as `"True"` where it compares literally against `"true"`.

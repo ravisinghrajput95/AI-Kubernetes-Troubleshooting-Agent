@@ -191,6 +191,13 @@ func resolveLogs(namespace, name string, parameters map[string]string) (Read, er
 		query.Set("previous", "true")
 		extra = append(extra, "--previous")
 	}
+	// Recorded, never queried. The API server has no `all_containers`
+	// parameter — kubectl expands the flag client-side into one read per
+	// container — so this belongs in the human-readable command and nowhere
+	// else. `AllContainers` below is what actually drives the expansion.
+	if parameters["all_containers"] == "true" {
+		extra = append(extra, "--all-containers=true")
+	}
 
 	suffix := ""
 	if len(extra) > 0 {
@@ -204,6 +211,23 @@ func resolveLogs(namespace, name string, parameters map[string]string) (Read, er
 		EquivalentCommand: fmt.Sprintf("kubectl logs %s -n %s%s", name, namespace, suffix),
 		Text:              true,
 	}, nil
+}
+
+// AllContainers reports whether a log read covers every container in the pod.
+//
+// The API server serves one container per read and answers a multi-container
+// pod with `BadRequest: a container name must be specified` when none is
+// named. kubectl hides that by expanding `--all-containers` on the client: it
+// reads the pod and fetches one log per container. The agent did not expand it
+// at all, so **every pod with a sidecar lost its logs entirely on the agent
+// path** while the same pod read through a kubeconfig kept them (F24).
+//
+// The decision lives here rather than in the collector because policy is what
+// decides what a read means. The collector performs the expansion, and each
+// read it issues is resolved back through `Resolve` — so the expansion cannot
+// reach any path this package would not have allowed on its own.
+func AllContainers(kind string, parameters map[string]string) bool {
+	return kind == "k8s.logs" && parameters["all_containers"] == "true"
 }
 
 func command(entry resource, name, scope string, query url.Values) string {

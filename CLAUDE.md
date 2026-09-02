@@ -1023,14 +1023,30 @@ What was wrong was a parameter, and nothing compared parameters.
 `kinds.go` actually reads and holds the platform's emitted set against them,
 with known-ignored keys listed with reasons the way `UNSERVED` lists unserved
 reads. `output` is on that list and is benign — the agent knows logs are text
-without being told. **`all_containers` is on it and is not** (F24): kubectl
-expands `--all-containers` client-side by reading the pod and fetching each
-container's log, while the agent issues one read with no `container`, and the
-API server answers a multi-container pod with `BadRequest: a container name
-must be specified`. **Any pod with a sidecar loses its logs entirely on the
-agent path.** Verified on a live two-container pod. Unfixed: it needs the agent
-to resolve one log read per container, which changes its one-spec-one-read
-shape and belongs in a change of its own.
+without being told. **`all_containers` was on it and was not** — that
+was F24, now fixed. kubectl expands `--all-containers` client-side by reading
+the pod and fetching each container's log; the agent issued one read naming no
+container, and the API server answers a multi-container pod with `BadRequest: a
+container name must be specified`, so **any pod with a sidecar lost its logs
+entirely on the agent path** while the same pod read through a kubeconfig kept
+them.
+
+`Collector.collectEveryContainer` performs the same expansion. Three things
+carry it: **every read still goes through `policy.Resolve`** — the pod read and
+each per-container log read alike — so the expansion adds no capability and
+cannot reach a path the policy package would have refused; **kubectl's
+container order, init containers first**, established against a live cluster
+rather than assumed, with a silent container contributing nothing and not being
+an error; and **the first container's error becomes the read's error**, which
+is what keeps `PodPreviousLogsCollector`'s mapping of "previous terminated"
+onto EMPTY working identically on both paths.
+
+Proved by reverting it into the live harness. With the defect present the
+sidecar pod's log entry reads `success: false` and `a container name must be
+specified for pod ..., choose one of: [app sidecar]`; with the fix it reads
+`APP-BOOT / FATAL-app-died / SIDECAR-PROXY-READY`, which is `kubectl logs
+--all-containers=true` byte for byte. A scoped differential over the same pod
+gives 55 records and **zero status differences** between the two providers.
 
 **A discovery client in the agent was considered and not built.** Every group
 version the table hardcodes (`apis/networking.k8s.io/v1`,

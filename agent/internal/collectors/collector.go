@@ -78,19 +78,11 @@ func (c *Collector) Collect(
 	command := read.EquivalentCommand
 	record.EquivalentCommand = &command
 
-	request := c.client.Get().AbsPath(read.Path)
-	for key, values := range read.Query {
-		for _, value := range values {
-			request = request.Param(key, value)
-		}
+	if policy.AllContainers(spec.GetKind(), spec.GetParameters()) {
+		return c.collectEveryContainer(ctx, spec, actor, record, read, started)
 	}
-	request = c.impersonated(request, actor)
 
-	// Raw bytes, deliberately: decoding into typed objects would drop fields
-	// this binary's compiled-in schema does not know and reorder keys on the
-	// way back out, so the same read would differ between an agent and the
-	// local path. See the note in the package README.
-	body, err := request.DoRaw(ctx)
+	body, err := c.perform(ctx, read, actor)
 	record.DurationMs = time.Since(started).Milliseconds()
 
 	if err != nil {
@@ -102,6 +94,167 @@ func (c *Collector) Collect(
 	record.Payload = wrap(body, read.Text)
 	record.Status = agentv1.EvidenceStatus_EVIDENCE_STATUS_OK
 	return record
+}
+
+// perform issues one resolved read and returns its raw body.
+//
+// Raw bytes, deliberately: decoding into typed objects would drop fields this
+// binary's compiled-in schema does not know and reorder keys on the way back
+// out, so the same read would differ between an agent and the local path. See
+// the note in the package README.
+//
+// The body is returned alongside the error because client-go reports `unknown`
+// for every error on a raw request and the API server's own sentence is in the
+// body — see `detailFor`.
+func (c *Collector) perform(
+	ctx context.Context,
+	read policy.Read,
+	actor *agentv1.Impersonation,
+) ([]byte, error) {
+	request := c.client.Get().AbsPath(read.Path)
+	for key, values := range read.Query {
+		for _, value := range values {
+			request = request.Param(key, value)
+		}
+	}
+	return c.impersonated(request, actor).DoRaw(ctx)
+}
+
+// collectEveryContainer serves a log read that names no container.
+//
+// The API server has one log endpoint per container and refuses a
+// multi-container pod that names none. kubectl expands `--all-containers`
+// client-side; this is the same expansion, and without it every pod with a
+// sidecar returned `BadRequest` and lost its logs entirely on the agent path
+// while keeping them on the kubeconfig path (F24).
+//
+// Three properties are load-bearing:
+//
+//   - **Every read still goes through `policy.Resolve`.** The pod read and each
+//     per-container log read are resolved exactly as a platform-issued spec
+//     would be, so this expansion cannot reach a path the policy package would
+//     have refused. It adds no capability; it spends reads the agent already
+//     serves.
+//   - **kubectl's container order, including init containers.** Verified
+//     against a live cluster: `--all-containers` returns the init container's
+//     output first, then the regular containers. A container that logged
+//     nothing contributes nothing and is not an error.
+//   - **The first error is the read's error, which is what kubectl does** and,
+//     more importantly, what keeps the platform's classification identical on
+//     both paths: `PodPreviousLogsCollector` maps "previous terminated" and
+//     "not found" onto EMPTY, and it can only do that if the sentence reaches
+//     it unchanged.
+func (c *Collector) collectEveryContainer(
+	ctx context.Context,
+	spec *agentv1.EvidenceSpec,
+	actor *agentv1.Impersonation,
+	record *agentv1.EvidenceRecord,
+	read policy.Read,
+	started time.Time,
+) *agentv1.EvidenceRecord {
+	namespace, name := targetOf(spec)
+
+	podRead, err := policy.Resolve("k8s.pods", namespace, name, nil)
+	if err != nil {
+		record.Status = agentv1.EvidenceStatus_EVIDENCE_STATUS_NOT_APPLICABLE
+		record.Detail = err.Error()
+		record.DurationMs = time.Since(started).Milliseconds()
+		return record
+	}
+
+	podBody, err := c.perform(ctx, podRead, actor)
+	if err != nil {
+		record.DurationMs = time.Since(started).Milliseconds()
+		record.Status = statusFor(err, podRead.Named)
+		record.Detail = detailFor(err, podBody)
+		return record
+	}
+
+	containers, err := containerNames(podBody)
+	if err != nil {
+		record.DurationMs = time.Since(started).Milliseconds()
+		record.Status = agentv1.EvidenceStatus_EVIDENCE_STATUS_FAILED
+		record.Detail = err.Error()
+		return record
+	}
+
+	// Parameters are copied rather than mutated: the spec's map is the
+	// caller's, and one container's name must not leak into the next read.
+	base := map[string]string{}
+	for key, value := range spec.GetParameters() {
+		base[key] = value
+	}
+
+	var combined []byte
+	for _, container := range containers {
+		parameters := map[string]string{}
+		for key, value := range base {
+			parameters[key] = value
+		}
+		parameters["container"] = container
+
+		containerRead, err := policy.Resolve("k8s.logs", namespace, name, parameters)
+		if err != nil {
+			record.DurationMs = time.Since(started).Milliseconds()
+			record.Status = agentv1.EvidenceStatus_EVIDENCE_STATUS_NOT_APPLICABLE
+			record.Detail = err.Error()
+			return record
+		}
+
+		body, err := c.perform(ctx, containerRead, actor)
+		if err != nil {
+			record.DurationMs = time.Since(started).Milliseconds()
+			record.Status = statusFor(err, containerRead.Named)
+			record.Detail = detailFor(err, body)
+			return record
+		}
+		combined = append(combined, body...)
+	}
+
+	record.DurationMs = time.Since(started).Milliseconds()
+	record.Payload = wrap(combined, read.Text)
+	record.Status = agentv1.EvidenceStatus_EVIDENCE_STATUS_OK
+	return record
+}
+
+// containerNames lists a pod's containers in the order kubectl reads them.
+//
+// Init containers first, then regular, then ephemeral — matching kubectl's own
+// iteration, so `--all-containers` output is in the same order through either
+// provider. Read out of the raw pod JSON rather than a typed object for the
+// same reason every other read here is raw.
+func containerNames(podBody []byte) ([]string, error) {
+	var pod struct {
+		Spec struct {
+			InitContainers []struct {
+				Name string `json:"name"`
+			} `json:"initContainers"`
+			Containers []struct {
+				Name string `json:"name"`
+			} `json:"containers"`
+			EphemeralContainers []struct {
+				Name string `json:"name"`
+			} `json:"ephemeralContainers"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(podBody, &pod); err != nil {
+		return nil, fmt.Errorf("could not read the pod to list its containers: %w", err)
+	}
+
+	names := []string{}
+	for _, group := range [][]struct {
+		Name string `json:"name"`
+	}{pod.Spec.InitContainers, pod.Spec.Containers, pod.Spec.EphemeralContainers} {
+		for _, container := range group {
+			if container.Name != "" {
+				names = append(names, container.Name)
+			}
+		}
+	}
+	if len(names) == 0 {
+		return nil, errors.New("the pod reported no containers to read logs from")
+	}
+	return names, nil
 }
 
 // impersonated applies the calling user's identity to a request.

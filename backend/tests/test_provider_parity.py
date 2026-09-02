@@ -350,24 +350,15 @@ def test_no_option_reaches_the_agent_as_a_python_repr():
 #
 # Known-ignored keys are listed with the reason, exactly as UNSERVED lists
 # unserved reads. The point of the list is that adding to it is a decision
-# somebody writes down, rather than a gap nobody can see.
+# somebody writes down, rather than a gap nobody can see — and the list is
+# checked in both directions, so an entry that stops being true fails too.
+# `all_containers` was on it for exactly as long as F24 was open: implementing
+# the expansion in the agent made this test fail until the entry came off.
 IGNORED_PARAMETERS: dict[str, str] = {
     "output": (
         "benign. The platform sends output=text for a log read; the agent does "
         "not read it because it already knows logs are text (`Text: true` in "
         "resolveLogs), so the two cannot disagree."
-    ),
-    "all_containers": (
-        "NOT benign, and unfixed — see F24. kubectl expands --all-containers "
-        "client-side by reading the pod and fetching each container's log. The "
-        "agent issues one read with no `container`, and the API server answers "
-        "a multi-container pod with `BadRequest: a container name must be "
-        "specified`, so the whole log read fails. Verified against a live "
-        "cluster on a two-container pod: kubectl returns both containers, the "
-        "agent's raw read returns the error. Any pod with a sidecar loses its "
-        "logs entirely on the agent path. Fixing it means the agent resolving "
-        "one log read per container, which changes its one-spec-one-read shape "
-        "and belongs in a change of its own rather than beside this one."
     ),
 }
 
