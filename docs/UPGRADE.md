@@ -178,6 +178,30 @@ rather than one.
 `disabled` is unchanged and still supported for local development. Nothing
 about `oidc` or `token` changes.
 
+#### Also in v0.2.0: the compose scale command grew a second file
+
+Not breaking for a deployment — `docker-compose.yml` is a local demonstration,
+not a shipped artefact — but it changes a command you may have scripted.
+
+`docker compose up --scale backend=3` no longer works from the base file
+alone, because the backend is published on a fixed `8000:8000` rather than the
+range `8000-8009:8000`. Use:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.scale.yml \
+    up --scale backend=3
+```
+
+The range was published on the belief that the first replica takes its low end,
+which Docker's allocator does not do — it keeps a cursor per range and walks
+forward on each allocation, wrapping at the top. The *first* `up` after a
+daemon start bound 8000 and the console's hardcoded `http://localhost:8000`
+worked; every recreate after that drifted, so the console reached nothing about
+nine runs in ten. A fixed port makes the single-replica path deterministic, and
+scaling — where no port can be predictable — moves to the override file, which
+carries the `docker compose port backend 8000` command that reports the real
+one.
+
 ### Upgrading into M6.5 (authorisation)
 
 **Every authenticated caller previously could do everything.**
