@@ -32,7 +32,7 @@ from app.collectors.base import CollectionContext, InvestigationScope
 from app.collectors.kubernetes import build_default_collectors
 from app.evidence.models import ResourceRef
 from app.providers.base import ProviderResult, ReadVerb, ResourceRequest
-from app.providers.remote_agent import kind_for
+from app.providers.remote_agent import kind_for, spec_for
 
 SCOPE = InvestigationScope(context="prod", namespace="payments")
 TARGET = ResourceRef(kind="Pod", name="web-0", namespace="payments")
@@ -250,4 +250,163 @@ def test_a_refusal_names_who_was_refused_on_both_paths():
     assert "isPlaceholder(message)" in source, (
         "the agent no longer filters client-go's 'unknown' placeholder, so it "
         "reaches the evidence record as if it were the server's reason"
+    )
+
+
+# The kind can be right and the read still wrong, because a kind is not the
+# whole request. `spec_for` also sends `options` as string parameters, and the
+# agent compares those literally — `parameters["previous"] == "true"` in
+# `agent/internal/policy/kinds.go`. Python's `str(True)` is `"True"`, so every
+# boolean option arrived as a value that test can never match.
+#
+# What that cost was not an error. Losing `previous` does not fail the log
+# read; the endpoint serves the *current* container instead. So the agent path
+# recorded the running container's output under `k8s.pod.logs.previous`, status
+# OK, counted as a usable read — evidence labelled "the container instance that
+# existed before the last restart" holding the one after it, on exactly the
+# CrashLoopBackOff investigations where the previous instance is the only thing
+# that says why it crashed.
+#
+# Found by diffing an agent-served investigation against a kubeconfig-served one
+# of the same namespace in the same minute, which is how the `OutputFormat.TEXT`
+# defect on the *baseline* log read was found. Nothing above caught it: those
+# tests hold each read against `kind_for()`, and the kind was correct.
+
+
+def _logs_read_with_previous() -> ResourceRequest:
+    for request in reads_issued():
+        if request.verb is ReadVerb.LOGS and "previous" in request.options:
+            return request
+    raise AssertionError(
+        "No collector issued a log read carrying `previous`, so the two tests "
+        "below prove nothing. `PodPreviousLogsCollector` is what sets it; if it "
+        "was renamed or dropped, re-anchor this rather than deleting it."
+    )
+
+
+def test_previous_logs_ask_the_agent_for_the_previous_container():
+    """The literal the agent compares against, not merely 'not True'.
+
+    Asserting `!= "True"` would pass for `"yes"`, `"1"` or `""` — every one of
+    which leaves the agent serving the current container exactly as the defect
+    did. The only value that works is the one `kinds.go` tests for.
+    """
+    spec = spec_for(_logs_read_with_previous())
+
+    assert spec.parameters["previous"] == "true", (
+        f"The platform sends previous={spec.parameters['previous']!r}. The agent "
+        f'tests `parameters["previous"] == "true"` and serves the *current* '
+        f"container when it does not match, filing it as previous-container logs "
+        f"with status OK."
+    )
+
+
+def test_no_option_reaches_the_agent_as_a_python_repr():
+    """The class, not just the instance.
+
+    `previous` is the only boolean the agent reads today, so a test naming only
+    it would go quiet the moment a collector adds another one. This holds every
+    parameter the platform actually emits.
+    """
+    specs = [spec_for(r) for r in reads_issued() if kind_for(r) is not None]
+
+    repr_valued = sorted(
+        (spec.kind, key, value)
+        for spec in specs
+        for key, value in spec.parameters.items()
+        if value in ("True", "False")
+    )
+    assert not repr_valued, (
+        f"These parameters reach the agent as Python reprs: {repr_valued}. The "
+        f"agent compares parameter strings literally, so it matches none of them "
+        f"and silently serves the read without the option."
+    )
+
+    # Vacuity guard, and it has to read the *options* rather than the finished
+    # parameters. `all_namespaces` and `output` are written into the spec as
+    # hardcoded literals that never pass through the boolean serialisation, so
+    # a guard counting `"true"` anywhere in `parameters` stays satisfied by them
+    # while every option boolean disappears — which is what it did on the first
+    # attempt, passing a mutation that removed all of them.
+    exercised = sorted(
+        {
+            key
+            for request in reads_issued()
+            for key, value in request.options.items()
+            if isinstance(value, bool)
+        }
+    )
+    assert exercised, (
+        "No collector emitted a boolean option, so the check above ran over no "
+        "value that boolean serialisation applies to."
+    )
+
+
+# A parameter the agent never reads is the same silent gap as a kind it does
+# not know, one level down: `spec_for` builds it, the wire carries it, the
+# agent resolves the read without it, and the record comes back OK describing
+# something other than what was asked for. `kind_for` cannot see this, and
+# neither could the two tests above before `all_containers` was looked for.
+#
+# Known-ignored keys are listed with the reason, exactly as UNSERVED lists
+# unserved reads. The point of the list is that adding to it is a decision
+# somebody writes down, rather than a gap nobody can see.
+IGNORED_PARAMETERS: dict[str, str] = {
+    "output": (
+        "benign. The platform sends output=text for a log read; the agent does "
+        "not read it because it already knows logs are text (`Text: true` in "
+        "resolveLogs), so the two cannot disagree."
+    ),
+    "all_containers": (
+        "NOT benign, and unfixed — see F24. kubectl expands --all-containers "
+        "client-side by reading the pod and fetching each container's log. The "
+        "agent issues one read with no `container`, and the API server answers "
+        "a multi-container pod with `BadRequest: a container name must be "
+        "specified`, so the whole log read fails. Verified against a live "
+        "cluster on a two-container pod: kubectl returns both containers, the "
+        "agent's raw read returns the error. Any pod with a sidecar loses its "
+        "logs entirely on the agent path. Fixing it means the agent resolving "
+        "one log read per container, which changes its one-spec-one-read shape "
+        "and belongs in a change of its own rather than beside this one."
+    ),
+}
+
+
+def test_every_parameter_the_platform_sends_is_one_the_agent_reads():
+    """The gap `kind_for` is one level too high to see.
+
+    Written after `previous` was found arriving as `"True"`. That one the agent
+    *did* read and merely failed to match; this asks the prior question — is the
+    key read at all — and the answer for `all_containers` is no.
+
+    A source tripwire, like the refusal test above: the agent's own tests cannot
+    know what the platform sends, and the platform's cannot run Go.
+    """
+    import re
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[2] / "agent/internal/policy/kinds.go").read_text()
+    consumed = set(re.findall(r'parameters\["([a-z_]+)"\]', source))
+    assert consumed, "no parameter reads found in kinds.go — re-anchor this test"
+
+    emitted = {
+        key
+        for request in reads_issued()
+        if kind_for(request) is not None
+        for key in spec_for(request).parameters
+    }
+    assert emitted, "no parameters were emitted, so this test examined nothing"
+
+    unread = sorted(emitted - consumed - set(IGNORED_PARAMETERS))
+    assert not unread, (
+        f"The platform sends {unread} and the agent reads none of them, so every "
+        f"agent-path read silently drops the option. Implement it in "
+        f"`agent/internal/policy/kinds.go`, or add it to IGNORED_PARAMETERS with "
+        f"the reason it is harmless."
+    )
+
+    stale = sorted(set(IGNORED_PARAMETERS) & consumed)
+    assert not stale, (
+        f"{stale} are listed as ignored but the agent now reads them. Remove "
+        f"them from IGNORED_PARAMETERS — a stale exception hides the next gap."
     )

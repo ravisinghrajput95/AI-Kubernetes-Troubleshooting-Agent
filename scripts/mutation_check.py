@@ -343,6 +343,40 @@ MUTATIONS = [
         tests="tests/test_provider_parity.py",
     ),
     Mutation(
+        name="previous-logs-ask-for-the-current-container",
+        why=(
+            "The agent compares its parameters literally "
+            '(`parameters["previous"] == "true"`), and Python\'s `str(True)` '
+            'is `"True"`, so the option never matched. Losing it does not '
+            "fail the read — the log endpoint serves the *current* container "
+            "instead — so the agent path filed the running container's output "
+            "under `k8s.pod.logs.previous` with status OK, on exactly the "
+            "CrashLoopBackOff investigations where the previous instance is the "
+            "only thing that says why it crashed, and counted it as a usable "
+            "read. Found by diffing an agent-served investigation against a "
+            "kubeconfig-served one of the same namespace in the same minute; "
+            "neither the kind tables nor the differential suite could see it."
+        ),
+        path="app/providers/remote_agent.py",
+        old="        parameters[str(key)] = _parameter_value(value)",
+        new="        parameters[str(key)] = str(value)",
+        tests="tests/test_provider_parity.py",
+    ),
+    Mutation(
+        name="previous-serialised-as-something-plausible",
+        why=(
+            "The same defect wearing a value that is not a Python repr. A test "
+            'asserting merely `!= "True"` passes for `"1"`, `"yes"` or '
+            '`""` — every one of which leaves the agent serving the current '
+            'container exactly as the defect did. Only the literal `"true"` '
+            "works, so that is what is asserted, and this is what proves it."
+        ),
+        path="app/providers/remote_agent.py",
+        old='        return "true" if value else "false"',
+        new='        return "1" if value else "0"',
+        tests="tests/test_provider_parity.py",
+    ),
+    Mutation(
         name="agent-404-on-a-list-is-not-empty",
         why=(
             "The agent mapped every 404 to EMPTY, which the platform counts as "

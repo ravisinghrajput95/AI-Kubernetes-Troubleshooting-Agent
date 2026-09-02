@@ -111,6 +111,38 @@ def _describe(target: evidence_pb2.ResourceRef) -> str:
     return target.name
 
 
+def _parameter_value(value: Any) -> str:
+    """Serialise one option for the wire.
+
+    Booleans are lowercase, and that is the whole of this function. The agent
+    reads its parameters as strings and compares them literally
+    (`parameters["previous"] == "true"`, `agent/internal/policy/kinds.go`),
+    while Python's `str(True)` is `"True"` — so a boolean option passed through
+    `str()` arrived as a value the agent tests for and never matches.
+
+    It silently disabled the only boolean the agent reads. `previous` is set by
+    exactly one collector, `PodPreviousLogsCollector`, and losing it does not
+    fail the read: the log endpoint simply serves the *current* container
+    instead, so the agent path recorded the running container's output under
+    `k8s.pod.logs.previous` with status OK. That is evidence labelled "the
+    container instance that existed before the last restart" holding the one
+    after it, cited as such, on the CrashLoopBackOff investigations where the
+    previous instance is the only thing that says why it crashed — and counted
+    as a usable read, so completeness rose rather than fell.
+
+    Found by putting an agent-served investigation beside a kubeconfig-served
+    one of the same namespace in the same minute and diffing evidence status by
+    id, which is how the `OutputFormat.TEXT` defect on the *baseline* log read
+    was found. Neither the differential suite nor `test_provider_parity.py` saw
+    it: the first compares the reads it names and this one is not among them,
+    the second holds every read against `kind_for()` and the kind was right.
+    What was wrong was a parameter, which nothing compared.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
 def spec_for(request: ResourceRequest) -> collection_pb2.EvidenceSpec:
     """Translate a request into a spec. Raises if there is no kind for it."""
     kind = kind_for(request)
@@ -139,7 +171,7 @@ def spec_for(request: ResourceRequest) -> collection_pb2.EvidenceSpec:
     if request.output is OutputFormat.TEXT:
         parameters["output"] = "text"
     for key, value in request.options.items():
-        parameters[str(key)] = str(value)
+        parameters[str(key)] = _parameter_value(value)
 
     return collection_pb2.EvidenceSpec(kind=kind, target=target, parameters=parameters)
 
