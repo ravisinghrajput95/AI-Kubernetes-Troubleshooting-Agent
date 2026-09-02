@@ -1,8 +1,14 @@
 # Two topologies in one file.
 #
 #   docker compose up --build
-#     Backend, console, Postgres and Redis. State is durable, and the backend
-#     can be scaled: `docker compose up --scale backend=3`.
+#     Backend, console, Postgres and Redis. State is durable, and the console
+#     reaches the backend on a fixed http://localhost:8000.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.scale.yml \
+#       up --scale backend=3
+#     The multi-worker demonstration. It needs the override because three
+#     replicas cannot share one host port — see that file for why the console's
+#     address stops being fixed once you scale.
 #
 #   Local development needs none of this. `uvicorn app.main:app --reload` with
 #   neither DATABASE_URL nor REDIS_URL set keeps jobs in process and reports on
@@ -43,9 +49,24 @@ services:
     build:
       context: ./backend
     ports:
-      # A range, not a single port, so `--scale backend=3` can bind them all.
-      # The first replica gets 8000, which is what the console points at.
-      - "8000-8009:8000"
+      # A single fixed port, because the console's bundle hardcodes
+      # http://localhost:8000 and this must agree with it on every run.
+      #
+      # This was a range (`8000-8009:8000`) until it was measured. Docker's
+      # port allocator does **not** hand a range's low end to the first
+      # replica: it keeps a cursor per range and walks forward on each
+      # allocation, wrapping at the top. So the *first* `up` on a given daemon
+      # published 8000 and the console worked — and every recreate after that
+      # drifted, 8001, 8002, ..., 8009, back to 8000. Measured over eleven
+      # consecutive up/down cycles, and confirmed against a never-used range,
+      # which starts at its low end and then walks identically.
+      #
+      # That is the worst available shape for a getting-started path: it works
+      # the first time you try it, which is when you write it down, and then
+      # silently stops, returning about one run in ten. Scaling moves to an
+      # override file rather than costing every single-replica user a console
+      # that cannot reach its backend.
+      - "8000:8000"
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
@@ -92,7 +113,10 @@ services:
     ports:
       - "3000:3000"
     environment:
-      react_PUBLIC_API_BASE_URL: http://localhost:8000
+      # Fixed, and it agrees with the backend's fixed 8000 above. Overridable
+      # because `docker-compose.scale.yml` publishes a range, where no replica
+      # reliably lands on 8000.
+      react_PUBLIC_API_BASE_URL: ${react_PUBLIC_API_BASE_URL:-http://localhost:8000}
     depends_on:
       - backend
 

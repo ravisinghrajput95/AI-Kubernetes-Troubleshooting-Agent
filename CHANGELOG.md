@@ -12,6 +12,41 @@ to. A change that fixed a defect names the defect.
 
 ### Fixed
 
+- **Previous-container logs were the current container's, through an agent.**
+  `spec_for` serialised option booleans with Python's `str()`, so `previous`
+  reached the agent as `"True"` where it compares literally against `"true"`.
+  The option was dropped, the log endpoint served the current container, and
+  the record was filed under `k8s.pod.logs.previous` with status OK — evidence
+  labelled "the container instance that existed before the last restart"
+  holding the one after it, cited as such, on the CrashLoopBackOff
+  investigations where the previous instance is the only thing that says why it
+  crashed. It counted as a usable read, so completeness rose rather than fell.
+  Booleans now serialise lowercase.
+
+  Found by diffing an agent-served investigation against a kubeconfig-served
+  one of the same namespace in the same minute — the way the `OutputFormat.TEXT`
+  defect on the baseline log read was found. One evidence status differed and
+  coverage read 39/48 against 40/48; after the fix, 57 records and no
+  difference at all. Neither the kind tables nor the differential suite could
+  see it: the kind was right and the parameter was wrong, and nothing compared
+  parameters. They are compared now, which immediately found F24 below.
+
+- **`docker compose up` published the backend on a port the console was not
+  reading.** The backend was published as the range `8000-8009:8000` on the
+  belief that the first replica takes the low end. Docker's allocator keeps a
+  cursor per range and walks forward on each allocation, wrapping at the top —
+  so the *first* `up` on a given daemon bound 8000 and the console worked, and
+  every recreate after that drifted to 8001, 8002, ..., back to 8000 about one
+  run in ten. Measured over eleven consecutive up/down cycles and confirmed
+  against a never-used range, which starts low and then walks identically.
+
+  That is the worst shape available for a getting-started path: it works the
+  first time you try it, which is when you write it down, and then silently
+  stops. The backend is now published on a fixed `8000:8000`, and the
+  multi-worker demonstration moves to `docker-compose.scale.yml`, where a
+  variable port is inherent and is documented with the command that reports it
+  rather than hidden.
+
 - **F23**: M8a's fail-open is countable. `k8sagent_agent_presence_failopen_total`
   plus `AgentPresenceUnreadableEnoughToMisroute`. The existing 10% rule is for
   routing being *broken*; `cluster_access_total` structurally cannot express a

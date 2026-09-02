@@ -64,7 +64,7 @@ python -m evals.live    # the same corpus, scored against the configured model
 
 Two values must be read at their seams rather than from the diagnosis, and both were wrong first: a failed call and a rejected answer both return `ai_generated: false` carrying the *deterministic fallback's own* grounding block, so the payload cannot tell an outage from a reasoning regression — the first version scored a total provider outage as twenty perfectly grounded answers.
 
-Docker: `docker compose up --build` starts the backend, console, Postgres and Redis. The image installs a pinned `kubectl` and compose mounts `~/.kube/config` read-only (override with `KUBECONFIG_FILE`). `docker compose up --scale backend=3` is the multi-worker demonstration. Local processes remain the getting-started path and need none of it.
+Docker: `docker compose up --build` starts the backend, console, Postgres and Redis. The image installs a pinned `kubectl` and compose mounts `~/.kube/config` read-only (override with `KUBECONFIG_FILE`). The backend is published on a **fixed** `8000:8000`, because the console's bundle hardcodes that address and Docker's port allocator walks a range rather than handing out its low end — as a range this worked on the first `up` after a daemon start and drifted on every recreate afterwards. `docker compose -f docker-compose.yml -f docker-compose.scale.yml up --scale backend=3` is the multi-worker demonstration; it restores the range, and that file documents how to find the port a replica actually got. Local processes remain the getting-started path and need none of it.
 
 Lint and format (from `backend/`, config in `ruff.toml`):
 
@@ -995,6 +995,43 @@ the mistake `ResourceMetricsCollector` already refused to make for `kubectl
 top`. Adding a kind means changing three places — `_KINDS`, `kinds.go`, and the
 ClusterRole in `app/api/agents.py`.
 
+**The kind can be right and the read still wrong, because a kind is not the
+whole request.** `spec_for` also sends `ResourceRequest.options` as string
+parameters, and the agent compares those literally
+(`parameters["previous"] == "true"`). Python's `str(True)` is `"True"`, so
+**every boolean option arrived as a value the agent tests for and never
+matches** — and the one boolean it reads is `previous`. Losing it does not fail
+the read: the log endpoint simply serves the *current* container. So the agent
+path recorded the running container's output under `k8s.pod.logs.previous`,
+status OK, counted toward completeness — evidence labelled "the container
+instance that existed before the last restart" holding the one after it, on
+exactly the CrashLoopBackOff investigations where the previous instance is the
+only thing that says why it crashed. Booleans now serialise lowercase in
+`_parameter_value`, which is the whole fix.
+
+Found the same way as the `OutputFormat.TEXT` defect on the *baseline* log
+read: an agent-served investigation beside a kubeconfig-served one of the same
+namespace in the same minute, diffed by evidence id and status. Before, one
+status differed and coverage read 39/48 against 40/48; after, **57 records and
+zero differences**. Neither the differential suite nor `test_provider_parity`
+could see it — the first compares the reads it names and this is not among
+them, the second held every read against `kind_for()` and the kind was correct.
+What was wrong was a parameter, and nothing compared parameters.
+
+**So parameters are compared now, and that found a second one.**
+`test_every_parameter_the_platform_sends_is_one_the_agent_reads` greps the keys
+`kinds.go` actually reads and holds the platform's emitted set against them,
+with known-ignored keys listed with reasons the way `UNSERVED` lists unserved
+reads. `output` is on that list and is benign — the agent knows logs are text
+without being told. **`all_containers` is on it and is not** (F24): kubectl
+expands `--all-containers` client-side by reading the pod and fetching each
+container's log, while the agent issues one read with no `container`, and the
+API server answers a multi-container pod with `BadRequest: a container name
+must be specified`. **Any pod with a sidecar loses its logs entirely on the
+agent path.** Verified on a live two-container pod. Unfixed: it needs the agent
+to resolve one log read per container, which changes its one-spec-one-read
+shape and belongs in a change of its own.
+
 **A discovery client in the agent was considered and not built.** Every group
 version the table hardcodes (`apis/networking.k8s.io/v1`,
 `apis/discovery.k8s.io/v1`, `apis/storage.k8s.io/v1`, `apis/batch/v1`,
@@ -1624,7 +1661,7 @@ It is also the discipline that decays first: a passing suite feels like
 evidence, and a mutation not run leaves no trace.
 
 ```bash
-python scripts/mutation_check.py          # 26 mutations
+python scripts/mutation_check.py          # 32 mutations
 python scripts/mutation_check.py --list
 ```
 

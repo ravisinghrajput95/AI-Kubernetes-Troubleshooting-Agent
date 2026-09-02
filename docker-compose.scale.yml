@@ -1,0 +1,33 @@
+# The multi-worker demonstration.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.scale.yml \
+#       up --scale backend=3
+#
+# Three replicas cannot share one host port, so the fixed `8000:8000` of the
+# base file becomes a range again here. That is the only reason this file
+# exists, and it carries the cost the base file refuses to pay by default:
+#
+# **The console's address is no longer fixed.** Docker's port allocator keeps a
+# cursor per range and walks forward on each allocation, wrapping at the top —
+# it does not hand the low end to the first replica — so none of the three
+# replicas reliably lands on 8000, and the console's hardcoded
+# http://localhost:8000 will usually reach nothing. Ask compose which port a
+# replica actually got, and point the console at it:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.scale.yml \
+#       port backend 8000
+#
+# then rebuild the console against that address:
+#
+#   react_PUBLIC_API_BASE_URL=http://localhost:<port> docker compose \
+#       -f docker-compose.yml -f docker-compose.scale.yml up -d --build frontend
+#
+# Every replica serves every investigation — that is the point of the
+# demonstration — so which one the console talks to does not matter.
+#
+# `!override` replaces the base file's port list rather than appending to it;
+# appending would publish both and collide. It needs Compose v2.24 or newer.
+services:
+  backend:
+    ports: !override
+      - "8000-8009:8000"
