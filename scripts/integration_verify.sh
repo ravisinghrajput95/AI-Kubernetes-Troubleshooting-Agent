@@ -228,7 +228,27 @@ EOF
   # product — the same reason the observability fixtures are captured from a
   # real backend instead of written by hand.
   step "granting admin to $ADMIN_SUBJECT so it may enrol a cluster"
-  POD="$(k -n "$NAMESPACE" get pod -l app.kubernetes.io/name=k8s-agent -o name | head -1)"
+  # This was `-o name | head -1`, and it took the job down with exit 141 on a
+  # release commit that touched nothing near it.
+  #
+  # 141 is 128+13, SIGPIPE. `head -1` closes the pipe after the first line, and
+  # if the writer is still writing it dies of SIGPIPE — which `set -o pipefail`
+  # then promotes to the script's exit status. Measured directly: under
+  # pipefail, `seq 1 2000000 | head -1` exits 141 every time and `seq 1 3 |
+  # head -1` exits 0 every time. The race is whether the writer finishes before
+  # `head` goes away, which is why two replicas' worth of output passed for
+  # months and lost once under CI load.
+  #
+  # That the pipeline is the source is deduction rather than measurement — the
+  # step logged its heading and then failed, and this was the only pipeline in
+  # it — but the fix costs nothing and removes the only candidate: jsonpath asks
+  # the API server for one name and needs no pipe at all.
+  POD="$(k -n "$NAMESPACE" get pod -l app.kubernetes.io/name=k8s-agent \
+    -o jsonpath='{.items[0].metadata.name}')"
+  if [ -z "$POD" ]; then
+    echo "no k8s-agent pod to grant through — the release is not running" >&2
+    exit 1
+  fi
   k -n "$NAMESPACE" exec "$POD" -- \
     python -m app.rbacctl grant --subject "$ADMIN_SUBJECT" --role admin
 
