@@ -87,10 +87,23 @@ def test_the_readme_does_not_understate_what_exists(claim, why):
 
 
 def test_the_changelog_exists_and_names_the_current_release():
+    """Held against the version the application actually serves.
+
+    This asserted the literal `"0.1.0"` until v0.2.0, which passed the moment
+    that section existed and then said nothing forever — a changelog lagging a
+    release is exactly the stale-doc failure the rest of this file exists to
+    catch, and the check meant to catch it could not. Reading `app.version`
+    means bumping one without the other fails here.
+    """
+    from app.main import app
+
     changelog = ROOT / "CHANGELOG.md"
     assert changelog.exists(), "a tagged project needs a changelog"
     text = changelog.read_text()
-    assert "0.1.0" in text
+    assert f"## [{app.version}]" in text, (
+        f"the app reports version {app.version} and the changelog has no "
+        f"section for it, so the release notes lag what is deployed"
+    )
     assert "No production deployment exists" in text, (
         "the changelog must keep saying this while it is true; it is the single "
         "most important thing a reader deciding whether to trust a release needs"

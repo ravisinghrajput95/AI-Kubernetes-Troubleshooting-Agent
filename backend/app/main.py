@@ -52,7 +52,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title=settings.service_name,
-        version="0.1.0",
+        version="0.2.0",
         description="AI Kubernetes troubleshooting agent API foundation.",
         lifespan=lifespan,
     )

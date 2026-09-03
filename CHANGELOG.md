@@ -8,7 +8,30 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
-## [Unreleased]
+## [0.2.0] — 2026-09-03
+
+One breaking change and five defects, and **every one of the five was found by
+running the platform rather than by reading or testing it** — two by the
+one-hour soak, three by standing a live cluster up and using it. The suite was
+green throughout, and stayed green while three of these were live.
+
+Two of them are the same shape and worth naming as a class: an agent-path read
+that came back describing something other than what was asked for, while the
+identical read through a kubeconfig was correct. Neither was visible to the
+kind tables or to the differential suite, because in both cases the *kind* was
+right and what was wrong was a **parameter** — and nothing compared parameters.
+Something does now. It found the second defect within minutes of being written,
+and then objected to its own stale exception the moment that fix landed.
+
+The method behind both is worth more than either fix: run an agent-served
+investigation and a kubeconfig-served one against the same namespace in the
+same minute, and diff the evidence by id and status. That diff has now produced
+three defects across two sessions, and it is the first thing to reach for with
+a live cluster.
+
+The breaking change is `AUTH_MODE` losing its default. Read `docs/UPGRADE.md`
+before upgrading — every claim in that section has now been checked by running
+it, including the chart's refusal at `helm template` and both compose paths.
 
 ### Fixed
 
