@@ -147,10 +147,17 @@ Not vulnerabilities to report — documented limitations.
   F19; this bullet outlived it. Left visible rather than deleted, because a
   stale security claim is the same defect as a stale "this is dead" note: it
   invites a reader to plan around a gap that is not there.
-- **Peak parse memory is proportional to cluster size** on the kubeconfig path:
-  kubectl assembles a whole list before writing it. Item counts are capped and
-  truncation is recorded as an evidence gap, but the parse ceiling needs a
-  streaming client.
+- **Peak parse memory is proportional to cluster size, on both providers.**
+  kubectl assembles a whole list before writing it, and the agent path is not
+  exempt: `decode_payload` runs `json.loads` over the entire payload before
+  anything caps it. Item counts *are* capped on both paths now and truncation is
+  recorded as an evidence gap either way (F25 — until v0.2.0 the cap applied to
+  the kubeconfig path alone), but capping happens after the document has been
+  built, so it bounds the stored payload and not the spike. That needs a
+  streaming client. Measured only on the kubeconfig path — 5.9 MB at 2,000 pods,
+  29.7 MB at 10,000, 74.3 MB at 25,000 (`python scripts/payload_bench.py
+  --parse-scan`); the agent path has the same shape by construction and has not
+  been measured.
 
 ## Security-relevant tests
 
