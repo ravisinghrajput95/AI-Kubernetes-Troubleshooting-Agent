@@ -377,6 +377,40 @@ MUTATIONS = [
         tests="tests/test_provider_parity.py",
     ),
     Mutation(
+        name="agent-list-reads-are-uncapped",
+        why=(
+            "F5's ceiling lived inside `KubectlExecutor`, so it applied to the "
+            "kubeconfig path and nowhere else. `RemoteAgentProvider` carried a "
+            "`_truncations` list that was initialised and never appended to — "
+            "it existed to satisfy the protocol — so an agent-reached cluster "
+            "was read with no ceiling at all and `collection_limits.truncated` "
+            "reported `false` for a read that had never been bounded. Measured "
+            "live at MAX_LIST_ITEMS=3 on a ten-pod namespace: kubeconfig "
+            "returned 3 pods and four truncation records, the agent returned 10 "
+            "and none. The same cluster read two ways disagreed about how many "
+            "pods it has, and the transport real fleets use was the unbounded "
+            "one. This removes the cap from the agent path again."
+        ),
+        path="app/providers/remote_agent.py",
+        old="            data, truncation, _total = cap_items(data, command, settings.max_list_items)",
+        new="            truncation = None",
+        tests="tests/test_list_limit_parity.py",
+    ),
+    Mutation(
+        name="agent-truncation-is-silent",
+        why=(
+            "The half that makes the evidence lie rather than merely shrink. A "
+            "capped read that records nothing is indistinguishable from a "
+            "complete read of a smaller cluster — which is exactly what "
+            "`truncated: false` was claiming — so the cap and its record are "
+            "two separate things to get wrong and this is the second."
+        ),
+        path="app/providers/remote_agent.py",
+        old="                self._truncations.append(truncation)",
+        new="                pass  # mutation: capped, and said nothing",
+        tests="tests/test_list_limit_parity.py",
+    ),
+    Mutation(
         name="agent-404-on-a-list-is-not-empty",
         why=(
             "The agent mapped every 404 to EMPTY, which the platform counts as "

@@ -17,7 +17,9 @@ from typing import Any
 
 from loguru import logger
 
+from app.core.config import settings
 from app.gateway.session import AgentSession
+from app.kubernetes.list_limit import cap_items
 from app.providers.base import (
     OutputFormat,
     ProviderResult,
@@ -279,11 +281,15 @@ class RemoteAgentProvider:
                 )
                 continue
 
-            results.append(self._to_result(records.pop(0)))
+            results.append(self._to_result(records.pop(0), requests[position]))
 
         return results
 
-    def _to_result(self, record: evidence_pb2.EvidenceRecord) -> ProviderResult:
+    def _to_result(
+        self,
+        record: evidence_pb2.EvidenceRecord,
+        request: ResourceRequest | None = None,
+    ) -> ProviderResult:
         from app.wire.codec import decode_payload
 
         command = record.equivalent_command if record.HasField("equivalent_command") else ""
@@ -305,6 +311,37 @@ class RemoteAgentProvider:
             # format stays uniform; unwrap it back to what the engine expects.
             text = str(payload["text"])
             data = None
+        elif request is not None and request.is_list:
+            # `MAX_LIST_ITEMS` applies here too, and until this line it did not.
+            # `_truncations` was initialised and never appended to — it existed
+            # to satisfy the protocol — so an agent-reached cluster was read
+            # with no ceiling and `collection_limits.truncated` reported `false`
+            # for a read that had never been bounded. Measured at
+            # MAX_LIST_ITEMS=3 against a ten-pod namespace: the kubeconfig path
+            # returned 3 pods and four truncation records, this one returned 10
+            # and none, so the same cluster investigated two ways disagreed
+            # about how many pods it has and only one of them was bounded.
+            #
+            # **Gated on `request.is_list`, which is the parity rule**, not on
+            # the payload merely having an `items` key. `kubectl top` is text on
+            # the kubeconfig path — so `_cap_items` never sees it and never caps
+            # it — while through an agent the same read is a metrics.k8s.io list
+            # that does have `items`. Capping on shape alone therefore truncated
+            # pod metrics on one provider and not the other: a fresh divergence
+            # in the opposite direction, introduced by the fix for this one, and
+            # caught only because a live run came back with five truncation
+            # records against the kubeconfig path's four. `is_list` is the
+            # counterpart of the executor's `_is_list_read`, so both providers
+            # bound exactly the same set of reads.
+            data, truncation, _total = cap_items(data, command, settings.max_list_items)
+            if truncation is not None:
+                logger.warning(
+                    "Capping an agent list response at {limit} of {total} items: {command}",
+                    limit=truncation["retained"],
+                    total=truncation["returned"],
+                    command=command or "(no command recorded)",
+                )
+                self._truncations.append(truncation)
 
         return ProviderResult(
             success=True,

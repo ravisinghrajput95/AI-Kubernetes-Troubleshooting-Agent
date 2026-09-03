@@ -8,6 +8,41 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
+## [Unreleased]
+
+### Fixed
+
+- **F25: `MAX_LIST_ITEMS` did not apply on the agent path.** The cap lived
+  inside `KubectlExecutor`, so it bounded the kubeconfig path and nothing else;
+  `RemoteAgentProvider._truncations` was initialised and never appended to,
+  existing only to satisfy the protocol. An agent-reached cluster was therefore
+  read with no ceiling, and `collection_limits.truncated` reported `false` for
+  a read that had never been bounded — so the memory envelope the platform
+  publishes did not hold on the transport it is built around for real fleets,
+  and the same cluster investigated two ways disagreed about how many pods it
+  has.
+
+  Measured at `MAX_LIST_ITEMS=3` against a ten-pod namespace: kubeconfig gave
+  `total_pods: 3`, `truncated: true` and four truncation records naming
+  returned and retained; the agent gave `total_pods: 10`, `truncated: false`
+  and none. After the fix both give four identical records.
+
+  The rule now lives in one place, `app/kubernetes/list_limit.cap_items`, which
+  both providers call — two implementations of one rule drift.
+
+  **The first version of the fix introduced a divergence in the opposite
+  direction**, and the live run is what caught it: gated on the payload merely
+  having an `items` key, it also truncated `kubectl top`, which is text on the
+  kubeconfig path and a metrics.k8s.io list through an agent. That run reported
+  five truncation records against the kubeconfig path's four. It is now gated
+  on `request.is_list`, the counterpart of the executor's own `_is_list_read`,
+  so both providers bound exactly the same set of reads.
+
+  Found by diffing the recorded `equivalent_command` of an agent-served
+  investigation against a kubeconfig-served one after the status diff came back
+  clean across four scopes — the kubeconfig reads carried `--chunk-size=500`
+  and the agent's carried no limit at all.
+
 ## [0.2.0] — 2026-09-03
 
 One breaking change and five defects, and **every one of the five was found by

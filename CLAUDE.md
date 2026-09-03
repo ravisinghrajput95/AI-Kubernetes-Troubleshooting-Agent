@@ -1018,6 +1018,38 @@ could see it — the first compares the reads it names and this is not among
 them, the second held every read against `kind_for()` and the kind was correct.
 What was wrong was a parameter, and nothing compared parameters.
 
+**And comparing what each provider *recorded* found a third (F25).** With
+statuses identical across four scopes, the next thing to diff was the
+`equivalent_command` on each record — and the kubeconfig reads carried
+`--chunk-size=500` where the agent's carried no limit at all, which raised the
+question of whether anything bounded them. Nothing did.
+`MAX_LIST_ITEMS` lived inside `KubectlExecutor`, so it applied to the
+kubeconfig path and nowhere else; `RemoteAgentProvider._truncations` was
+initialised and **never appended to**, existing only to satisfy the protocol.
+Measured at `MAX_LIST_ITEMS=3` against a ten-pod namespace: kubeconfig reported
+`total_pods: 3`, `truncated: true` and four truncation records; the agent
+reported `total_pods: 10`, `truncated: false` and none. So the ceiling
+`docs/PERFORMANCE_ENVELOPE.md` sizes the platform's memory on did not hold on
+the transport built for real fleets, and `collection_limits.truncated: false`
+was being reported for a read that had never been bounded.
+
+The rule now lives in `app/kubernetes/list_limit.cap_items` and both providers
+call it — one rule, because two implementations of it drift. It sits under
+`app/kubernetes/` rather than `app/providers/` because `app/providers/__init__`
+imports `local_kubectl`, which imports the executor, so the other direction is
+a circular import.
+
+**The fix introduced a second divergence and the live run caught it, which is
+the part worth remembering.** Gated on the payload merely having an `items`
+key, the cap also truncated `kubectl top` — text on the kubeconfig path, and so
+never capped there, but a metrics.k8s.io list through an agent. The first
+verified run came back with *five* truncation records against the kubeconfig
+path's four, and the fifth was pod metrics. It is now gated on
+`request.is_list`, the counterpart of the executor's `_is_list_read`, so both
+providers bound exactly the same set of reads; a repeat run gives four records
+each and identical sets. A 5-versus-4 difference is precisely the kind of thing
+it is tempting to wave at.
+
 **So parameters are compared now, and that found a second one.**
 `test_every_parameter_the_platform_sends_is_one_the_agent_reads` greps the keys
 `kinds.go` actually reads and holds the platform's emitted set against them,

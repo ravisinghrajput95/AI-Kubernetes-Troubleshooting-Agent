@@ -10,6 +10,7 @@ from loguru import logger
 from app.auth.models import Principal
 from app.core.config import settings
 from app.kubernetes.command_policy import assert_read_only
+from app.kubernetes.list_limit import cap_items
 
 
 @dataclass
@@ -106,34 +107,28 @@ class KubectlExecutor:
         return [f"--chunk-size={settings.kubectl_chunk_size}"]
 
     def _cap_items(self, data: Any, command: list[str]) -> tuple[Any, bool, int]:
-        """Cap a list response, recording that it happened."""
-        if not isinstance(data, dict):
-            return data, False, 0
+        """Cap a list response, recording that it happened.
 
-        items = data.get("items")
-        if not isinstance(items, list):
-            return data, False, 0
-
-        total = len(items)
-        limit = settings.max_list_items
-        if limit <= 0 or total <= limit:
+        The rule itself is `app.providers.list_limit.cap_items`, shared with the
+        agent provider — which applied no cap at all until that was extracted,
+        so the same cluster read two ways disagreed about how many pods it had.
+        What stays here is this executor's own bookkeeping: the audit lock,
+        because collectors run in worker threads, and the warning line.
+        """
+        rendered = " ".join(command)
+        data, truncation, total = cap_items(data, rendered, settings.max_list_items)
+        if truncation is None:
             return data, False, total
 
         logger.warning(
             "Capping list response at {limit} of {total} items: {command}",
-            limit=limit,
+            limit=truncation["retained"],
             total=total,
-            command=" ".join(command),
+            command=rendered,
         )
         with self._audit_lock:
-            self.truncations.append(
-                {
-                    "command": " ".join(command),
-                    "returned": total,
-                    "retained": limit,
-                }
-            )
-        return {**data, "items": items[:limit]}, True, total
+            self.truncations.append(truncation)
+        return data, True, total
 
     def run(self, args: list[str], parse_json: bool = False) -> KubectlResult:
         assert_read_only(args)
