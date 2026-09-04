@@ -1009,6 +1009,32 @@ exactly the CrashLoopBackOff investigations where the previous instance is the
 only thing that says why it crashed. Booleans now serialise lowercase in
 `_parameter_value`, which is the whole fix.
 
+**That diff is now `scripts/provider_diff.py` rather than a sentence telling
+you to do it by hand.** It captures one investigation per provider — you connect
+or stop the agent between the two, because that is what decides which provider
+serves a cluster — and compares them three ways, because each net has caught
+something the other two missed: **status** (found the `OutputFormat.TEXT`
+defect), **command options** (found F25, after status was clean across four
+scopes), and **content**, meaning the structure and resource identities of each
+derived section (the net a *successful* read of the wrong container slips
+through). Rendering-only flags are ignored by name with reasons, the way
+`test_provider_parity.py` names the parameters the agent does not read — the
+first version reported 34 differences of which 33 were cosmetic, and a harness
+that cries wolf gets skipped exactly like a flaky required job.
+
+**It refuses to report a clean comparison that means nothing.** Two captures
+from the same provider, or either one with no usable evidence, are exit 2 and a
+refusal rather than a row of zeros. That is not hypothetical: Docker Desktop
+took the cluster out mid-session and both providers returned eleven records of
+`Unable to connect` — every status matched, every command matched, every section
+was structurally identical, and the run was worth nothing.
+
+**Churn is not divergence, and the way to tell is to run it twice.** A real
+divergence is directional and repeats; churn swaps sides. A flapping OOMKilled
+deployment appeared only under the agent in one run and only under the
+kubeconfig in the next, which is what classified it. Measured clean on 57 and 61
+records across two scopes after F25.
+
 Found the same way as the `OutputFormat.TEXT` defect on the *baseline* log
 read: an agent-served investigation beside a kubeconfig-served one of the same
 namespace in the same minute, diffed by evidence id and status. Before, one
