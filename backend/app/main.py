@@ -20,6 +20,7 @@ from app.core.correlation import (
 )
 from app.core.logging import configure_logging
 from app.core.readiness import get_readiness, reset_readiness
+from app.core.version import VERSION
 from app.state import build_state, start_agent_gateway, start_retention
 
 
@@ -52,7 +53,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title=settings.service_name,
-        version="0.2.0",
+        version=VERSION,
         description="AI Kubernetes troubleshooting agent API foundation.",
         lifespan=lifespan,
     )

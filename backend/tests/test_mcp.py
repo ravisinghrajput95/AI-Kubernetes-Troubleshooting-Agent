@@ -24,6 +24,7 @@ from app.authz.resolver import reset_resolver
 from app.authz.routes import COSTED_PERMISSIONS
 from app.authz.store import FileMemberStore, set_member_store
 from app.core.config import settings
+from app.core.version import VERSION
 from app.main import app
 from app.mcp import TOOLS, Tool, get_tool
 from app.ratelimit import InMemoryRateLimiter, set_rate_limiter
@@ -187,6 +188,16 @@ class TestTheProtocol:
         assert result["protocolVersion"]
         assert "tools" in result["capabilities"]
         assert result["serverInfo"]["name"]
+
+        # The version an MCP client is told, held against the one the platform
+        # actually is. It was hardcoded `"1.0.0"` here while `/openapi.json`
+        # served `0.2.0` — a version this project has never released — and this
+        # assertion was `serverInfo["name"]` alone, so nothing objected. An
+        # agent gating on the handshake, or a person reading it out of a log,
+        # got a wrong answer from a public surface.
+        assert result["serverInfo"]["version"] == VERSION, (
+            f"MCP announces {result['serverInfo']['version']!r} while the platform is {VERSION!r}"
+        )
 
     def test_a_notification_gets_no_reply(self, api):
         """Replying to a notification is a protocol violation some clients

@@ -12,6 +12,21 @@ to. A change that fixed a defect names the defect.
 
 ### Fixed
 
+- **MCP announced a version the project has never released.**
+  `app/mcp/server.py` hardcoded `serverInfo.version: "1.0.0"` while
+  `/openapi.json` served `0.2.0`, so an agent gating on the handshake — or a
+  person reading it out of a log — got a wrong answer from a public surface.
+  Nothing objected because the MCP test asserted `serverInfo["name"]` alone and
+  never looked at the version.
+
+  There is now one version, `app/core/version.VERSION`, read by both the
+  FastAPI app and the MCP handshake — the two copies had already drifted, which
+  is the argument. `tests/test_documentation.py` holds it against a matching
+  `CHANGELOG.md` section and `tests/test_mcp.py` holds the handshake against
+  it, so a bump without release notes fails and a release without a bump fails.
+
+  Found by exercising the MCP surface live rather than by reading it.
+
 - **F25: `MAX_LIST_ITEMS` did not apply on the agent path.** The cap lived
   inside `KubectlExecutor`, so it bounded the kubeconfig path and nothing else;
   `RemoteAgentProvider._truncations` was initialised and never appended to,

@@ -29,6 +29,7 @@ from loguru import logger
 from app.auth.models import Principal
 from app.authz.dependencies import grant_for
 from app.authz.routes import is_costed
+from app.core.version import VERSION
 from app.mcp.tools import PROTOCOL_VERSION, SERVER_NAME, TOOLS, get_tool
 
 # JSON-RPC 2.0 reserved codes, plus the one application code this uses.
@@ -73,7 +74,7 @@ async def handle(message: dict[str, Any], principal: Principal) -> dict[str, Any
             {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": SERVER_NAME, "version": "1.0.0"},
+                "serverInfo": {"name": SERVER_NAME, "version": VERSION},
             },
         )
 
