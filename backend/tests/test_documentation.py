@@ -86,6 +86,54 @@ def test_the_readme_does_not_understate_what_exists(claim, why):
     assert claim not in README.read_text(), f"stale README claim {claim!r}: {why}"
 
 
+def test_the_console_listens_for_every_event_the_stream_sends():
+    """The console must register a listener for each name the server emits.
+
+    `investigate.py` writes `event: <type>` on every frame, and a browser routes
+    a *named* event only to a listener for that name — `onmessage` fires solely
+    for the default, unnamed type. The console registered `onmessage` alone, so
+    the stream opened, delivered nothing, errored, and fell back to polling.
+    Every investigation it ever displayed was polled, and the only symptom was
+    the "polling" tag appearing on a healthy run.
+
+    Nothing could see it. `docs/INVESTIGATION_API.md` documented the right
+    usage all along; the frontend's own tests passed because their
+    `FakeEventSource.emit()` called `onmessage` directly, modelling a wire the
+    server does not produce; and `integration_verify.sh` proves the *server*
+    streams, with curl, which has no such dispatch rule.
+
+    So this holds the console's list against the documented one. A type added
+    to the server and not to the console goes back to being dropped in silence.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+
+    documented = set(
+        re.findall(
+            r"`([a-z]+)`",
+            re.search(
+                r"Event types: (.*?)\. A `: keepalive`",
+                (root / "docs/INVESTIGATION_API.md").read_text(),
+                re.S,
+            ).group(1),
+        )
+    )
+    assert documented, "could not parse the event types out of INVESTIGATION_API.md"
+
+    hook = (root / "frontend/src/hooks/useInvestigationJob.ts").read_text()
+    block = re.search(r"STREAM_EVENT_TYPES = \[(.*?)\] as const", hook, re.S)
+    assert block, "STREAM_EVENT_TYPES is gone from the hook; re-anchor this test"
+    registered = set(re.findall(r'"([a-z]+)"', block.group(1)))
+
+    assert registered == documented, (
+        f"the console listens for {sorted(registered)} but the stream sends "
+        f"{sorted(documented)}; the difference is delivered to nothing and the "
+        f"console silently falls back to polling"
+    )
+
+
 def test_the_changelog_exists_and_names_the_current_release():
     """Held against the version the application actually serves.
 

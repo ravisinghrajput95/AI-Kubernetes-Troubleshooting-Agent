@@ -4,15 +4,39 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useInvestigationJob } from "./useInvestigationJob";
 import * as api from "../services/api";
 
-/** Minimal controllable EventSource stand-in. */
+/**
+ * Controllable EventSource stand-in that dispatches the way a browser does.
+ *
+ * The previous version called `onmessage` directly from `emit()`, which
+ * modelled a wire the server does not produce: every frame it sends is
+ * *named* (`event: progress`), and per the HTML spec `onmessage` fires only
+ * for the default, unnamed type. So the fake delivered events the real
+ * browser never delivered, and four tests passed against a stream that had
+ * never worked in a browser once.
+ *
+ * `emit()` now dispatches on `payload.type`, exactly as the server names it,
+ * so a handler that is not registered for that name receives nothing — here
+ * and in Chrome alike.
+ */
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
   onmessage: ((event: MessageEvent<string>) => void) | null = null;
   onerror: (() => void) | null = null;
   closed = false;
+  private listeners = new Map<string, Set<(event: MessageEvent<string>) => void>>();
 
   constructor(public url: string) {
     FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, handler: (event: MessageEvent<string>) => void) {
+    const set = this.listeners.get(type) ?? new Set();
+    set.add(handler);
+    this.listeners.set(type, set);
+  }
+
+  removeEventListener(type: string, handler: (event: MessageEvent<string>) => void) {
+    this.listeners.get(type)?.delete(handler);
   }
 
   close() {
@@ -20,7 +44,11 @@ class FakeEventSource {
   }
 
   emit(payload: Record<string, unknown>) {
-    this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(payload) }));
+    const name = String(payload.type ?? "message");
+    const event = new MessageEvent(name, { data: JSON.stringify(payload) });
+    // Named events go to their listeners only — never to `onmessage`.
+    for (const handler of this.listeners.get(name) ?? []) handler(event);
+    if (name === "message") this.onmessage?.(event);
   }
 
   fail() {

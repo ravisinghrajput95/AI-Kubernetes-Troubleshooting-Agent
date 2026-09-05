@@ -8,6 +8,35 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
+## [Unreleased]
+
+### Fixed
+
+- **The console's SSE transport never worked in a browser, and the fallback hid
+  it completely.** The server names every frame (`event: progress`), and per the
+  HTML spec `onmessage` fires only for the *default, unnamed* type — a named
+  event reaches `addEventListener("<name>", …)` or nothing. `useInvestigationJob`
+  registered `onmessage` alone, so the stream opened, delivered **zero** events,
+  errored after ~400ms, and fell back to polling. Every investigation the console
+  has ever displayed was polled. Measured in Chrome before and after:
+  `messages: 0, error at 397ms` against `queued 1, started 1, progress 64,
+  completed 1, error: null`.
+
+  `docs/INVESTIGATION_API.md` documented the correct usage all along. The hook's
+  tests passed because `FakeEventSource.emit()` called `onmessage` directly,
+  modelling a wire the server does not produce; the fake now dispatches on
+  `payload.type` as a browser does, and six of those tests fail with the defect
+  present where all 256 passed before. `STREAM_EVENT_TYPES` is now held against
+  the documented list, because a type added on the server and not in the console
+  goes back to being dropped in silence.
+
+- **The progress panel contradicted its own transport tag.** The subtitle read
+  "Streaming live from the backend" whenever running, regardless of transport,
+  while the `polling` tag beside it said otherwise — and that tag is the only
+  place the degraded path is visible. It also appeared on *healthy* runs, because
+  the spurious fallback above tripped it. The subtitle now names the transport
+  actually carrying progress, and with SSE working the tag no longer appears.
+
 ## [0.2.1] — 2026-09-05
 
 Five defects, and the thing they have in common is how they were found: **every

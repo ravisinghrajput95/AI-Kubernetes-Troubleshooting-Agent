@@ -25,6 +25,24 @@ export type JobPhase = "idle" | JobStatus;
 export type Transport = "stream" | "poll" | null;
 
 const POLL_INTERVAL_MS = 1500;
+
+/**
+ * The event names the server sends, from `docs/INVESTIGATION_API.md`.
+ *
+ * Exported and held against the documented set by
+ * `backend/tests/test_documentation.py`, because a name added on the server and
+ * not here stops being delivered *silently* — the console falls back to polling
+ * and the only symptom is a tag nobody reads. That is exactly how the whole
+ * stream went unnoticed.
+ */
+export const STREAM_EVENT_TYPES = [
+  "queued",
+  "started",
+  "progress",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
 const TERMINAL: JobStatus[] = ["succeeded", "failed", "cancelled"];
 
 function isTerminal(status: JobPhase): boolean {
@@ -175,7 +193,25 @@ export function useInvestigationJob(): InvestigationJobHandle {
       sourceRef.current = source;
       setTransport("stream");
 
-      source.onmessage = (event: MessageEvent<string>) => {
+      // **The server names every event, and a browser routes named events only
+      // to matching listeners.** `investigate.py` emits
+      // `id: N\nevent: <type>\ndata: {...}` on every frame, and per the HTML
+      // spec `onmessage` fires solely for the *default* type — an event with no
+      // `event:` field. So `onmessage` alone never fired: the stream opened,
+      // delivered nothing, errored ~400ms later, and `onerror` fell back to
+      // polling. Every investigation the console has ever displayed was polled,
+      // and the only symptom was the "polling" tag appearing on a healthy run.
+      //
+      // `docs/INVESTIGATION_API.md` had it right the whole time and shows
+      // `events.addEventListener("progress", ...)`; the console just never did
+      // it. The unit tests could not see it because `FakeEventSource.emit()`
+      // calls `onmessage` directly, modelling a wire the browser does not
+      // produce — the same "proves the logic but not the wire" gap that
+      // `http.integration.test.ts` exists to cover for `fetch`.
+      //
+      // `onmessage` is kept for an unnamed event, which the server does not
+      // currently send.
+      const onEvent = (event: MessageEvent<string>) => {
         receivedRef.current = true;
         let payload: JobEvent;
         try {
@@ -201,6 +237,11 @@ export function useInvestigationJob(): InvestigationJobHandle {
           void settle(id, "cancelled");
         }
       };
+
+      source.onmessage = onEvent;
+      for (const name of STREAM_EVENT_TYPES) {
+        source.addEventListener(name, onEvent as EventListener);
+      }
 
       source.onerror = () => {
         // The server closes the stream once the job ends; that surfaces here as

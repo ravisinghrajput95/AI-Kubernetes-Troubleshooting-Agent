@@ -1497,6 +1497,39 @@ standing warning about stale "this is dead" notes.
 
 `/connect` (`ConnectClusterPage`) is the onboarding flow: name a cluster, mint an enrolment, copy the manifest, watch for the agent to check in. `AgentDot` renders agent reachability in three states — online, degraded, silent — and never in colour alone.
 
+**The SSE path never once worked in a browser, and the fallback hid it
+completely.** `investigate.py` writes `id: N\nevent: <type>\ndata: {...}` on
+every frame, and per the HTML spec `onmessage` fires *only* for the default,
+unnamed event type — a named event goes to `addEventListener("<name>", …)` or
+nowhere. The hook registered `onmessage` alone. So the stream opened, delivered
+**zero** events, errored ~400ms later, and `onerror` fell back to polling:
+every investigation the console has ever displayed was polled. Measured in
+Chrome before and after — `messages: 0, error at 397ms` against
+`queued 1, started 1, progress 64, completed 1, error: null`.
+
+Four things had to line up for that to survive. `docs/INVESTIGATION_API.md`
+documented the *correct* usage the whole time
+(`events.addEventListener("progress", …)`) and nobody compared it to the code.
+The hook's own tests passed because `FakeEventSource.emit()` called
+`onmessage` directly — modelling a wire the server does not produce, the same
+"proves the logic but not the wire" gap `http.integration.test.ts` exists to
+cover for `fetch`. `integration_verify.sh` proves the *server* streams, with
+curl, which has no dispatch rule. And the fallback works, so the only symptom
+was the `polling` tag appearing on a healthy run — an indicator that fires on
+the good path teaches you to ignore it, exactly like a flaky required job.
+
+The fake now dispatches on `payload.type` as a browser does; six of the hook's
+tests fail with the defect present, where all 256 passed before.
+`STREAM_EVENT_TYPES` is held against the documented list by
+`backend/tests/test_documentation.py`, because a type added on the server and
+not in the console goes back to being dropped in silence.
+
+**And the panel said the opposite of its own tag.** The subtitle read
+"Streaming live from the backend" whenever `running`, regardless of transport,
+while the `polling` tag beside it said otherwise — so on the degraded path the
+two contradicted each other, and the tag is the one place that path is visible
+at all. The subtitle now names the transport actually carrying progress.
+
 Investigations run through `useInvestigationJob` (`src/hooks/`), not a React Query mutation. It posts to `/investigations`, streams progress over SSE, and **falls back to polling** when `EventSource` fails — corporate proxies commonly block it, and a stalled screen during an incident is worse than a slower one. Both paths converge on one terminal `GET /investigations/{id}` for the full result. `transport` is surfaced in the UI so a degraded path is visible.
 
 Pure logic lives in `src/lib/analysis.ts` (grouping, filtering, severity ordering, formatting) so it is testable without rendering. Panels stay presentational.

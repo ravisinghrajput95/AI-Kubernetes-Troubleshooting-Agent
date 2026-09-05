@@ -45,8 +45,15 @@ export function LiveTimeline({
     <Panel
       title="Investigation Progress"
       subtitle={
+        // Says which transport is actually carrying progress. It claimed
+        // "Streaming live from the backend" whenever `running`, regardless —
+        // so on the polling path it asserted the opposite of the `polling` tag
+        // beside it, which is the one place an operator can see the degraded
+        // path at all.
         running
-          ? "Streaming live from the backend."
+          ? transport === "poll"
+            ? "The event stream was unavailable; polling for progress."
+            : "Streaming live from the backend."
           : phase === "idle"
             ? "Waiting for an investigation to start."
             : "Investigation finished."
