@@ -250,7 +250,11 @@ function RecentInvestigations() {
       </div>
       <ul className="mt-3 grid gap-1">
         {data.slice(0, 6).map((item) => (
-          <li key={item.id}>
+          // `min-w-0`: a grid item defaults to `min-width: auto` and the
+          // root-cause line below is `truncate`, so min-content is the whole
+          // unwrapped sentence and the page scrolls sideways. Same defect as
+          // `ClusterCard`, which carries the full note.
+          <li key={item.id} className="min-w-0">
             <Link
               to={`/investigations/${item.id}`}
               className="flex items-baseline justify-between gap-4 rounded-md border border-line bg-surface px-4 py-3 text-sm transition-colors duration-fast hover:border-line-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info"

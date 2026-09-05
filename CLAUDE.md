@@ -1510,6 +1510,41 @@ Two properties are load-bearing and must not regress:
 - **Never display evidence the backend did not report.** `ConfidenceEvidence` previously fell back to a hardcoded `["Events", "Pod Logs", …]`; panels now render an empty state instead. In a product whose premise is that nothing is asserted without evidence, placeholder content is a correctness bug.
 - **Progress is real.** The old `progressSteps` array advanced on a 900ms timer with no relationship to backend work. Every row in `LiveTimeline` is an event the backend actually emitted.
 
+**The 256 tests cannot see layout, and four defects lived in that blind spot.**
+jsdom has no layout engine and no paint, so a test that queries by role passes
+against a console that scrolls sideways. `scripts/console_check.mjs` drives
+headless Chrome over CDP and asserts two things only a browser can answer: no
+horizontal overflow, and no console errors.
+
+**Three routes overflowed to nearly twice the viewport** — Fleet at 2,827px in
+1,440. The cause is the same each time and worth recognising by shape: a `<li>`
+that is a **grid item** keeps `min-width: auto`, meaning "at least min-content",
+and its content is `truncate` (`white-space: nowrap`) — so min-content is the
+*whole unwrapped sentence*. A cluster whose last investigation produced a long
+health message stretched a 1,032px card to 2,511px and took the sidebar off
+screen with it. In all three the inner flex chain already had `min-w-0`; the
+grid item that actually needed it did not. The fourth was duplicate React keys
+on report body lines, which repeat legitimately — two collectors reading nodes
+emit the identical `kubectl … get nodes -o json`, and React documents duplicate
+keys as unsupported.
+
+**Its vacuity guard is the load-bearing part, and it proved itself twice
+unprompted.** A blank page has no overflow and no console errors; so does the
+sign-in gate, which is what a fresh headless profile always shows because the
+console gates on `sessionStorage` the profile does not have. Each route must
+render a minimum of text *and* an app shell or it is reported UNTRUSTED rather
+than passed — which is exactly what happened when the backend was switched to
+`AUTH_MODE=token` mid-session and every route silently became the sign-in
+screen. Set `CONSOLE_TOKEN` for a token deployment.
+
+**Verifying the fix took the trigger, not just the mutation.** Reverting
+`min-w-0` reported *clean*, because a fresh successful investigation had
+replaced the long health message on that card and there was nothing left to
+overflow. The defect only exists with content long enough to cause it — so the
+check is only as good as the state the console is pointed at, and a mutation
+that does not reproduce means the check is inert for that scenario rather than
+that it works. Caught the moment the 375-character message was restored.
+
 Both are pinned by `src/components/panels.test.tsx`, along with the cache-and-transport visibility rule, and each is mutation-tested against the defect as it actually shipped. **Assert on what only a real value can produce, not on prose**: "the words 'evidence strength' are absent" fails when someone edits the panel's subtitle — which names the three weights — and passes when a placeholder row is reinstated. It asserts on the score-times-weight arithmetic instead.
 
 The env prefix is `react_PUBLIC_` (not `VITE_`), registered in `vite.config.ts`'s `envPrefix`; `react_PUBLIC_API_BASE_URL` sets the backend base URL and is also used to build the absolute `EventSource` URL. Backend CORS defaults to `http://localhost:3000` only (`settings.cors_origins`).

@@ -81,7 +81,15 @@ export function ClusterCard({
   );
 
   return (
-    <li className="flex items-stretch gap-3 rounded-lg border border-line bg-surface p-4">
+    // `min-w-0` is load-bearing: a grid item defaults to `min-width: auto`,
+    // meaning "at least min-content", and this card's summary line is
+    // `truncate` (`white-space: nowrap`) — so min-content is the *whole*
+    // unwrapped sentence. A cluster whose last investigation produced a long
+    // health message ("No cluster read succeeded... Grant 'x' get/list on...")
+    // stretched this item to 2,511px inside a 1,032px track and scrolled the
+    // entire page, sidebar included. Every element inside already had it; the
+    // grid item that actually needed it did not.
+    <li className="flex min-w-0 items-stretch gap-3 rounded-lg border border-line bg-surface p-4">
       <span aria-hidden="true" className={`w-0.5 shrink-0 rounded-full ${STRIPE[row.state]}`} />
       {row.investigationId ? (
         <Link

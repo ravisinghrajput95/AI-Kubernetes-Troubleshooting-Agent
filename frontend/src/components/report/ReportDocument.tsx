@@ -92,8 +92,16 @@ function RootCause({
 
   return (
     <>
+      {/* Keyed by position as well as text: a report body legitimately repeats
+          a line. `Appendix: Commands Executed` lists every read, and two
+          collectors reading nodes produce the identical `kubectl ... get nodes
+          -o json` twice; the Evidence section repeats a gap line per target.
+          React documents duplicate keys as unsupported — "children may be
+          duplicated and/or omitted" — and logged an error on every report view.
+          The same `${value}-${index}` shape this file already uses for table
+          rows and headers. */}
       {section.body.map((line, position) => (
-        <p key={line} className="max-w-measure text-body text-ink">
+        <p key={`${line}-${position}`} className="max-w-measure text-body text-ink">
           {line}
           {position === 0 ? (
             <Citations
@@ -265,16 +273,16 @@ function GenericSection({ section }: { section: ReportSection }) {
 
       {section.body.length > 0 ? (
         <div className={section.fields.length > 0 ? "mt-4 grid gap-2" : "grid gap-2"}>
-          {section.body.map((line) =>
+          {section.body.map((line, position) =>
             isCommandLine(line) ? (
               <pre
-                key={line}
+                key={`${line}-${position}`}
                 className="overflow-x-auto rounded-md border border-line bg-canvas p-3 font-mono text-sm text-ink-2"
               >
                 {line.replace(/^\$ /, "")}
               </pre>
             ) : (
-              <p key={line} className="max-w-measure text-body text-ink-2">
+              <p key={`${line}-${position}`} className="max-w-measure text-body text-ink-2">
                 {line}
               </p>
             ),

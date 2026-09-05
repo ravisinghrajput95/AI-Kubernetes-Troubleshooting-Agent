@@ -12,6 +12,30 @@ to. A change that fixed a defect names the defect.
 
 ### Fixed
 
+- **Three console routes scrolled sideways, and the sidebar went with them.**
+  Fleet rendered 2,827px of content in a 1,440px viewport; `/investigations`
+  and `/ask` the same, for the same reason. A `<li>` that is a grid item keeps
+  `min-width: auto` — "at least min-content" — and its content is `truncate`
+  (`white-space: nowrap`), so min-content is the whole unwrapped sentence. A
+  cluster whose last investigation produced a long health message stretched a
+  1,032px card to 2,511px. In every case the inner flex chain already carried
+  `min-w-0`; the grid item that needed it did not.
+
+- **Duplicate React keys on report body lines.** A report legitimately repeats
+  a line — two collectors reading nodes emit the identical
+  `kubectl … get nodes -o json`, and the Evidence section repeats a gap line per
+  target — so keying by text collided and React logged an error on every report
+  view. React documents duplicate keys as unsupported ("children may be
+  duplicated and/or omitted"); no omission was observed, and the keys are now
+  `${line}-${position}`, the shape this file already used for table rows.
+
+  All four were invisible to the 256 frontend tests, which pass with every one
+  of them present: jsdom has no layout engine, so a test that queries by role
+  passes against a page that looks wrong. `scripts/console_check.mjs` drives
+  headless Chrome and checks both properties across every route, refusing to
+  report a clean run for a page that rendered nothing — a blank page and the
+  sign-in gate both pass every assertion otherwise.
+
 - **MCP announced a version the project has never released.**
   `app/mcp/server.py` hardcoded `serverInfo.version: "1.0.0"` while
   `/openapi.json` served `0.2.0`, so an agent gating on the handshake — or a

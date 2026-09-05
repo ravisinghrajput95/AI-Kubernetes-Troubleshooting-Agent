@@ -216,7 +216,9 @@ function FindingList({
       {findings.map((finding) => {
         const expanded = open === finding.type;
         return (
-          <li key={finding.type} className="rounded-lg border border-line bg-surface">
+          // `min-w-0` for the reason in `ClusterCard`: without it this grid
+          // item is sized by its longest unwrapped line, not by its track.
+          <li key={finding.type} className="min-w-0 rounded-lg border border-line bg-surface">
             <button
               type="button"
               onClick={() => onToggle(expanded ? "" : finding.type)}
