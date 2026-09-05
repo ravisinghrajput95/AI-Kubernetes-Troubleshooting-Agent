@@ -276,6 +276,59 @@ class TestMissingConfiguration:
         assert body["metadata"]["name"] == "web-config"
         assert body["data"] == {"DB_HOST": "<value>"}
 
+    def test_says_so_when_no_evidence_names_the_object(self):
+        """The hypothesis can fire without the signal that names the object.
+
+        `pod.config_error` — a pod in CreateContainerConfigError — is enough to
+        raise `workload.missing_configuration`, and it carries the pod and the
+        namespace and nothing about what it references. Both `kind` and `name`
+        then fell back to defaults *silently*, so the plan asserted "ConfigMap
+        payments/<name> is referenced by the pod but does not exist" as a
+        finding, and the `kind` was a guess that could as easily have been
+        Secret. Found by reading a rendered PDF, where an operator sees it.
+        """
+        plan = plan_for("workload.missing_configuration", [], OOM_POD_SPEC)
+
+        # The summary must not assert a specific object it cannot name.
+        assert "<name>" not in plan.summary
+        assert "<name>" not in plan.title
+        assert "<name>" not in plan.risk.blast_radius
+
+        assert any("no collected evidence named" in c.lower() for c in plan.caveats), (
+            f"nothing tells the operator the object was never identified: {plan.caveats}"
+        )
+
+    def test_generates_no_manifest_for_an_object_it_cannot_name(self):
+        """A manifest built round a placeholder is not appliable and implies knowledge.
+
+        `<name>` is not a legal Kubernetes name, so the file could only ever
+        fail — but it was offered as a generated patch beside ones that work.
+        The same refusal the Secret branch and `MemoryLimitRule` already make.
+        """
+        plan = plan_for("workload.missing_configuration", [], OOM_POD_SPEC)
+
+        assert not [p for p in plan.patches if p.format is PatchFormat.YAML_MANIFEST], (
+            "a manifest was generated for an object no evidence named"
+        )
+
+    def test_a_named_object_still_gets_its_manifest(self):
+        """The control. Refusing everything would satisfy both tests above."""
+        plan = plan_for(
+            "workload.missing_configuration",
+            [
+                signal(
+                    SignalType.CONFIG_KEY_MISSING,
+                    kind="ConfigMap",
+                    name="web-config",
+                    missing_keys=["DB_HOST"],
+                )
+            ],
+            OOM_POD_SPEC,
+        )
+
+        assert [p for p in plan.patches if p.format is PatchFormat.YAML_MANIFEST]
+        assert not any("no collected evidence named" in c.lower() for c in plan.caveats)
+
     def test_never_generates_secret_values(self):
         plan = plan_for(
             "workload.missing_configuration",

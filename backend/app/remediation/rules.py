@@ -254,8 +254,26 @@ class MissingConfigurationRule:
     def build(self, context: RemediationContext) -> RemediationPlan:
         signal = context.first(SignalType.CONFIG_KEY_MISSING, SignalType.CONFIG_REFERENCE_MISSING)
         attributes = signal.attributes if signal else {}
+
+        # Whether evidence actually named the object, rather than this rule
+        # falling back to its defaults.
+        #
+        # The hypothesis can fire from `pod.config_error` alone — a pod in
+        # CreateContainerConfigError — which carries the pod and the namespace
+        # and nothing about *what* it references. Both values below then
+        # defaulted silently, and the plan asserted "ConfigMap payments/<name>
+        # is referenced by the pod but does not exist" as fact, generated a
+        # `<name>-configmap.yaml` manifest containing `name: <name>`, and
+        # handed the operator `kubectl get configmap <name> -n payments`. The
+        # `kind` was a guess too, and a wrong one costs the Secret branch its
+        # "values are never generated" note.
+        #
+        # `MemoryLimitRule` already had the shape for this: when the evidence
+        # is absent it says so in the summary, uses a placeholder that names
+        # what is missing rather than the thing itself, and carries a caveat.
+        identified = bool(attributes.get("name"))
         kind = attributes.get("kind", "ConfigMap")
-        name = attributes.get("name", "<name>")
+        name = attributes.get("name") or "<name-from-the-pod-spec>"
         missing_keys = attributes.get("missing_keys") or []
         namespace = context.namespace or "<namespace>"
         exists = signal is not None and signal.type == SignalType.CONFIG_KEY_MISSING
@@ -270,15 +288,28 @@ class MissingConfigurationRule:
                 f"container reads: {keys}. The container cannot start until they resolve."
             )
             title = f"Add the missing key(s) to {kind} {name}"
-        else:
+        elif identified:
             summary = (
                 f"{kind} {namespace}/{name} is referenced by the pod but does not exist "
                 f"in the namespace. Create it, or correct the reference in the pod template."
             )
             title = f"Create the missing {kind} {name}"
+        else:
+            summary = (
+                "The pod cannot start because a referenced ConfigMap or Secret is "
+                "missing or incomplete, but no collected evidence names which one. "
+                "Read the pod's `envFrom`, `env.valueFrom` and volume references to "
+                "identify it, then create or correct that object."
+            )
+            title = "Identify the configuration the pod references"
 
+        # Nothing is generated for an object this rule cannot name. A manifest
+        # built around a placeholder is not appliable — `<name>` is not a legal
+        # Kubernetes name — and offering one implies the platform knows which
+        # object to create when it does not. Same refusal as the Secret values
+        # below and the memory limit that has no observed current value.
         generated: tuple[Patch, ...] = ()
-        if kind == "ConfigMap":
+        if kind == "ConfigMap" and identified:
             body = {
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
@@ -293,6 +324,17 @@ class MissingConfigurationRule:
 
         # Secret values are never generated: the platform does not read them and
         # must not invent them.
+        unidentified_note: tuple[str, ...] = (
+            (
+                "No collected evidence named the referenced object, so the kind and "
+                "name below are placeholders rather than findings, no manifest is "
+                "generated, and the commands need the real name substituted. Read the "
+                "pod spec to identify it.",
+            )
+            if not identified
+            else ()
+        )
+
         secret_note: tuple[str, ...] = (
             (
                 "Secret values are deliberately not generated. Create the key with "
@@ -356,6 +398,7 @@ class MissingConfigurationRule:
             signal_ids=context.hypothesis.supporting_signal_ids,
             evidence_ids=context.evidence_ids(),
             caveats=secret_note
+            + unidentified_note
             + _derived_caveats(context)
             + _unmanaged_caveat(context.workload_ref()),
         )

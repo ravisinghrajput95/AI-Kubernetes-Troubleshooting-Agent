@@ -377,6 +377,28 @@ MUTATIONS = [
         tests="tests/test_provider_parity.py",
     ),
     Mutation(
+        name="remediation-invents-the-object-it-cannot-name",
+        why=(
+            "`workload.missing_configuration` fires from `pod.config_error` "
+            "alone — a pod in CreateContainerConfigError, which names the pod "
+            "and the namespace and nothing it references — so `kind` and "
+            "`name` fell back to `ConfigMap` and `<name>` silently. The plan "
+            'then asserted "ConfigMap payments/<name> is referenced by the '
+            'pod but does not exist" as a finding, generated a '
+            "`<name>-configmap.yaml` containing `name: <name>`, and handed the "
+            "operator `kubectl get configmap <name> -n payments`. The kind was "
+            "a guess that could as easily have been Secret, which costs that "
+            'branch its "values are never generated" note. `MemoryLimitRule` '
+            "already had the right shape: say so, and refuse to propose a "
+            "value evidence does not support. Found by reading a rendered PDF, "
+            "which is where an operator meets it."
+        ),
+        path="app/remediation/rules.py",
+        old='        identified = bool(attributes.get("name"))',
+        new="        identified = True",
+        tests="tests/test_remediation.py",
+    ),
+    Mutation(
         name="agent-list-reads-are-uncapped",
         why=(
             "F5's ceiling lived inside `KubectlExecutor`, so it applied to the "

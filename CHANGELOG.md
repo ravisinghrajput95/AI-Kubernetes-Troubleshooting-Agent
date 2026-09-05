@@ -12,6 +12,28 @@ to. A change that fixed a defect names the defect.
 
 ### Fixed
 
+- **A remediation plan named an object no evidence had identified.**
+  `workload.missing_configuration` fires from `pod.config_error` alone — a pod
+  in CreateContainerConfigError, which carries the pod and the namespace and
+  nothing about what it references — so `kind` and `name` fell back to
+  `ConfigMap` and `<name>` *silently*. The plan then asserted "ConfigMap
+  payments/`<name>` is referenced by the pod but does not exist" as a finding,
+  generated a `<name>-configmap.yaml` containing `name: <name>`, and handed the
+  operator `kubectl get configmap <name> -n payments`. The `kind` was a guess
+  that could as easily have been Secret — which would have cost that branch its
+  "values are never generated" note.
+
+  `MemoryLimitRule` already had the shape: when the evidence is absent it says
+  so, uses a placeholder naming what is missing rather than the thing itself,
+  and carries a caveat. This rule now does the same — an honest title and
+  summary, `<name-from-the-pod-spec>`, a caveat leading the list, and **no
+  generated manifest**, because a file built round a placeholder is not
+  appliable and offering one implies knowledge the platform does not have.
+
+  Found by rendering a report to PDF and reading it, which is where an operator
+  meets it. Four mutations watched fail, including the control proving the
+  refusal is not blanket; one added to `scripts/mutation_check.py` (34 → 35).
+
 - **Three console routes scrolled sideways, and the sidebar went with them.**
   Fleet rendered 2,827px of content in a 1,440px viewport; `/investigations`
   and `/ask` the same, for the same reason. A `<li>` that is a grid item keeps
