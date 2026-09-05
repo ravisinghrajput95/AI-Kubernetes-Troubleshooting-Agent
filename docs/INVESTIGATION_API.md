@@ -83,6 +83,20 @@ The stream replays everything that already happened before going live, so a
 client connecting mid-run still receives the full timeline. Verified against a
 real server: events arrive as work completes, not batched at the end.
 
+**`Last-Event-ID` resumes a broken stream, measured rather than asserted.**
+Disconnected mid-run after frame 31, reconnected with `Last-Event-ID: 31`, and
+the stream resumed at 32 and ran contiguously to 70 — **no duplicates, no gap,
+monotonic ids, terminal event delivered**. That is the whole point of the id
+being the event sequence: a client that drops does not have to choose between
+replaying the timeline it already has and missing what it did not.
+
+**Register a listener per event name, not `onmessage`.** Every frame here is
+named, and a browser routes a named event only to
+`addEventListener("<name>", ...)`; `onmessage` fires solely for an unnamed
+event, which this endpoint never sends. The console got this wrong for its
+whole life — the stream opened, delivered nothing and fell back to polling —
+so the example below is the contract, not an illustration.
+
 ```js
 const events = new EventSource(`/investigations/${id}/events`);
 events.addEventListener("progress", (e) => appendStep(JSON.parse(e.data)));
