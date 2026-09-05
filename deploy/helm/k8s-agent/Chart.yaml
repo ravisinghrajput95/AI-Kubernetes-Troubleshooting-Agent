@@ -2,8 +2,8 @@ apiVersion: v2
 name: k8s-agent
 description: AI Kubernetes Troubleshooting Agent — the platform, not the cluster agent
 type: application
-version: 0.2.0
-appVersion: "0.2.0"
+version: 0.2.1
+appVersion: "0.2.1"
 keywords:
   - kubernetes
   - troubleshooting

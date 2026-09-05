@@ -8,7 +8,29 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
-## [Unreleased]
+## [0.2.1] — 2026-09-05
+
+Five defects, and the thing they have in common is how they were found: **every
+one by running the platform, none by its tests**, which stayed green with all
+five present — 1,539 backend and 256 frontend.
+
+Three came from exercising surfaces that had never been run live at all. MCP
+announced a version this project has never released. The console scrolled
+sideways on three of its six routes, because jsdom has no layout engine and a
+test that queries by role passes against a page that looks wrong. And a
+remediation plan asserted a ConfigMap that no evidence had identified, then
+generated an unappliable manifest for it — found by rendering a report to PDF
+and reading it, which is where an operator meets it.
+
+The other two came from comparing the two cluster providers against each other,
+which has now produced four defects across three sessions. F25 turned up after
+the *status* diff came back clean across four scopes: the next thing to compare
+was what each provider recorded it had run, and the kubeconfig reads carried a
+paging flag while the agent's carried no limit at all.
+
+Each fix ships with the check that would have caught it — including two new
+harnesses, `scripts/console_check.mjs` and `scripts/provider_diff.py`, both of
+which refuse to report a clean run they cannot vouch for.
 
 ### Fixed
 

@@ -17,4 +17,4 @@ the MCP handshake against it, so a bump without release notes fails and a
 release without a bump fails.
 """
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
