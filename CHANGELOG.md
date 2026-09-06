@@ -12,6 +12,29 @@ to. A change that fixed a defect names the defect.
 
 ### Fixed
 
+- **Two workers starting together each generated their own CA.**
+  `CertificateAuthority.load_or_create` was check-then-act, and N replicas boot
+  together by design. Both saw no CA, both generated a *different* one, and both
+  wrote — so each gateway served a certificate signed by its own in-memory key
+  while the file held whichever finished last, and an agent given that file
+  could not verify the gateway it dialled (`x509: certificate signed by unknown
+  authority`). Key was written before certificate, so an interleave could also
+  leave one process's key beside the other's certificate: a pair matching
+  nothing that every later start would load happily.
+
+  `O_CREAT | O_EXCL` on the key is now the claim; losers wait for the
+  certificate and load it, with a timeout so a winner that died mid-write cannot
+  hang the fleet. The "exactly one half of the CA" check is narrowed to a
+  certificate with no key — the mirror case is what a concurrent winner looks
+  like mid-write, and rejecting it turned the race into a startup failure for
+  every worker but one.
+
+  Found by the soak, which runs two workers because that is the shipped
+  topology: the agent never checked in, and both worker logs carried "Generated
+  a DEVELOPMENT certificate authority" at the same timestamp. Intermittent,
+  which is how it survived earlier soaks. The Helm path is unaffected — the
+  chart mints a CA secret — so this bites local multi-worker runs and the soak.
+
 - **The console's SSE transport never worked in a browser, and the fallback hid
   it completely.** The server names every frame (`event: progress`), and per the
   HTML spec `onmessage` fires only for the *default, unnamed* type — a named

@@ -5,6 +5,7 @@ Hermetic. Every certificate here is built in-process under `tmp_path`, so
 """
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from cryptography import x509
@@ -257,6 +258,62 @@ class TestTheCaOnDisk:
         key_path = tmp_path / "ca.key"
         CertificateAuthority.load_or_create(tmp_path / "ca.crt", key_path, TRUST_DOMAIN)
         assert key_path.stat().st_mode & 0o077 == 0
+
+    def test_workers_starting_together_agree_on_one_ca(self, tmp_path):
+        """N replicas boot together by design; only one may generate.
+
+        The check was check-then-act, so two workers starting in the same
+        millisecond both saw no CA, both generated a *different* one, and both
+        wrote. Each then served its gateway a certificate signed by its own
+        in-memory key while the file held whichever finished last — so an agent
+        handed that file could not verify the gateway it dialled. Observed in a
+        soak as `x509: certificate signed by unknown authority`, with both
+        workers logging "Generated a DEVELOPMENT certificate authority" at the
+        same timestamp.
+
+        **Real processes, not threads.** The claim is `O_CREAT | O_EXCL`, which
+        is a property of the filesystem across processes; threads in one
+        interpreter would exercise neither that nor the separate memory that
+        made the halves disagree.
+        """
+        import subprocess
+        import sys
+
+        certificate_path = tmp_path / "ca.crt"
+        key_path = tmp_path / "ca.key"
+        program = (
+            "import sys;"
+            "from app.security.ca import CertificateAuthority;"
+            "a = CertificateAuthority.load_or_create("
+            f"__import__('pathlib').Path({str(certificate_path)!r}),"
+            f"__import__('pathlib').Path({str(key_path)!r}), {TRUST_DOMAIN!r});"
+            "sys.stdout.write(a.ca_bundle_pem().decode())"
+        )
+        workers = [
+            subprocess.Popen(
+                [sys.executable, "-c", program],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=str(Path(__file__).resolve().parents[1]),
+            )
+            for _ in range(4)
+        ]
+        results = [worker.communicate() for worker in workers]
+
+        for (_out, err), worker in zip(results, workers, strict=True):
+            assert worker.returncode == 0, err.decode()[-400:]
+
+        bundles = {out for out, _err in results}
+        assert len(bundles) == 1, (
+            f"{len(bundles)} different CAs came back from 4 workers sharing one "
+            f"directory; every agent verifying against the file on disk can only "
+            f"talk to whichever worker happened to write it last"
+        )
+
+        # And the pair on disk must be the one they all returned — a key from
+        # one process beside a certificate from another matches nothing.
+        on_disk = CertificateAuthority.load(certificate_path, key_path, TRUST_DOMAIN)
+        assert on_disk.ca_bundle_pem() == bundles.pop()
 
     def test_half_a_ca_is_refused_rather_than_completed(self, tmp_path):
         """Generating a fresh key over an existing certificate would be silent ruin."""

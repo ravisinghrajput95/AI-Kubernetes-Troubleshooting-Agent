@@ -934,6 +934,37 @@ DNS names automatically and takes `agentGateway.dnsNames` for external ones;
 before it did, every chart-deployed gateway failed the agent's TLS verification
 before enrolment began.
 
+**Generating the development CA was not multi-process safe, and N replicas boot
+together by design.** `load_or_create` was check-then-act: two workers starting
+in the same millisecond both saw no CA, both generated a *different* one, and
+both wrote. Each then served its gateway a certificate signed by its own
+in-memory key while the file on disk held whichever finished last — so an agent
+handed that file could not verify the gateway it dialled. The write order made
+it worse than a coin toss: key first, then certificate, so an interleave could
+leave one process's key beside the other's certificate, a pair that matches
+nothing and that every later start would load happily.
+
+`O_CREAT | O_EXCL` on the **key** is the claim — atomic, and the key is the half
+that must never be overwritten. Losers wait for the certificate to appear and
+load it, with a timeout, because a winner that died mid-write must not hang
+every other worker's startup forever.
+
+**The narrowed orphan check is the part to not undo.** "Exactly one half of the
+CA is present" is a real error for a *certificate* with no key. The mirror case
+is not: a key with no certificate is exactly what a concurrent winner looks like
+mid-write, and treating it as an orphan up front — which the first version of
+this fix did — turns the race into a startup failure for every worker but one.
+
+Found by the soak, which runs two workers because that is the shipped topology:
+the agent never checked in, and both worker logs carried
+"Generated a DEVELOPMENT certificate authority" at the *same timestamp*. It is
+intermittent, which is why it survived a passing soak before. The shipped Helm
+path is unaffected — the chart mints a CA secret — so this bites local
+multi-worker runs and the soak harness. Pinned by a test that starts **four real
+processes** against one directory, because `O_EXCL` is a filesystem property
+across processes and threads in one interpreter exercise neither it nor the
+separate memory that made the halves disagree.
+
 `AGENT_GATEWAY_TLS=disabled` keeps the M4a plaintext path as an explicit, logged opt-in for local development — same discipline as the single-process job store. Sessions established that way report `identity_source: "declared"`, so a deployment that left it on cannot look like one that did not. An agent must pass `--insecure` to match, and an mTLS gateway refuses it outright rather than downgrading.
 
 Enrolment state follows the same decision as the job store: `FileEnrolmentStore` under `AGENT_IDENTITY_DIR` by default, `PostgresEnrolmentStore` when `DATABASE_URL` is set (migration `002_agent_identity.sql`). Both are held to `tests/test_enrolment_store_contract.py`. **The CA private key is a file, not a database row** — a dev CA is generated on first start and says so loudly; supply `AGENT_CA_CERT_FILE`/`AGENT_CA_KEY_FILE` for anything shared.

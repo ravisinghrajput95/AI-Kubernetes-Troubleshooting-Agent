@@ -25,6 +25,7 @@ Two properties matter more than any of the above:
 """
 
 import os
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -116,17 +117,66 @@ class CertificateAuthority:
         if certificate_path.exists() and key_path.exists():
             return cls.load(certificate_path, key_path, trust_domain)
 
-        if certificate_path.exists() or key_path.exists():
+        # A certificate with no key is unambiguously an orphan: generating a
+        # fresh key over it would silently invalidate every certificate that CA
+        # ever issued. The mirror case — a key with no certificate — is *not*
+        # unambiguous, because that is exactly what a concurrent winner looks
+        # like between claiming the key and renaming the certificate into
+        # place. It is resolved below by waiting, and only reported as an
+        # orphan if no certificate ever arrives. Treating it as an orphan up
+        # front is what the first version of this fix did, and it turned the
+        # race into a startup failure for every worker but one.
+        if certificate_path.exists() and not key_path.exists():
             raise CertificateAuthorityError(
                 f"Exactly one half of the CA is present ({certificate_path} / "
                 f"{key_path}). Refusing to generate the other half over it — "
                 f"remove the orphan, or supply both."
             )
 
+        # **Exactly one process may generate, and the others must load what it
+        # wrote.** The check above is check-then-act, and N replicas boot
+        # together by design — the same reason migrations take
+        # `pg_advisory_lock`. Two workers starting in the same millisecond both
+        # saw no CA, both generated a *different* one, and both wrote: each
+        # served its gateway a certificate signed by its own in-memory key
+        # while the file on disk was whichever finished last, so an agent given
+        # that file could not verify the gateway it dialled — observed as
+        # `x509: certificate signed by unknown authority` with both workers
+        # logging the line below at the same timestamp. The write order made it
+        # worse than a coin toss: key first, then certificate, so an interleave
+        # could leave one process's key beside the other's certificate — a pair
+        # that matches nothing and that every later start would load happily.
+        #
+        # `O_CREAT | O_EXCL` on the key is the claim: it is atomic on POSIX and
+        # on the shared filesystems this runs on, and the key is the right file
+        # to claim because it is the half that must never be overwritten.
+        # The claim has to be able to land: `_write_private` used to create the
+        # parent and `os.open` does not, so on a fresh install the very first
+        # start raised FileNotFoundError instead of generating a CA.
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            descriptor = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            return cls._await_generated(certificate_path, key_path, trust_domain)
+
         authority = cls.create(trust_domain)
-        _write_private(key_path, authority.private_key_pem())
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(authority.private_key_pem())
         certificate_path.parent.mkdir(parents=True, exist_ok=True)
-        certificate_path.write_bytes(authority.ca_bundle_pem())
+        # Written to a temp file and renamed, and **this survives mutation** —
+        # said plainly rather than left to look tested. `_await_generated`
+        # retries a parse failure, so a loser reading a half-written
+        # certificate recovers either way. What the rename protects is the
+        # *other* reader: a worker starting later takes the `both exist ->
+        # load()` path at the top of `load_or_create`, which does not retry, so
+        # a partial certificate beside a complete key would fail its startup
+        # outright. Reproducing that needs an interleave no test here can time,
+        # so it is kept as the cheap thing that makes the state impossible
+        # rather than the thing a test proves. Same standing as the
+        # `X-Accel-Buffering` header in `integration_verify.sh`.
+        temporary = certificate_path.with_suffix(certificate_path.suffix + ".partial")
+        temporary.write_bytes(authority.ca_bundle_pem())
+        os.replace(temporary, certificate_path)
         logger.warning(
             "Generated a DEVELOPMENT certificate authority for trust domain "
             "{domain} at {path}. It is fine for local use and for CI; for any "
@@ -136,6 +186,40 @@ class CertificateAuthority:
             path=certificate_path,
         )
         return authority
+
+    @classmethod
+    def _await_generated(
+        cls,
+        certificate_path: Path,
+        key_path: Path,
+        trust_domain: str,
+        timeout_seconds: float = 10.0,
+    ) -> "CertificateAuthority":
+        """Load the CA another process is in the middle of writing.
+
+        Losing the race is the normal path for every replica but one, so this
+        waits rather than failing. It refuses rather than waiting forever: a
+        winner that died between claiming the key and writing the certificate
+        would otherwise hang every other worker's startup, and a CA that never
+        arrives is a configuration problem a person has to see.
+        """
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            if certificate_path.exists() and key_path.stat().st_size > 0:
+                try:
+                    return cls.load(certificate_path, key_path, trust_domain)
+                except Exception:
+                    # Still being written; the rename has not landed yet.
+                    pass
+            time.sleep(0.05)
+
+        raise CertificateAuthorityError(
+            f"{key_path} exists but no certificate appeared beside it within "
+            f"{timeout_seconds:g}s. Either it is an orphaned key — remove it — or "
+            f"the process generating the CA died between writing the key and the "
+            f"certificate. Supplying AGENT_CA_CERT_FILE and AGENT_CA_KEY_FILE "
+            f"avoids both."
+        )
 
     @classmethod
     def create(cls, trust_domain: str) -> "CertificateAuthority":
