@@ -62,6 +62,38 @@ class Mutation:
 
 MUTATIONS = [
     Mutation(
+        name="churn-is-not-divergence",
+        why=(
+            "F26: the differential suite compared two live reads and called "
+            "any difference a provider divergence, in the same words. It "
+            "failed the required integration-verify job on da5de44 with "
+            "`k8s.deployments.unhealthy_deployments differs` because the "
+            "platform's own Deployment was replacing a pod between the two "
+            "reads. The bracketing control is what tells the two apart, and "
+            "it lives in a suite that skips unless a cluster is present — so "
+            "only the hermetic tests can see it regress."
+        ),
+        path="tests/differential.py",
+        old="    return {path for path in set(a) | set(b) if a.get(path, _MISSING) != b.get(path, _MISSING)}",
+        new="    return set()  # mutation: nothing is churn, every cluster change is a defect",
+        tests="tests/test_differential_control.py",
+    ),
+    Mutation(
+        name="churn-exclusion-has-a-floor",
+        why=(
+            "The other direction of the same fix, and the quieter one. An "
+            "exclusion with no floor passes hardest exactly when the cluster "
+            "is least readable: discount every difference as churn and the "
+            "suite proves nothing forever while reporting green. Same shape "
+            "as an over-strict grounding check routing everything to the "
+            "deterministic fallback with 20/20 golden cases still passing."
+        ),
+        path="tests/differential.py",
+        old="        if self.total == 0:\n            return None",
+        new="        if True:\n            return None  # mutation: no comparison is ever refused",
+        tests="tests/test_differential_control.py",
+    ),
+    Mutation(
         name="forked-read-keeps-its-stderr",
         why=(
             "F22: gRPC's fork handlers wrote to the stderr `capture_output` "

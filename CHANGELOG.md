@@ -12,6 +12,57 @@ to. A change that fixed a defect names the defect.
 
 ### Fixed
 
+- **The differential suite could not tell a provider that disagreed from a
+  cluster that moved, and reported both in the words of the first.**
+  `TestEveryCollectorAgrees` runs the baseline collector graph twice against one
+  cluster — once through an agent, once through a kubeconfig — and compares the
+  values each derived. Comparing values is what makes it worth running; it is
+  how the agent's `statusFor` was caught mapping every 404 to `EMPTY`. It is
+  also why two reads seconds apart see two different clusters.
+
+  That reached CI. The required `integration-verify` job failed on `da5de44`
+  with `k8s.deployments.unhealthy_deployments differs` — `unavailable_replicas`
+  1 against 0 — while all 48 of its deployment checks passed beside it. The
+  platform's own Deployment was replacing a pod between the two reads. Named
+  volatile fields could never have covered this: `unhealthy_deployments` is a
+  finding, not a clock, and what was wrong with it was that it happened to be
+  moving right then.
+
+  Each comparison is now **bracketed** — agent, kubeconfig, agent again — and a
+  value that moved between the two reads of one provider was moving in the
+  cluster rather than disagreeing between providers. One bracket catches every
+  *one-time* change, which is the arithmetic worth stating: with samples at
+  t1 < t2 < t3 and a single change at T, either T falls inside [t1, t3] and the
+  bracketing reads disagree, or all three agree. Only a value that changes and
+  changes back inside that window survives — the same residue
+  `scripts/provider_diff.py` handles by running twice and asking whether the
+  difference swaps sides.
+
+  **Excluding churn must not become excluding everything**, which is the quieter
+  half and the one that would have shipped unnoticed: discount every difference
+  and the suite passes forever while proving nothing. So the exclusion is per
+  *value*, not per section — a moving `phase` on one pod does not excuse a
+  divergence on the pod beside it — and `Comparison.refusal()` refuses a
+  comparison the cluster churned away rather than reporting it as agreement.
+  `test_the_baseline_graph_produces_the_same_evidence` also now requires both
+  paths to have collected something usable, because every other assertion in
+  that class is satisfied by two providers that failed identically, which is
+  what a dead Docker daemon produces.
+
+  The discriminator lives in `tests/differential.py` and is tested by
+  `tests/test_differential_control.py`, which is hermetic — the suite that uses
+  it skips unless `K8S_AGENT_CLUSTER_INTEGRATION=1` and a cluster are present,
+  so a regression there would be invisible in the default suite and in most of
+  CI. Two entries in `scripts/mutation_check.py` hold both directions.
+
+  Verified by reproducing the trigger rather than by reasoning about it: a
+  deployment flapping its replica count, and the same suite run three ways
+  against it. Without the fix, **the CI failure reproduces exactly** — the same
+  test, the same kind. With it, 12/12 pass. With F25 reverted on the agent path
+  to inject a genuine divergence *while the churn continues*, **5 tests fail**,
+  so the exclusion did not disarm the suite. The refusal guard did not fire at
+  4↔30 replicas flapping and is proved by unit test only.
+
 - **Two workers starting together each generated their own CA.**
   `CertificateAuthority.load_or_create` was check-then-act, and N replicas boot
   together by design. Both saw no CA, both generated a *different* one, and both

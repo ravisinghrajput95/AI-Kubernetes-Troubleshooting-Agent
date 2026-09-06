@@ -860,6 +860,40 @@ Four things here are load-bearing:
 
 **Nothing set that variable for six milestones** — not CI, not `integration_verify.sh` — so this suite ran when a person remembered, which is the standing the mutation tests had before `scripts/mutation_check.py`. It now runs in the `integration-verify` job, which builds the binary on the host and **checks how many tests ran rather than the exit status**, because a fully-skipped pytest run exits 0. Two holes in the suite closed on the way in: it now creates the pod it compares (three tests assumed one called `web` existed, and their failure was indistinguishable from a real divergence), and it **pins the agent's kubeconfig** — the binary has no `--context` and followed *current-context*, so the comparison rested on ambient kubectl state; with a decoy current-context, 23 of 36 fail unpinned and all pass pinned. Running it is what found `statusFor` mapping **every** 404 to `EMPTY`: a status the platform counts as *usable*, so an absent metrics-server read as "we looked and there is no usage" through an agent and "we could not look" through a kubeconfig, for the same cluster at the same moment. That inflates `evidence_coverage.completeness`, and with it the confidence of a diagnosis that saw less — the exact thing "missing metrics must never read as healthy metrics" forbids. A 404 on a **named** read means that object is gone (`EMPTY`); on a **list** read it means the API is not served here (`UNAVAILABLE`), and `policy.Read.Named` is what carries the difference.
 
+**Comparing two live reads cannot tell a divergence from a cluster that moved,
+and until F26 it reported both in the words of the first.** The required
+`integration-verify` job failed on `da5de44` with
+`k8s.deployments.unhealthy_deployments differs` — `unavailable_replicas` 1
+against 0 — while all 48 of its own deployment checks passed: the platform's
+Deployment was replacing a pod between the two reads. Naming volatile fields
+could never have covered it, because `unhealthy_deployments` is a finding
+rather than a clock and what was wrong was that it happened to be moving right
+then. Each comparison is now **bracketed** — agent, kubeconfig, agent again —
+and a value that moved between the two reads of one provider was moving in the
+cluster. One bracket catches every *one-time* change: with samples at
+t1 < t2 < t3, a single change at T either falls inside [t1, t3], where the
+bracketing reads disagree, or outside it, where all three agree. Only a value
+that changes and changes back inside the window survives, which is the residue
+`provider_diff.py` already handles by running twice.
+
+**The quieter half is that the exclusion must not swallow the suite.** Discount
+every difference as churn and it passes forever while proving nothing — the
+same shape as an over-strict grounding check with 20/20 golden cases still
+passing. So it excludes per *value*, never per section (a moving `phase` on one
+pod does not excuse the pod beside it), `Comparison.refusal()` refuses a
+comparison the cluster churned away rather than calling it agreement, and
+`test_the_baseline_graph_produces_the_same_evidence` now requires both paths to
+have collected something usable — every other assertion in that class is
+satisfied by two providers that failed identically, which is what a dead Docker
+daemon produces. The discriminator is `tests/differential.py`, tested
+hermetically by `tests/test_differential_control.py` because the suite using it
+skips wherever no cluster is present, with both directions in
+`scripts/mutation_check.py`. Verified by reproducing the trigger: against a
+deployment flapping its replicas, the pre-fix suite fails on the same test and
+the same kind CI did, the fixed suite passes 12/12, and F25 reverted on the
+agent path *while the churn continues* still fails 5. The refusal guard did not
+fire at 4↔30 replicas and rests on its unit tests.
+
 ### Reading as the caller, through an agent (`agent/internal/collectors/`)
 
 F13's guarantee is that **the platform cannot see more than the calling user

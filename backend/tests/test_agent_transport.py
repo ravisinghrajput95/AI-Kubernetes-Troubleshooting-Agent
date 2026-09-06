@@ -51,6 +51,7 @@ from app.providers.local_kubectl import LocalKubectlProvider
 from app.providers.remote_agent import RemoteAgentProvider
 from app.security.ca import CertificateAuthority
 from app.security.enrolment import FileEnrolmentStore
+from tests import differential
 
 ENABLED = os.environ.get("K8S_AGENT_CLUSTER_INTEGRATION") == "1"
 BINARY = os.environ.get("AGENT_BINARY", "/tmp/m3run/k8s-agent")
@@ -347,33 +348,71 @@ class TestEveryCollectorAgrees:
     the payload is what a diagnosis rests on. Fields that legitimately move
     between two reads of a live cluster (event counts, usage figures) are
     excluded by name rather than by rounding, so an exclusion is visible.
+
+    **Naming them was not enough, and CI is where that showed.** A named
+    exclusion covers a field that always moves; it cannot cover a value that is
+    usually still and happens to be moving right now. `unhealthy_deployments`
+    is a finding, not a clock — and on da5de44 the required `integration-verify`
+    job failed on it because the platform's own Deployment was replacing a pod
+    between the two reads, reporting `unavailable_replicas` 1 against 0 in the
+    same words it would use for a real provider divergence. Every one of the 48
+    deployment checks beside it passed.
+
+    So each comparison is **bracketed**: the agent is read either side of the
+    kubeconfig read, and a value that moved between those two was moving in the
+    cluster rather than disagreeing between providers. `tests/differential.py`
+    carries the argument, including why one bracket catches every one-time
+    change, and the guard that refuses a comparison the cluster churned away.
     """
 
-    async def collect_both(self, session):
-        """Run the baseline graph through each provider. Returns two stores."""
+    async def collect(self, provider):
+        """Run the baseline collector graph once, through one provider."""
         from app.collectors.base import CollectionContext, InvestigationScope
         from app.collectors.kubernetes import build_default_collectors
         from app.collectors.registry import CollectorRegistry
         from app.collectors.scheduler import CollectionScheduler
         from app.evidence.store import EvidenceStore
 
-        stores = []
-        for provider in (RemoteAgentProvider(session), local_provider()):
-            registry = CollectorRegistry()
-            for collector in build_default_collectors():
-                registry.register(collector)
+        registry = CollectorRegistry()
+        for collector in build_default_collectors():
+            registry.register(collector)
 
-            context = CollectionContext(
-                scope=InvestigationScope(context=CONTEXT),
-                provider=provider,
-                store=EvidenceStore(),
-            )
-            stores.append(await CollectionScheduler(registry).run(context))
+        context = CollectionContext(
+            scope=InvestigationScope(context=CONTEXT),
+            provider=provider,
+            store=EvidenceStore(),
+        )
+        return await CollectionScheduler(registry).run(context)
 
-        return stores[0], stores[1]
+    async def collect_bracketed(self, session):
+        """Agent, kubeconfig, agent again — the third read is the control.
 
-    # Values that change between two reads of a running cluster, or that name
-    # the transport rather than the finding.
+        Comparing two reads of a live cluster cannot tell a provider that
+        disagrees from a cluster that moved, and reports both in the words of
+        the first. Reading through the agent either side of the kubeconfig read
+        says which: a value that moved between the bracketing reads was moving
+        in the cluster. See `tests/differential.py` for why one bracket is
+        enough for every one-time change.
+        """
+        subject = await self.collect(RemoteAgentProvider(session))
+        other = await self.collect(local_provider())
+        control = await self.collect(RemoteAgentProvider(session))
+        return subject, other, control
+
+    def assert_agrees(self, label, projections):
+        """Hold the agent's projection against the kubeconfig's, minus churn."""
+        subject, other, control = projections
+        comparison = differential.compare(subject, other, control)
+
+        refusal = comparison.refusal()
+        assert refusal is None, f"{label}: this comparison proved nothing — {refusal}"
+        assert not comparison.divergences, f"{label}: {comparison.report()}"
+        return comparison
+
+    # Values that change between *every* two reads of a running cluster, or
+    # that name the transport rather than the finding. The bracket handles
+    # values that merely happen to be moving; this list is for the ones that
+    # always are, and it stays short so that each entry can be argued with.
     VOLATILE: ClassVar[set[str]] = {
         "total_events",
         "findings",  # events findings carry live messages; compared separately
@@ -385,73 +424,84 @@ class TestEveryCollectorAgrees:
     }
 
     async def test_the_baseline_graph_produces_the_same_evidence(self, connected_agent):
-        remote, local = await self.collect_both(connected_agent)
+        remote, local, control = await self.collect_bracketed(connected_agent)
 
         remote_kinds = {record.kind for record in remote}
         local_kinds = {record.kind for record in local}
         assert remote_kinds == local_kinds, "the two providers produced different evidence kinds"
 
+        # Both paths must have actually read the cluster. Every assertion in
+        # this class is satisfied by two providers that failed identically —
+        # which is what a dead Docker daemon produces, and what
+        # `scripts/provider_diff.py` refuses for the same reason.
+        for label, store in (("agent", remote), ("kubeconfig", local)):
+            assert any(record.usable for record in store), (
+                f"the {label} path collected nothing usable; there is no comparison here"
+            )
+
         # Nothing may be usable on one path and not the other: that is the
-        # failure mode a differential test exists to catch.
-        for kind in sorted(local_kinds):
-            remote_usable = [record.usable for record in remote.by_kind(kind)]
-            local_usable = [record.usable for record in local.by_kind(kind)]
-            assert remote_usable == local_usable, f"{kind} degraded on only one path"
+        # failure mode a differential test exists to catch. Keyed by evidence
+        # id, because a pod that appeared between two reads shifts a positional
+        # list and reads as every entry after it degrading.
+        self.assert_agrees(
+            "evidence usability",
+            tuple(
+                {record.id: record.usable for record in store} for store in (remote, local, control)
+            ),
+        )
 
     @pytest.mark.parametrize(
         "kind",
         ["k8s.pods", "k8s.deployments", "k8s.nodes", "k8s.network", "k8s.storage", "k8s.workloads"],
     )
     async def test_each_inspector_reaches_the_same_conclusion(self, connected_agent, kind):
-        remote, local = await self.collect_both(connected_agent)
-
-        remote_payload = remote.data(kind, {}) or {}
-        local_payload = local.data(kind, {}) or {}
+        stores = await self.collect_bracketed(connected_agent)
+        remote_payload, local_payload, _ = (store.data(kind, {}) or {} for store in stores)
 
         assert set(remote_payload) == set(local_payload), f"{kind} payload keys differ"
 
-        for key in sorted(set(local_payload) - self.VOLATILE):
-            assert remote_payload[key] == local_payload[key], f"{kind}.{key} differs"
+        def compared(store):
+            payload = store.data(kind, {}) or {}
+            return {key: value for key, value in payload.items() if key not in self.VOLATILE}
+
+        self.assert_agrees(kind, tuple(compared(store) for store in stores))
 
     async def test_the_pod_inventory_is_identical(self, connected_agent):
         """The most consequential payload: what the analysis layer reasons over."""
-        remote, local = await self.collect_both(connected_agent)
+        stores = await self.collect_bracketed(connected_agent)
 
-        def by_name(payload):
+        def by_name(store):
+            payload = store.data("k8s.pods", {}) or {}
             return {
-                f"{pod['namespace']}/{pod['name']}": pod
-                for pod in (payload or {}).get("pod_inventory", [])
+                f"{pod['namespace']}/{pod['name']}": pod for pod in payload.get("pod_inventory", [])
             }
 
-        remote_pods = by_name(remote.data("k8s.pods", {}))
-        local_pods = by_name(local.data("k8s.pods", {}))
-
-        assert set(remote_pods) == set(local_pods)
-        for name in sorted(local_pods):
-            assert remote_pods[name] == local_pods[name], f"{name} differs between providers"
+        self.assert_agrees("pod inventory", tuple(by_name(store) for store in stores))
 
     async def test_problematic_pods_match(self, connected_agent):
-        remote, local = await self.collect_both(connected_agent)
+        stores = await self.collect_bracketed(connected_agent)
 
-        def flagged(payload):
-            return sorted(
-                (pod["namespace"], pod["name"], pod["status"])
-                for pod in (payload or {}).get("problematic_pods", [])
-            )
+        def flagged(store):
+            payload = store.data("k8s.pods", {}) or {}
+            return {
+                f"{pod['namespace']}/{pod['name']}": pod["status"]
+                for pod in payload.get("problematic_pods", [])
+            }
 
-        assert flagged(remote.data("k8s.pods", {})) == flagged(local.data("k8s.pods", {}))
+        self.assert_agrees("problematic pods", tuple(flagged(store) for store in stores))
 
     async def test_pod_logs_are_collected_through_both(self, connected_agent):
         """`LogsCollector` fans out over pods, so it is the odd one out."""
-        remote, local = await self.collect_both(connected_agent)
+        stores = await self.collect_bracketed(connected_agent)
 
-        remote_logs = remote.data("k8s.pods.logs", {}) or {}
-        local_logs = local.data("k8s.pods.logs", {}) or {}
+        def fanned_out(store):
+            payload = store.data("k8s.pods.logs", {}) or {}
+            return {
+                "checked_pods": payload.get("checked_pods"),
+                "read": {entry["name"]: True for entry in payload.get("logs", [])},
+            }
 
-        assert remote_logs.get("checked_pods") == local_logs.get("checked_pods")
-        assert [entry["name"] for entry in remote_logs.get("logs", [])] == [
-            entry["name"] for entry in local_logs.get("logs", [])
-        ]
+        self.assert_agrees("pod log fan-out", tuple(fanned_out(store) for store in stores))
 
     async def test_metrics_agree_or_are_absent_on_both(self, connected_agent):
         """The only collector where the two sources genuinely differ.
@@ -461,7 +511,7 @@ class TestEveryCollectorAgrees:
         and if metrics-server is not installed, both must say so rather than
         one reporting an idle cluster.
         """
-        remote, local = await self.collect_both(connected_agent)
+        remote, local, _ = await self.collect_bracketed(connected_agent)
 
         remote_record = remote.by_kind("k8s.metrics.nodes")[0]
         local_record = local.by_kind("k8s.metrics.nodes")[0]
@@ -536,7 +586,7 @@ class TestEveryCollectorAgrees:
 
         assert not hasattr(Remote, "raw_executor")
 
-        remote, _ = await self.collect_both(connected_agent)
+        remote = await self.collect(RemoteAgentProvider(connected_agent))
         usable = [record for record in remote if record.usable]
         assert len(usable) >= 8, f"only {len(usable)} usable records through the agent"
 
