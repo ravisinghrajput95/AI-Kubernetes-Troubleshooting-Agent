@@ -8,7 +8,31 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
-## [Unreleased]
+## [0.2.2] — 2026-09-06
+
+Four defects, no breaking change. None was found by a test suite — 1,574
+backend and 256 frontend tests stayed green with all four present — and **two
+of them were defects in the checking apparatus itself**, which is the part
+worth reading twice.
+
+The differential suite that exists to catch a provider divergence could not
+tell one from a cluster that moved, and said "differs" for both; it failed the
+required CI job on a Deployment replacing a pod between two reads. The
+console's progress panel claimed to be "streaming live from the backend"
+while the `polling` tag beside it said otherwise — and the tag was right,
+because the SSE transport had never delivered a single event to a browser in
+the project's history. The fallback worked, so the only symptom was an
+indicator firing on the healthy path, which teaches you to ignore it.
+
+Each was found by running something. The SSE defect took opening Chrome and
+counting frames — the hook's own tests passed because their fake called
+`onmessage` directly, modelling a wire the server does not produce, while
+`docs/INVESTIGATION_API.md` had documented the correct usage all along. The
+churn defect took a required CI job going red. And the fourth, a race that
+only appears under the shipped topology, took the soak: two workers starting
+together each generated their own certificate authority and both wrote,
+leaving an agent handed that file unable to verify the gateway it dialled.
+It is intermittent, which is how it survived earlier soaks.
 
 ### Fixed
 

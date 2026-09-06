@@ -214,3 +214,32 @@ def test_every_named_control_has_its_test_in_the_runnable_list(module, control):
         f"SECURITY.md claims the {control!r} control but does not tell a reader "
         f"to run {module}, which is what holds it."
     )
+
+
+def test_the_chart_ships_the_version_the_application_reports():
+    """The third copy of the version, and the one nothing was holding.
+
+    Bumping a release means changing `app/core/version.py`, the chart, and the
+    CHANGELOG heading. Two checks already existed — the changelog test above,
+    and `test_mcp.py` against the handshake — so a bump without notes failed
+    and a release without a bump failed. The chart had neither: `version` and
+    `appVersion` could stay a release behind and the whole gate stayed green,
+    while `appVersion` is precisely what tells an operator which image they are
+    running. Found while cutting v0.2.2, by looking for the check rather than
+    trusting the note that said there were two.
+    """
+    from app.core.version import VERSION
+
+    chart = (ROOT / "deploy" / "helm" / "k8s-agent" / "Chart.yaml").read_text()
+
+    version = re.search(r"^version:\s*(\S+)\s*$", chart, re.MULTILINE)
+    app_version = re.search(r"^appVersion:\s*\"?([^\"\s]+)\"?\s*$", chart, re.MULTILINE)
+    assert version and app_version, "the chart no longer declares version and appVersion"
+
+    assert version.group(1) == VERSION, (
+        f"the chart is version {version.group(1)} and the platform is {VERSION}"
+    )
+    assert app_version.group(1) == VERSION, (
+        f"the chart's appVersion is {app_version.group(1)} and the platform is {VERSION}; "
+        f"that is the tag an operator reads to know which image they deployed"
+    )
