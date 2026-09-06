@@ -165,6 +165,10 @@ Not vulnerabilities to report — documented limitations.
 cd backend
 python -m pytest tests/test_prompt_injection.py \
                  tests/test_redaction_corpus.py \
+                 tests/test_evidence_redaction.py \
+                 tests/test_grounding.py \
+                 tests/test_semantic_grounding.py \
+                 tests/test_action_egress.py \
                  tests/test_remediation_safety.py \
                  tests/test_command_policy.py \
                  tests/test_history_durability.py \

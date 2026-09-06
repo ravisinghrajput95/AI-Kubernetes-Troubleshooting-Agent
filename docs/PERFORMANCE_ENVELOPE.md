@@ -316,6 +316,50 @@ Two things an hour found that a short run cannot:
 loopback. It is a claim about *duration*, not about scale — the scale numbers
 are above, and they were taken separately for that reason.
 
+#### A second hour, on a larger cluster
+
+The same command was run again on 2026-09-06 against a 24-pod cluster, and the
+point of repeating it is that a single hour cannot tell a trend from a slope
+fitted to noise. **1,167 investigations, 100% collecting usable evidence,
+longest quiet gap 0.2m** — the guards passed on volume, share and continuity.
+
+| | first hour | second hour |
+|---|---|---|
+| resident memory, worker-1 | 119.2 → 129.5 MB, +0.8 MB/h | 119.0 → 135.4 MB, **+0.1 MB/h** |
+| resident memory, worker-2 | 117.1 → 123.8 MB, **+7.9 MB/h** | 117.1 → 124.4 MB, **+0.6 MB/h** |
+| latency | p50 0.26s, p95 0.57s, max 3.82s | p50 0.41s, p95 0.64s, **max 1.64s** |
+| collection cache | 74% reused | 77% reused |
+| SSE | 23,589 frames, 0 out of order | 29,288 frames, 0 out of order |
+| certificate renewals | 3, 0 stream drops | 3, 0 stream drops |
+| sweep cost | 7 ms | 9 ms |
+| answered by local kubeconfig | 1 of 1,168 (0.09%) | **0 of 1,167** |
+| Postgres | 8.5 → 98.0 MB, +87.9 MB/h | 8.4 → 153.4 MB, **+143.3 MB/h** |
+
+**Worker-2's +7.9 MB/h was noise, and this is what establishes it.** The first
+hour said so on the grounds that 6.7 MB of total movement cannot support a
+slope; the same worker on the same workload now reports +0.6 MB/h. Neither run
+is proof on its own — two are, in the only way available, which is that the
+number did not repeat. File descriptors and threads were also flat across the
+hour (101 → 95 and 33 → 32 on worker-1), which a leak would have moved.
+
+**Per-investigation storage tracks cluster size, so 77 KB is not the number.**
+This hour stored **131 KB per investigation** against 77 KB, on a cluster with
+roughly twice the pods — the same direction `payload_bench` measures at the
+2,000-pod ceiling (2.7 MB). Read the growth rate as a function of the cluster
+being investigated, never as a constant; an operator sizing a disk needs their
+own figure, and `docs/DATA_PROTECTION.md` is where retention bounds it.
+
+**The 0.09% kubeconfig fail-open did not recur** — all 1,167 investigations
+reached the agent. That does not retire the finding: F23 exists because the
+fallback is deliberate and rare, and `AgentPresenceUnreadableEnoughToMisroute`
+is tuned at 1% against a measured 0.086%. A second hour at zero is consistent
+with a rare event, not evidence against one. Both runs are on one host over
+loopback, where the presence TTL lapses only under contention.
+
+**And the gRPC-stderr defect (F22) did not recur either**, which follows: it was
+measured inside the single kubeconfig-fallback investigation, and this hour had
+none.
+
 ## What was **not** measured
 
 Stated plainly, because each is a real limit on how far the numbers above

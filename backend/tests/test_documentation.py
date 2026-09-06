@@ -156,3 +156,61 @@ def test_the_changelog_exists_and_names_the_current_release():
         "the changelog must keep saying this while it is true; it is the single "
         "most important thing a reader deciding whether to trust a release needs"
     )
+
+
+SECURITY = ROOT / "SECURITY.md"
+
+
+def security_test_modules() -> set[str]:
+    """The test files SECURITY.md tells a reader to run."""
+    return set(re.findall(r"tests/(test_[a-z_0-9]+\.py)", SECURITY.read_text()))
+
+
+def test_security_md_names_only_tests_that_exist():
+    """A renamed test file leaves the security document telling you to run it.
+
+    The command in *Security-relevant tests* is the one thing in `SECURITY.md`
+    a reader can execute, and its failure mode is quiet: pytest exits non-zero
+    on a missing path, which reads as "the security tests fail" rather than as
+    "this document is out of date". The list has already under-covered its own
+    *Controls in place* table once — grounding, redaction placement and action
+    egress each had a control row and no entry here.
+    """
+    named = security_test_modules()
+    assert named, "SECURITY.md names no tests at all; the section has been lost"
+    missing = sorted(name for name in named if not (ROOT / "backend" / "tests" / name).exists())
+    assert not missing, (
+        f"SECURITY.md tells the reader to run test files that do not exist: {missing}. "
+        f"Rename them there too, or drop them."
+    )
+
+
+@pytest.mark.parametrize(
+    ("module", "control"),
+    [
+        ("test_grounding.py", "Grounding"),
+        ("test_semantic_grounding.py", "Grounding"),
+        ("test_evidence_redaction.py", "Secret redaction"),
+        ("test_action_egress.py", "Action egress"),
+        ("test_prompt_injection.py", "No model-authored commands"),
+        ("test_command_policy.py", "No cluster mutation"),
+        ("test_authz.py", "Authorisation"),
+        ("test_tenancy.py", "Tenant isolation"),
+        ("test_metrics.py", "Metrics disclosure"),
+        ("test_agent_identity.py", "Agent identity"),
+    ],
+)
+def test_every_named_control_has_its_test_in_the_runnable_list(module, control):
+    """The table asserts a control; the command is how a reader checks it.
+
+    These are listed by hand rather than derived, because "security-relevant"
+    is not a property a filesystem can answer and a regex over test names would
+    be a second classification to keep true. What it does catch is the drift
+    that already happened: four modules covering controls the table names were
+    absent from the list for as long as the list existed.
+    """
+    assert control in SECURITY.read_text(), f"the {control} control row is gone from SECURITY.md"
+    assert module in security_test_modules(), (
+        f"SECURITY.md claims the {control!r} control but does not tell a reader "
+        f"to run {module}, which is what holds it."
+    )

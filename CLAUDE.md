@@ -1804,6 +1804,16 @@ zero. Same rule as `_safe()` in `app/observability`.
 against one kind cluster is a stress test of Docker Desktop, not a workload;
 it took the daemon down twice before an hour was reached. An hour is the point.
 
+**Send the output somewhere that is not `/tmp`.** The run's working directory
+defaults to `/tmp/k8s-soak-<stamp>` and `--json` writes wherever it is pointed;
+macOS cleans `/tmp`, and a completed hour whose report and series lived there
+is simply gone — there is no second copy, and the run cannot say whether it
+would have published. That happened here, to a finished 60-minute run, and cost
+the same hour twice. `--json ~/somewhere/soak.json` with stdout redirected
+beside it is the habit. The same clean removes `/tmp/k8s-agent`, so rebuild the
+binary (or build it somewhere durable) before every opt-in suite — and check
+how many tests *ran*, because a fully-skipped pytest exits 0.
+
 ### Chaos and scale-out (`scripts/chaos_bench.py`, `scripts/scaleout_bench.py`)
 
 Opt-in, needs Docker, not in CI — same precedent as `K8S_AGENT_INTEGRATION`.
