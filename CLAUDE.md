@@ -1683,6 +1683,19 @@ check is only as good as the state the console is pointed at, and a mutation
 that does not reproduce means the check is inert for that scenario rather than
 that it works. Caught the moment the 375-character message was restored.
 
+**And the run now says which of those it was**, because "the check is only as
+good as the state" is advice a reader has to remember, and the output looked
+identical either way. Each run reports the widest run of text that cannot wrap:
+a grid item at `min-width: auto` is forced past its track only by content whose
+min-content width exceeds it, so a widest run narrower than the viewport means
+no single item could have scrolled the page and the overflow check had nothing
+to detect. Verified across the whole 2×2 rather than the diagonal — defect
+present with a 241-character root cause scrolls to **2,010px**; defect present
+with an 89-character one passes clean at **618px** and prints `NO TRIGGER`,
+which is the run that happened once and was indistinguishable from a working
+check. Reported, never enforced: a console with no long content is a legitimate
+state and failing on it is the over-strict direction.
+
 Both are pinned by `src/components/panels.test.tsx`, along with the cache-and-transport visibility rule, and each is mutation-tested against the defect as it actually shipped. **Assert on what only a real value can produce, not on prose**: "the words 'evidence strength' are absent" fails when someone edits the panel's subtitle — which names the three weights — and passes when a placeholder row is reinstated. It asserts on the score-times-weight arithmetic instead.
 
 The env prefix is `react_PUBLIC_` (not `VITE_`), registered in `vite.config.ts`'s `envPrefix`; `react_PUBLIC_API_BASE_URL` sets the backend base URL and is also used to build the absolute `EventSource` URL. Backend CORS defaults to `http://localhost:3000` only (`settings.cors_origins`).

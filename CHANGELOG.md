@@ -64,6 +64,23 @@ to. A change that fixed a defect names the defect.
 
 ### Changed
 
+- **`console_check.mjs` reports when its overflow check had nothing to
+  detect.** The check finds a page that scrolls sideways, and the defect it was
+  written for — a grid item left at `min-width: auto` whose content is
+  `truncate` — only exists when some text is long enough to force it. That is
+  already recorded as a hazard: reverting `min-w-0` once reported clean because
+  a fresh investigation had replaced the long health message. The output looked
+  the same either way, so the hazard was advice rather than a signal.
+
+  Each run now reports the widest run of text that cannot wrap. If that is
+  narrower than the viewport, no single item could have scrolled the page.
+  Verified across the full 2×2 rather than the diagonal: with the defect
+  present and a 241-character root cause the page scrolls to 2,010px and the
+  culprit is named; with the defect present and an 89-character one it passes
+  clean at 618px and prints `NO TRIGGER` — the run that is otherwise
+  indistinguishable from a working check. Reported and not enforced, because a
+  console with no long content is a legitimate state.
+
 - **The differential comparison brackets both providers, not just the agent.**
   F26 reads one provider either side of the other so a value that moved was the
   cluster moving. That sees the cluster; it cannot see a provider that is

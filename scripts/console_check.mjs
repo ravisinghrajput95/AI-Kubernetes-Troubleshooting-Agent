@@ -32,6 +32,21 @@
  * on every headless launch, so an unseeded run screenshots the sign-in screen
  * for every route and finds nothing wrong with any of them.
  *
+ * **A rendered page is not the same as a page that could have overflowed**,
+ * and that is a second, quieter vacuity this could not report. `min-w-0` was
+ * reverted once and the run came back clean, because a fresh successful
+ * investigation had replaced the long health message and there was nothing
+ * left to overflow — the mutation did not reproduce, which means the check was
+ * inert for that scenario, not that it worked. So each run now reports the
+ * widest run of text that cannot wrap: a grid item at `min-width: auto` is
+ * only forced past its track by content whose min-content width exceeds it, so
+ * if the widest such run is narrower than the viewport, no single item could
+ * have scrolled the page. Measured across the full 2×2 — with the defect
+ * present and a 241-character root cause the page scrolls to 2,010px; with the
+ * defect present and an 89-character one it passes clean at 618px and says
+ * NO TRIGGER. Reported and not enforced: a console with no long content is a
+ * legitimate state, and failing on it is the over-strict direction.
+ *
  * Usage — needs the backend, the console, and a headless Chrome:
  *
  *   (cd backend && AUTH_MODE=disabled ALLOW_INSECURE_NO_AUTH=true \
@@ -159,12 +174,30 @@ for (const route of ROUTES) {
         width: Math.round(el.getBoundingClientRect().width),
         minWidth: getComputedStyle(el).minWidth,
       }));
+      // The widest run of text that cannot wrap. A grid item left at
+      // min-width auto is only forced past its track by content whose
+      // min-content width exceeds it, and for a truncated element that is the
+      // whole unwrapped sentence -- scrollWidth measures it even while it
+      // renders elided. If the widest one on a route is narrower than the
+      // viewport, no single item could have scrolled the page, and this
+      // route's overflow check had nothing to detect.
+      let widestNowrap = 0;
+      let widestNowrapTag = "";
+      for (const el of document.querySelectorAll("*")) {
+        if (getComputedStyle(el).whiteSpace !== "nowrap") continue;
+        if (el.scrollWidth <= widestNowrap) continue;
+        widestNowrap = el.scrollWidth;
+        widestNowrapTag = el.tagName + "." + String(el.className).slice(0, 40);
+      }
+
       return {
         scrollWidth: doc.scrollWidth,
         clientWidth: doc.clientWidth,
         text: (document.body.innerText || "").trim().length,
         hasShell: Boolean(document.querySelector("nav, aside, header")),
         offenders,
+        widestNowrap,
+        widestNowrapTag,
       };
     })()`,
   });
@@ -221,5 +254,39 @@ for (const r of results) {
 console.log(
   `\n${results.length} route(s): ${findings} finding(s), ${untrustworthy} untrusted.`,
 );
+
+// **Whether the overflow check had anything to detect**, which is a different
+// question from whether it passed and one this script could not previously
+// answer. `min-w-0` was reverted once and the run came back clean, because a
+// fresh successful investigation had replaced the long health message and
+// there was nothing left to overflow — a mutation that does not reproduce
+// means the check is inert for that scenario, not that it works.
+//
+// Measured against exactly that: an 89-character root cause put the widest
+// unwrapped run at ~600px and the mutation was invisible; a 241-character one
+// put it at 1,694px and the mutation scrolled the page to 2,010px. So the
+// criterion is whether any route carries a nowrap run wider than the viewport.
+// It is reported rather than enforced — a console with no long content is a
+// legitimate state, and failing on it would be the over-strict direction.
+const widest = results.reduce(
+  (best, r) => (r.widestNowrap > (best?.widestNowrap ?? 0) ? r : best),
+  null,
+);
+if (widest && widest.widestNowrap > widest.clientWidth) {
+  console.log(
+    `Overflow check had teeth: ${widest.route} carries an unwrapped run of ` +
+      `${widest.widestNowrap}px in a ${widest.clientWidth}px viewport ` +
+      `(${widest.widestNowrapTag}).`,
+  );
+} else {
+  console.log(
+    `NO TRIGGER: the widest unwrapped text anywhere was ` +
+      `${widest ? widest.widestNowrap : 0}px, inside a ${WIDTH}px viewport, so no ` +
+      `single item could have scrolled the page. The overflow check passed ` +
+      `without being able to fail — point the console at a cluster whose last ` +
+      `investigation produced a long root cause before believing it.`,
+  );
+}
+
 if (untrustworthy) process.exit(2);
 process.exit(findings ? 1 : 0);
