@@ -8,6 +8,58 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
+## [Unreleased]
+
+### Fixed
+
+- **An agent-collected evidence record did not say whose RBAC produced it.**
+  `equivalent_command` is the evidence spine's answer to "how was this fact
+  obtained" — every record carries the invocation that would produce the same
+  bytes. The kubeconfig path records `--as <caller>`, because impersonation is
+  how F13's "the platform cannot see more than you can" is delivered. The agent
+  path applies the same identity as `Impersonate-User` headers and recorded
+  **no identity at all**.
+
+  Three costs, none of them wrong data. The same read through the two
+  transports disagreed about whose RBAC produced it, so the two investigations
+  were not comparable on the one field a differential harness uses to find
+  behavioural divergence. A human running the recorded command read as
+  themselves, which on a cluster-admin kubeconfig returns *more* than the
+  investigation saw. And an audit of an agent-served investigation could not
+  answer who a fact was collected for.
+
+  Fixed in the agent, gated on what actually happened rather than on what was
+  asked: `impersonating()` is now one condition asked by both the headers and
+  the record, because two copies drift and the drift is silent in both
+  directions. Deliberately **not** rendered on the platform side, which knows
+  the actor it sent but cannot know whether the agent applied it — an agent
+  enrolled before impersonation shipped discards the actor, and a command
+  claiming `--as` there would be the same false record pointing the other way.
+
+  Found by `scripts/provider_diff.py` against a live 57-record namespace:
+  status clean, content clean, **33 command differences of exactly one shape**.
+  After the fix the same comparison reports **0 differences across all three
+  nets**, and the control still reports 33 when the agent is not impersonating
+  — which is a *true* divergence, because the two paths then really do read as
+  two different identities. Four Go mutations watched fail, including the one
+  that would render the identity unconditionally.
+
+### Changed
+
+- **The soak's impersonation guard was inert in the configuration it runs in.**
+  `grant_caller_rbac` exists so the caller's own RBAC is on the path — without
+  it every read is FORBIDDEN and an hour measures a locked door — and the run
+  refuses to start without it. But `--agent` routes 100% of collection through
+  the agent, and the soak never passed `--impersonate`, so those reads ran as
+  the agent's own broad ServiceAccount and the grant was protecting a path the
+  headline run does not take. F13's guarantee had never been exercised by a
+  soak.
+
+  Proved both ways with the grant mutated away: the pre-fix agent publishes
+  **40/40 usable, exit 0**; the impersonating agent gives **0/40 usable,
+  REFUSED, exit 1**. A healthy 3-minute run with the flag on still gives 60/60
+  usable, all 60 through the agent.
+
 ## [0.2.2] — 2026-09-06
 
 Four defects, no breaking change. None was found by a test suite — 1,574

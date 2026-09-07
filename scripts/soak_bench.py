@@ -715,6 +715,16 @@ def start_agent(
             str(workdir / "agent-identity"),
             "--renewal-check",
             "5s",
+            # Without this the run grants the caller RBAC and then never uses
+            # it. Impersonation is on by default for the *kubeconfig* path, and
+            # `grant_caller_rbac` exists so those reads are not all FORBIDDEN —
+            # but with `--agent` the routing sends 100% of collection through
+            # the agent, which discarded the actor and read as its own
+            # ServiceAccount. So the guard that refuses to soak without the
+            # grant was protecting a path the headline run does not take, and
+            # an hour of agent-path reads never exercised F13's guarantee at
+            # all. Found while diffing the two providers for F27.
+            "--impersonate",
         ],
         env={**os.environ, "KUBECONFIG": str(kubeconfig)},
         stdout=log,

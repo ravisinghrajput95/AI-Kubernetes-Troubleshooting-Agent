@@ -1100,6 +1100,31 @@ deployment appeared only under the agent in one run and only under the
 kubeconfig in the next, which is what classified it. Measured clean on 57 and 61
 records across two scopes after F25.
 
+**And the command net found a fourth (F27): an agent-collected record did not
+say whose RBAC produced it.** With status and content clean over a 57-record
+namespace, the option diff reported **33 differences of exactly one shape** —
+`only kubeconfig: ['--as=soak@example.com']`. Impersonation is how F13's "the
+platform cannot see more than you can" is delivered, and it *was* applied on
+both paths; what differed was the record. `equivalent_command` claims to be the
+invocation that would produce the same bytes, and on the agent path it named no
+identity, so a human running it read as themselves — on a cluster-admin
+kubeconfig, more than the investigation saw — and an audit could not say who a
+fact was collected for.
+
+**The fix is gated on what happened, not on what was asked**, and that is the
+whole of it. `Collector.impersonating()` is now one condition asked by both the
+headers and the record, because two copies drift and the drift is silent in
+both directions: headers sent with no identity recorded is the defect, and an
+identity recorded with no headers sent is the same false record reversed. It is
+deliberately **not** rendered on the platform side, which knows the actor it
+sent but cannot know whether the agent applied it — an agent enrolled before
+impersonation shipped discards the actor entirely. That gate is also what keeps
+the *true* positive: a non-impersonating agent beside an impersonating
+kubeconfig genuinely reads as two different identities, and the harness must go
+on saying so. Verified live both ways — **0 differences across all three nets**
+impersonating, **33 still** when it is not — and four Go mutations watched fail,
+including the one that renders the identity unconditionally.
+
 Found the same way as the `OutputFormat.TEXT` defect on the *baseline* log
 read: an agent-served investigation beside a kubeconfig-served one of the same
 namespace in the same minute, diffed by evidence id and status. Before, one
@@ -1777,6 +1802,16 @@ Four things it had to be taught, three of them by being wrong first:
   a locked door — for an hour. The ClusterRole it binds is lifted from the
   platform's *own* enrolment manifest rather than written here, because a third
   list of resources is the mistake F7 already cost eight reads.
+
+  **And that guard was inert in the configuration this run actually uses.**
+  `--agent` routes 100% of collection through the agent, and the agent was
+  started without `--impersonate`, so those reads ran as its own broad
+  ServiceAccount and the grant protected a path the headline run does not take
+  — F13's guarantee had never been exercised by a soak. Proved by mutating the
+  grant away: the pre-fix agent publishes **40/40 usable, exit 0**, and the
+  impersonating one gives **0/40, REFUSED, exit 1**. The flag is passed now.
+  Same family as every other guard here that was present, correct and guarding
+  nothing.
 - **Every worker runs a gateway, because that is the shipped topology.** Giving
   one worker a gateway and not the other made a third of investigations fall
   back to the local kubeconfig — which measured the harness. It also found F21.

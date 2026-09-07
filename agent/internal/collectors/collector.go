@@ -75,7 +75,7 @@ func (c *Collector) Collect(
 		return record
 	}
 
-	command := read.EquivalentCommand
+	command := read.EquivalentCommand + c.impersonationSuffix(actor)
 	record.EquivalentCommand = &command
 
 	if policy.AllContainers(spec.GetKind(), spec.GetParameters()) {
@@ -267,7 +267,7 @@ func (c *Collector) impersonated(
 	request *rest.Request,
 	actor *agentv1.Impersonation,
 ) *rest.Request {
-	if !c.impersonate || actor.GetUsername() == "" {
+	if !c.impersonating(actor) {
 		return request
 	}
 	request = request.SetHeader("Impersonate-User", actor.GetUsername())
@@ -275,6 +275,48 @@ func (c *Collector) impersonated(
 		request = request.SetHeader("Impersonate-Group", groups...)
 	}
 	return request
+}
+
+// impersonating is the one condition, asked by both the headers and the record.
+//
+// Two copies of it would drift, and the drift is silent in the direction that
+// matters: headers sent and no identity recorded is the defect below, and an
+// identity recorded with no headers sent is the same false record pointing the
+// other way.
+func (c *Collector) impersonating(actor *agentv1.Impersonation) bool {
+	return c.impersonate && actor.GetUsername() != ""
+}
+
+// impersonationSuffix records the identity a read actually ran as.
+//
+// `EquivalentCommand` claims to be the kubectl invocation that would produce
+// the same bytes, and on an impersonating agent it was not: the kubeconfig path
+// records `--as <caller>` and this path recorded no identity at all. So the
+// same read through the two transports disagreed about whose RBAC produced it,
+// a human running the recorded command read as themselves instead, and the
+// evidence spine — where a record carries its originating command — could not
+// say who a fact was collected for. Found by `scripts/provider_diff.py`, which
+// reported 33 command differences of exactly this one shape.
+//
+// **Gated on what happened, not on what was asked.** It is deliberately not
+// rendered on the platform side, which knows the actor it sent but cannot know
+// whether this agent applied it: an agent enrolled before impersonation shipped
+// discards the actor entirely, and a command claiming `--as` there would be a
+// false record. That also keeps the *true* difference visible — a
+// non-impersonating agent beside an impersonating kubeconfig genuinely read as
+// two different identities, and provider_diff should go on saying so.
+func (c *Collector) impersonationSuffix(actor *agentv1.Impersonation) string {
+	if !c.impersonating(actor) {
+		return ""
+	}
+	// Separate tokens, matching both this package's own rendering (`-o json`,
+	// `--field-selector x`) and `KubectlExecutor._impersonation_args`, which
+	// builds `["--as", subject]`.
+	parts := []string{"--as", actor.GetUsername()}
+	for _, group := range actor.GetGroups() {
+		parts = append(parts, "--as-group", group)
+	}
+	return " " + strings.Join(parts, " ")
 }
 
 // Impersonates reports whether this agent applies the caller's identity, so the

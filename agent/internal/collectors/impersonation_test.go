@@ -18,6 +18,17 @@ import (
 // So every test here runs a real HTTP server and inspects what arrived.
 func capture(t *testing.T, impersonate bool, actor *agentv1.Impersonation) http.Header {
 	t.Helper()
+	header, _ := captureBoth(t, impersonate, actor)
+	return header
+}
+
+// captureBoth also returns the record, because what the agent *recorded* about
+// a read is a second thing the headers cannot show — see
+// `TestTheRecordedCommandNamesWhoTheReadRanAs`.
+func captureBoth(
+	t *testing.T, impersonate bool, actor *agentv1.Impersonation,
+) (http.Header, *agentv1.EvidenceRecord) {
+	t.Helper()
 
 	var got http.Header
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +62,7 @@ func capture(t *testing.T, impersonate bool, actor *agentv1.Impersonation) http.
 	if record.GetStatus() != agentv1.EvidenceStatus_EVIDENCE_STATUS_OK {
 		t.Fatalf("read failed: %s", record.GetDetail())
 	}
-	return got
+	return got, record
 }
 
 func TestTheCallingUserReachesTheApiServer(t *testing.T) {
