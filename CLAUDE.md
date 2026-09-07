@@ -1182,18 +1182,33 @@ them.
 `Collector.collectEveryContainer` performs the same expansion. Three things
 carry it: **every read still goes through `policy.Resolve`** — the pod read and
 each per-container log read alike — so the expansion adds no capability and
-cannot reach a path the policy package would have refused; **kubectl's
-container order, init containers first**, established against a live cluster
-rather than assumed, with a silent container contributing nothing and not being
-an error; and **the first container's error becomes the read's error**, which
-is what keeps `PodPreviousLogsCollector`'s mapping of "previous terminated"
-onto EMPTY working identically on both paths.
+cannot reach a path the policy package would have refused; **a stable container
+order** — init, regular, ephemeral, each in spec order — with a silent
+container contributing nothing and not being an error; and **the first
+container's error becomes the read's error**, which is what keeps
+`PodPreviousLogsCollector`'s mapping of "previous terminated" onto EMPTY
+working identically on both paths.
+
+**That order was recorded here as "kubectl's order, init containers first,
+established against a live cluster rather than assumed", and it is not
+kubectl's order, because kubectl has none.** `--all-containers` issues one
+request per container concurrently and writes each as it arrives: measured
+against a live three-container pod at **22 init-first, 7 sidecar-first and 1
+app-first over 30 reads**, and 17/2/1 over 20 once it was crash-looping. The
+original claim was established by reading it once and getting the common case.
+Determinism is the right side to err on — the evidence spine wants a payload
+reproducible from the same cluster state — but the consequence has to be stated
+rather than denied: the two providers can order a multi-container log
+differently, and that is kubectl's nondeterminism, not a divergence. It is also
+why the differential comparison brackets **both** providers rather than only
+the agent.
 
 Proved by reverting it into the live harness. With the defect present the
 sidecar pod's log entry reads `success: false` and `a container name must be
 specified for pod ..., choose one of: [app sidecar]`; with the fix it reads
-`APP-BOOT / FATAL-app-died / SIDECAR-PROXY-READY`, which is `kubectl logs
---all-containers=true` byte for byte. A scoped differential over the same pod
+`APP-BOOT / FATAL-app-died / SIDECAR-PROXY-READY`, which was `kubectl logs
+--all-containers=true` byte for byte **on that run** — the same lines, but the
+order is kubectl's to vary and it does. A scoped differential over the same pod
 gives 55 records and **zero status differences** between the two providers.
 
 **A discovery client in the agent was considered and not built.** Every group

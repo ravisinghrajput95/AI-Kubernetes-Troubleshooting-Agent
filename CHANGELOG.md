@@ -12,6 +12,24 @@ to. A change that fixed a defect names the defect.
 
 ### Fixed
 
+- **`kubectl logs --all-containers` has no stable container order, and this
+  repository recorded that it did.** F24's account said the agent reproduces
+  "kubectl's container order, init containers first, established against a live
+  cluster rather than assumed". Measured properly: kubectl issues one request
+  per container concurrently and writes each as it arrives, so an unchanging
+  three-container pod came back **22 init-first, 7 sidecar-first and 1
+  app-first over 30 reads**, and 17/2/1 over 20 once it was crash-looping. The
+  original claim was one reading of the common case — established against a
+  live cluster, and wrong anyway.
+
+  The agent's behaviour does not change: init, regular, ephemeral, each in spec
+  order, is deterministic, and determinism is the right side to err on when the
+  evidence spine wants a payload reproducible from the same cluster state. What
+  changes is the claim, in the agent's own comments, its test, `CLAUDE.md` and
+  the F24 backlog entry — and the consequence is now stated instead of denied:
+  the two providers can order a multi-container log differently, and that is
+  kubectl's nondeterminism rather than a divergence.
+
 - **An agent-collected evidence record did not say whose RBAC produced it.**
   `equivalent_command` is the evidence spine's answer to "how was this fact
   obtained" — every record carries the invocation that would produce the same
@@ -45,6 +63,22 @@ to. A change that fixed a defect names the defect.
   that would render the identity unconditionally.
 
 ### Changed
+
+- **The differential comparison brackets both providers, not just the agent.**
+  F26 reads one provider either side of the other so a value that moved was the
+  cluster moving. That sees the cluster; it cannot see a provider that is
+  nondeterministic *in itself*, because that provider is read once — and
+  kubectl's concurrent log fetch is exactly that. Churn is now what moved
+  between either provider's own two reads, and the two brackets span the whole
+  window.
+
+  **It is not reachable from the suite today, which was checked rather than
+  assumed.** No projection in `TestEveryCollectorAgrees` compares log text:
+  `logs` is a named volatile field and the fan-out projection takes only entry
+  names. Against a deliberately racy crash-looping sidecar pod the one-bracket
+  version passed twice. The fourth read costs about 4s across 40 tests and buys
+  the guarantee that adding such a value to a projection later cannot quietly
+  reintroduce it — the exclusion is currently the only thing holding it.
 
 - **The soak's impersonation guard was inert in the configuration it runs in.**
   `grant_caller_rbac` exists so the caller's own RBAC is on the path — without

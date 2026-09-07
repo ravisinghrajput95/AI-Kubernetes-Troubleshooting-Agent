@@ -143,6 +143,36 @@ class TestChurnIsNotDivergence:
     def test_unstable_reports_presence_as_movement(self):
         assert unstable({"a": 1}, {}) == {"a"}
 
+    def test_a_provider_that_is_nondeterministic_in_itself_is_churn(self):
+        """The case one bracket cannot see, and the reason there are two.
+
+        `kubectl logs --all-containers` fetches each container concurrently and
+        writes them as they land, so an unchanging multi-container pod comes
+        back in a different order run to run — 22 init-first, 7 sidecar-first,
+        1 app-first over 30 reads. The agent enumerates containers in spec
+        order and is deterministic, so bracketing the agent alone leaves that
+        raciness looking exactly like a divergence.
+        """
+        agent = {"logs": "init\napp\nsidecar"}
+        kube_first = {"logs": "init\napp\nsidecar"}
+        kube_again = {"logs": "sidecar\ninit\napp"}
+
+        one_bracket = compare(agent, kube_again, control=agent)
+        assert one_bracket.divergences, "precondition: one bracket calls this a divergence"
+
+        both = compare(agent, kube_again, control=agent, other_control=kube_first)
+        assert not both.divergences, both.report()
+
+    def test_the_second_bracket_does_not_excuse_a_real_divergence(self):
+        """It must discount only what that provider itself failed to repeat."""
+        agent = {"logs": "init", "pods": 3}
+        kube = {"logs": "sidecar", "pods": 4}
+        kube_again = {"logs": "init", "pods": 4}
+
+        result = compare(agent, kube, control=agent, other_control=kube_again)
+        assert result.churned == ["logs"]
+        assert len(result.divergences) == 1 and "pods" in result.divergences[0]
+
 
 class TestItRefusesRatherThanProvingNothing:
     """The guard, and its own control.

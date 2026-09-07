@@ -385,24 +385,38 @@ class TestEveryCollectorAgrees:
         return await CollectionScheduler(registry).run(context)
 
     async def collect_bracketed(self, session):
-        """Agent, kubeconfig, agent again — the third read is the control.
+        """Each provider read twice, interleaved: agent, kubeconfig, agent, kubeconfig.
 
         Comparing two reads of a live cluster cannot tell a provider that
         disagrees from a cluster that moved, and reports both in the words of
-        the first. Reading through the agent either side of the kubeconfig read
-        says which: a value that moved between the bracketing reads was moving
-        in the cluster. See `tests/differential.py` for why one bracket is
-        enough for every one-time change.
+        the first. A second read of the same provider says which.
+
+        **Both providers are bracketed, and the second bracket is not
+        symmetry for its own sake.** One bracket sees the cluster move; it
+        cannot see a provider that is nondeterministic *in itself*, because
+        that provider is read once. `kubectl logs --all-containers` is exactly
+        that — it fetches each container concurrently and writes them as they
+        land, measured at 22 init-first, 7 sidecar-first and 1 app-first over
+        30 reads of one unchanging pod — while the agent enumerates containers
+        in spec order.
+
+        It is **not** reachable from here today, and that was checked rather
+        than assumed: no projection below compares log text, so against a
+        deliberately racy crash-looping sidecar pod the one-bracket version
+        passed. The fourth read buys the guarantee that adding such a value to
+        a projection later cannot quietly reintroduce it. See
+        `tests/differential.py`.
         """
         subject = await self.collect(RemoteAgentProvider(session))
         other = await self.collect(local_provider())
         control = await self.collect(RemoteAgentProvider(session))
-        return subject, other, control
+        other_control = await self.collect(local_provider())
+        return subject, other, control, other_control
 
     def assert_agrees(self, label, projections):
         """Hold the agent's projection against the kubeconfig's, minus churn."""
-        subject, other, control = projections
-        comparison = differential.compare(subject, other, control)
+        subject, other, control, other_control = projections
+        comparison = differential.compare(subject, other, control, other_control)
 
         refusal = comparison.refusal()
         assert refusal is None, f"{label}: this comparison proved nothing — {refusal}"
@@ -424,7 +438,8 @@ class TestEveryCollectorAgrees:
     }
 
     async def test_the_baseline_graph_produces_the_same_evidence(self, connected_agent):
-        remote, local, control = await self.collect_bracketed(connected_agent)
+        stores = await self.collect_bracketed(connected_agent)
+        remote, local = stores[0], stores[1]
 
         remote_kinds = {record.kind for record in remote}
         local_kinds = {record.kind for record in local}
@@ -445,9 +460,7 @@ class TestEveryCollectorAgrees:
         # list and reads as every entry after it degrading.
         self.assert_agrees(
             "evidence usability",
-            tuple(
-                {record.id: record.usable for record in store} for store in (remote, local, control)
-            ),
+            tuple({record.id: record.usable for record in store} for store in stores),
         )
 
     @pytest.mark.parametrize(
@@ -456,7 +469,10 @@ class TestEveryCollectorAgrees:
     )
     async def test_each_inspector_reaches_the_same_conclusion(self, connected_agent, kind):
         stores = await self.collect_bracketed(connected_agent)
-        remote_payload, local_payload, _ = (store.data(kind, {}) or {} for store in stores)
+        remote_payload, local_payload = (
+            stores[0].data(kind, {}) or {},
+            stores[1].data(kind, {}) or {},
+        )
 
         assert set(remote_payload) == set(local_payload), f"{kind} payload keys differ"
 
@@ -511,7 +527,7 @@ class TestEveryCollectorAgrees:
         and if metrics-server is not installed, both must say so rather than
         one reporting an idle cluster.
         """
-        remote, local, _ = await self.collect_bracketed(connected_agent)
+        remote, local, *_ = await self.collect_bracketed(connected_agent)
 
         remote_record = remote.by_kind("k8s.metrics.nodes")[0]
         local_record = local.by_kind("k8s.metrics.nodes")[0]

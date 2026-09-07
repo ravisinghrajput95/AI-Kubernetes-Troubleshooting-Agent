@@ -114,7 +114,10 @@ func TestEveryContainersLogsAreRead(t *testing.T) {
 		t.Fatalf("payload: %v", err)
 	}
 
-	// kubectl's order: init containers first, then regular. A container that
+	// This agent's order: init containers first, then regular, each in spec
+	// order. Deliberately *not* "kubectl's order" — kubectl fetches each
+	// container concurrently and has no stable one (22/7/1 over 30 live reads);
+	// init-first is its common case, and determinism is ours. A container that
 	// logged nothing contributes nothing and is not an error.
 	if payload.Text != "INIT-SPEAKS\nALPHA-SPEAKS\n" {
 		t.Errorf("logs = %q, want the init container's output then alpha's", payload.Text)

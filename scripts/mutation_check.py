@@ -79,6 +79,22 @@ MUTATIONS = [
         tests="tests/test_differential_control.py",
     ),
     Mutation(
+        name="both-providers-are-bracketed",
+        why=(
+            "One bracket sees the cluster move but not a provider that is "
+            "nondeterministic in itself, because that provider is read once. "
+            "`kubectl logs --all-containers` fetches each container "
+            "concurrently and has no stable order — 22 init-first, 7 "
+            "sidecar-first, 1 app-first over 30 live reads of an unchanging "
+            "pod — where the agent enumerates in spec order. An agent-only "
+            "bracket would call that a divergence."
+        ),
+        path="tests/differential.py",
+        old="    if other_control is not None:\n        churning |= unstable(other, other_control)",
+        new="    if False:  # mutation: the other provider is read once and trusted\n        churning |= unstable(other, other_control)",
+        tests="tests/test_differential_control.py",
+    ),
+    Mutation(
         name="churn-exclusion-has-a-floor",
         why=(
             "The other direction of the same fix, and the quieter one. An "

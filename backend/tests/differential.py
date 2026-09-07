@@ -165,14 +165,42 @@ class Comparison:
         return "\n".join(lines)
 
 
-def compare(subject: Any, other: Any, control: Any) -> Comparison:
-    """Compare two providers' payloads, discounting what the cluster moved.
+def compare(subject: Any, other: Any, control: Any, other_control: Any = None) -> Comparison:
+    """Compare two providers' payloads, discounting what did not hold still.
 
-    `subject` and `control` are the same provider read either side of `other`,
-    so paths on which they disagree were moving in the cluster and are reported
-    as churn rather than as a difference between the providers.
+    `subject` and `control` are one provider read either side of `other`, so a
+    path on which they disagree was moving and cannot show that the providers
+    disagree. `other_control` is the same bracket around the *other* provider,
+    and it is not optional in spirit — see below.
+
+    **One bracket only sees the cluster moving. It cannot see a provider that
+    is nondeterministic in itself**, because that provider is read once. That
+    is not a hypothetical property: `kubectl logs --all-containers` fetches
+    each container's log concurrently and writes them as they arrive, so an
+    unchanging multi-container pod comes back in a different order run to run
+    — measured at 22 init-first, 7 sidecar-first and 1 app-first over 30 reads,
+    and 17/2/1 over 20 against a crash-looping one. The agent enumerates
+    containers in spec order and is deterministic, so an agent-only bracket
+    would read kubectl's own raciness as a divergence.
+
+    **Today it cannot, and the reason is worth stating rather than relying
+    on.** No projection in `TestEveryCollectorAgrees` compares log text:
+    `logs` is a named `VOLATILE` field and the fan-out projection takes only
+    the entry names. Run against a deliberately racy crash-looping sidecar pod,
+    the one-bracket version passed twice — so this closes a class the suite is
+    not currently exposed to. What makes it worth the fourth read is that the
+    exclusion is the only thing holding that, and the next projection to
+    include a value a provider computes concurrently would reintroduce it
+    silently.
+
+    So churn is what moved between *either* provider's own two reads, and the
+    two brackets between them span the whole window: with reads at
+    t1(subject) < t2(other) < t3(control) < t4(other_control), a one-time
+    change anywhere in [t1, t4] moves one bracket or the other.
     """
     churning = unstable(subject, control)
+    if other_control is not None:
+        churning |= unstable(other, other_control)
     a, b = leaves(subject), leaves(other)
 
     divergences, stable, churned = [], [], []
