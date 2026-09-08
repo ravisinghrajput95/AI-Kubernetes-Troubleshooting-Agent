@@ -1996,6 +1996,23 @@ buffers fill rather than holding the response, so at this traffic shape the
 header is not observable. It verifies incremental end-to-end delivery through a
 real proxy — which `TestClient` cannot check at all — and claims nothing more.
 
+**And it compared the wrong two spans, which made it a flaky required job.**
+The investigation is submitted before the stream is opened and `subscribe()`
+replays the backlog before going live, so events emitted before the connection
+existed arrive in one burst *by design* — shortening the arrival span while
+leaving the emission span alone. The more of the run that finishes before the
+client connects, the more incremental delivery reads as a blob: **the check
+punished the platform for being fast.** Two consecutive CI runs of the same
+code went 0.470/0.830 = 57% (pass) and 0.379/0.760 = **49.87%** (fail) against
+a 50% threshold. The constant's comment claimed "a machine being fast or slow
+moves both sides together", and that was the false premise. `_live_portion`
+drops the backlog so both spans describe the same frames, aligning the two
+clocks on the last frame — which is also what makes an all-backlog run fall out
+as a refusal rather than needing its own branch. `verify_deployment.py` had no
+unit tests at all until this, which is how a required job came to rest on an
+unmeasured constant; `tests/test_sse_delivery_check.py` drives it with both
+real runs' numbers and three mutations are watched to fail.
+
 `deploy/verify/prometheus.yaml` reproduces kube-prometheus-stack's
 **restrictive** `serviceMonitorSelector` (`release:`) rather than the permissive
 `{}` — so `metrics.serviceMonitor.labels` is on the path under test. Mutation

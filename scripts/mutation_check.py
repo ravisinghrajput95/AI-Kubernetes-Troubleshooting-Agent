@@ -79,6 +79,23 @@ MUTATIONS = [
         tests="tests/test_differential_control.py",
     ),
     Mutation(
+        name="sse-check-counts-only-live-frames",
+        why=(
+            "The SSE incremental-delivery check compared the client's whole "
+            "arrival span against the platform's whole emission span. The "
+            "investigation is submitted before the stream opens and "
+            "`subscribe()` replays the backlog, so events emitted before the "
+            "connection existed arrive in one burst — shortening one side and "
+            "leaving the other alone, so a *faster* platform reads as a "
+            "buffered blob. It failed the required integration-verify job at "
+            "49.87% against a 50% threshold, one run after passing at 57%."
+        ),
+        path="../scripts/verify_deployment.py",
+        old="        if emission + offset > opened + BACKLOG_SLACK_SECONDS",
+        new="        if True  # mutation: count the backlog burst as live delivery",
+        tests="tests/test_sse_delivery_check.py",
+    ),
+    Mutation(
         name="both-providers-are-bracketed",
         why=(
             "One bracket sees the cluster move but not a provider that is "

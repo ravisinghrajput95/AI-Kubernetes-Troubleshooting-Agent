@@ -66,10 +66,30 @@ MIN_REFERENCED_SERIES = 13
 # perfectly healthy platform, because the runner was faster than the laptop.
 MIN_SERVER_SPAN_SECONDS = 0.20
 # Arrivals must span at least this fraction of the window the platform emitted
-# over. Under nginx's default proxy_buffering the ratio is ~0 — every frame
+# over, counting only the frames the client could have received *as* they were
+# emitted. Under nginx's default proxy_buffering the ratio is ~0 — every frame
 # lands at once when the response ends — so anything short of a total collapse
-# passes, and a machine being fast or slow moves both sides together.
+# passes.
+#
+# **The comment here used to add "and a machine being fast or slow moves both
+# sides together", which is false and made this a required job that flakes.**
+# The investigation is submitted before the stream is opened and `subscribe()`
+# replays the backlog before going live, so every event emitted before the
+# connection existed arrives in one burst *by design*. That burst shortens the
+# arrival span while leaving the emission span alone, so the faster the
+# platform runs before the client connects, the more incremental delivery looks
+# like a blob. Measured on two consecutive CI runs of the same code: 0.47s /
+# 0.83s = 57% passed, and 0.379s / 0.76s = 49.87% failed — a required job
+# decided by three tenths of a percentage point, in the direction that punishes
+# the platform for being quick. `_live_portion` drops the backlog so the two
+# spans describe the same frames.
 SPREAD_RATIO = 0.5
+
+# Frames whose emission maps to within this of the connection opening are
+# treated as backlog rather than live. Slack for the clock alignment below, not
+# a tuning knob: the burst it excludes is separated from the live tail by
+# hundreds of milliseconds, not by tens.
+BACKLOG_SLACK_SECONDS = 0.05
 
 
 # --------------------------------------------------------------------------
@@ -708,6 +728,37 @@ def run_investigation(
     return job_id, frames, opened, closed
 
 
+def _live_portion(
+    arrivals: list[float], emitted: list[float], opened: float
+) -> list[tuple[float, float]]:
+    """The (arrival, emission) pairs the client could have received *live*.
+
+    The investigation is submitted before the stream is opened, and the
+    platform's `subscribe()` deliberately reads the backlog before going live —
+    so every event emitted before the connection existed is delivered in one
+    burst. That burst is correct behaviour, and it is indistinguishable from
+    buffering if you measure the whole stream: it shortens the arrival span
+    while leaving the emission span alone.
+
+    Server timestamps and arrival timestamps come from different clocks, so
+    they are aligned on the **last** frame and the rest are placed relative to
+    it. Alignment on the last frame is what makes the all-backlog case fall out
+    correctly rather than needing its own branch: if the platform finished
+    emitting before the client connected, the arrivals are packed into a few
+    milliseconds while the emissions span the whole investigation, so every
+    earlier frame maps to well before `opened` and the caller is left with too
+    few live frames to conclude anything — which is the honest answer.
+    """
+    if not arrivals or not emitted or len(arrivals) != len(emitted):
+        return []
+    offset = arrivals[-1] - emitted[-1]
+    return [
+        (arrival, emission)
+        for arrival, emission in zip(arrivals, emitted, strict=False)
+        if emission + offset > opened + BACKLOG_SLACK_SECONDS
+    ]
+
+
 def check_sse_is_incremental(frames: list, opened: float, closed: float) -> None:
     """SSE reaches the client incrementally, end to end, through a real proxy.
 
@@ -781,9 +832,26 @@ def check_sse_is_incremental(frames: list, opened: float, closed: float) -> None
     ):
         return
 
-    server_span = max(emitted) - min(emitted)
-    arrival_span = frames[-1][0] - frames[0][0]
     duration = closed - opened
+
+    # Only the frames the client could have received as they were emitted. See
+    # `_live_portion`: the backlog arrives in one burst by design, and counting
+    # it measures how much of the investigation finished before the connection
+    # existed rather than whether nginx buffered.
+    live = _live_portion([arrival for arrival, _ in frames], emitted, opened)
+    if not R.check(
+        "enough of the stream was delivered live to judge buffering",
+        len(live) >= 3,
+        f"only {len(live)} of {len(frames)} frames were emitted after the stream "
+        f"opened; the rest are backlog, which arrives in one burst whatever nginx "
+        f"does. This run cannot tell streamed from buffered, and is refusing to "
+        f"report a pass it did not earn.",
+        ok_detail=f"{len(live)} of {len(frames)} live, {len(frames) - len(live)} backlog",
+    ):
+        return
+
+    server_span = max(e for _, e in live) - min(e for _, e in live)
+    arrival_span = max(a for a, _ in live) - min(a for a, _ in live)
 
     # The §18 lesson: a drain scenario reported PASS while the process exited
     # 0.2s after SIGTERM with nothing in flight. If the platform emitted every

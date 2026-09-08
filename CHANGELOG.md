@@ -12,6 +12,36 @@ to. A change that fixed a defect names the defect.
 
 ### Fixed
 
+- **The SSE incremental-delivery check punished the platform for being fast,
+  and failed the required CI job by three tenths of a percentage point.** It
+  compared the client's whole arrival span against the platform's whole
+  emission span. But the investigation is submitted *before* the stream is
+  opened, and `subscribe()` replays the backlog before going live — so every
+  event emitted before the connection existed arrives in one burst, by design.
+  That shortens the arrival span and leaves the emission span untouched, so the
+  more of the investigation that finishes before the client connects, the more
+  incremental delivery reads as a buffered blob.
+
+  Two consecutive CI runs of the same code: `0.470s / 0.830s = 57%` passed,
+  `0.379s / 0.760s = 49.87%` failed against a 50% threshold. The constant's own
+  comment asserted that "a machine being fast or slow moves both sides
+  together", which is the false premise the whole check rested on; it is
+  corrected in place with both measurements beside it.
+
+  `_live_portion` now drops the backlog so the two spans describe the same
+  frames, aligning the server and client clocks on the last frame — which is
+  also what makes the all-backlog case fall out as a refusal instead of needing
+  its own branch. That refusal replaces a failure that used to arrive with the
+  wrong message: a run where nothing was delivered live cannot tell streamed
+  from buffered, and now says so.
+
+  `verify_deployment.py` had no unit tests at all, which is how a required job
+  came to rest on an unmeasured constant. It has eight now, driven by both real
+  CI runs' numbers, plus three mutations watched fail — not excluding the
+  backlog, aligning on the first frame, and widening the slack enough to
+  swallow the live tail. Verified live: 49 checks pass, 26 of 29 frames live,
+  100% against the 50% threshold.
+
 - **`kubectl logs --all-containers` has no stable container order, and this
   repository recorded that it did.** F24's account said the agent reproduces
   "kubectl's container order, init containers first, established against a live
