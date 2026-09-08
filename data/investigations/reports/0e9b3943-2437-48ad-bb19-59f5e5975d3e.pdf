@@ -1,0 +1,259 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R] /Count 4 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R /F2 8 0 R /F3 9 0 R >> >> /Contents 10 0 R >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R /F2 8 0 R /F3 9 0 R >> >> /Contents 11 0 R >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R /F2 8 0 R /F3 9 0 R >> >> /Contents 12 0 R >>
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R /F2 8 0 R /F3 9 0 R >> >> /Contents 13 0 R >>
+endobj
+7 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+8 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+9 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>
+endobj
+10 0 obj
+<< /Length 4715 >>
+stream
+0.04 0.07 0.11 rg 0 0 612 792 re f
+0.08 0.14 0.22 rg 0 720 612 72 re f
+0.19 0.78 0.92 rg 0 720 6 72 re f
+BT 1.00 1.00 1.00 rg /F2 18 Tf 1 0 0 1 42 762 Tm (AI Kubernetes Investigation Report) Tj ET
+BT 0.72 0.80 0.90 rg /F1 9 Tf 1 0 0 1 42 740 Tm (Generated 2026-09-08T16:42:56.351133+00:00) Tj ET
+BT 0.58 0.76 0.95 rg /F2 9 Tf 1 0 0 1 500 740 Tm (Confidential) Tj ET
+0.07 0.10 0.15 rg 36 608 540 88 re f
+0.12 0.20 0.30 RG 36 608 540 88 re S
+BT 0.48 0.65 0.85 rg /F2 8 Tf 1 0 0 1 52 668 Tm (INCIDENT) Tj ET
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 52 650 Tm (INC-20260908-0E9B3943) Tj ET
+BT 0.48 0.65 0.85 rg /F2 8 Tf 1 0 0 1 225 668 Tm (CLUSTER) Tj ET
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 225 650 Tm (Current Context) Tj ET
+BT 0.48 0.65 0.85 rg /F2 8 Tf 1 0 0 1 398 668 Tm (CONFIDENCE) Tj ET
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 398 650 Tm (24%) Tj ET
+BT 0.48 0.65 0.85 rg /F2 8 Tf 1 0 0 1 52 630 Tm (SEVERITY) Tj ET
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 52 612 Tm (Unknown) Tj ET
+BT 0.48 0.65 0.85 rg /F2 8 Tf 1 0 0 1 225 630 Tm (STATUS) Tj ET
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 225 612 Tm (Open) Tj ET
+BT 0.48 0.65 0.85 rg /F2 8 Tf 1 0 0 1 398 630 Tm (ENVIRONMENT) Tj ET
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 398 612 Tm (Unknown) Tj ET
+0.09 0.14 0.21 rg 36 562 540 28 re f
+0.17 0.55 0.75 RG 36 562 540 28 re S
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 48 570 Tm (Executive Summary) Tj ET
+BT 0.52 0.66 0.84 rg /F2 9 Tf 1 0 0 1 48 538 Tm (Incident) Tj ET
+BT 0.86 0.91 0.96 rg /F1 10 Tf 1 0 0 1 196 538 Tm (INC-20260908-0E9B3943) Tj ET
+BT 0.52 0.66 0.84 rg /F2 9 Tf 1 0 0 1 48 521 Tm (Cluster) Tj ET
+BT 0.86 0.91 0.96 rg /F1 10 Tf 1 0 0 1 196 521 Tm (Current Context) Tj ET
+BT 0.52 0.66 0.84 rg /F2 9 Tf 1 0 0 1 48 504 Tm (Namespace) Tj ET
+BT 0.86 0.91 0.96 rg /F1 10 Tf 1 0 0 1 196 504 Tm (unknown) Tj ET
+BT 0.52 0.66 0.84 rg /F2 9 Tf 1 0 0 1 48 487 Tm (Severity) Tj ET
+BT 0.86 0.91 0.96 rg /F1 10 Tf 1 0 0 1 196 487 Tm (Unknown) Tj ET
+BT 0.52 0.66 0.84 rg /F2 9 Tf 1 0 0 1 48 470 Tm (Status) Tj ET
+BT 0.86 0.91 0.96 rg /F1 10 Tf 1 0 0 1 196 470 Tm (success) Tj ET
+BT 0.52 0.66 0.84 rg /F2 9 Tf 1 0 0 1 48 453 Tm (Confidence) Tj ET
+BT 0.86 0.91 0.96 rg /F1 10 Tf 1 0 0 1 196 453 Tm (24%) Tj ET
+BT 0.52 0.66 0.84 rg /F2 9 Tf 1 0 0 1 48 436 Tm (Evidence completeness) Tj ET
+BT 0.86 0.91 0.96 rg /F1 10 Tf 1 0 0 1 196 436 Tm (0%) Tj ET
+BT 0.52 0.66 0.84 rg /F2 9 Tf 1 0 0 1 48 419 Tm (Diagnosis source) Tj ET
+BT 0.86 0.91 0.96 rg /F1 10 Tf 1 0 0 1 196 419 Tm (Deterministic analysis) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 402 Tm (Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 60 387 Tm (permissions.) Tj ET
+0.09 0.14 0.21 rg 36 350 540 28 re f
+0.17 0.55 0.75 RG 36 350 540 28 re S
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 48 358 Tm (Impact) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 326 Tm (Restart Required) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 307 Tm (No downtime expected) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 288 Tm (Rollback Available) Tj ET
+0.09 0.14 0.21 rg 36 251 540 28 re f
+0.17 0.55 0.75 RG 36 251 540 28 re S
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 48 259 Tm (Investigation Timeline) Tj ET
+BT 0.52 0.66 0.84 rg /F2 9 Tf 1 0 0 1 48 223 Tm (Time) Tj ET
+BT 0.52 0.66 0.84 rg /F2 9 Tf 1 0 0 1 162 223 Tm (Step) Tj ET
+0.20 0.28 0.38 RG 48 215 m 564 215 l S
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 48 201 Tm (22:12:56) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 162 201 Tm (Investigation Started) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 48 185 Tm (22:12:56) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 162 185 Tm (Retrieved Pods) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 48 169 Tm (22:12:56) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 162 169 Tm (Read Pod Logs) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 48 153 Tm (22:12:56) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 162 153 Tm (Retrieved Events) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 48 137 Tm (22:12:56) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 162 137 Tm (Validated Deployments) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 48 121 Tm (22:12:56) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 162 121 Tm (Checked Networking) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 48 105 Tm (22:12:56) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 162 105 Tm (Checked Nodes) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 48 89 Tm (22:12:56) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 162 89 Tm (Checked Storage) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 48 73 Tm (22:12:56) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 162 73 Tm (Checked Extended Workloads) Tj ET
+BT 0.45 0.55 0.68 rg /F1 8 Tf 1 0 0 1 511 32 Tm (Page 1 of 4) Tj ET
+endstream
+endobj
+11 0 obj
+<< /Length 4591 >>
+stream
+0.04 0.07 0.11 rg 0 0 612 792 re f
+0.08 0.14 0.22 rg 0 720 612 72 re f
+0.19 0.78 0.92 rg 0 720 6 72 re f
+BT 1.00 1.00 1.00 rg /F2 18 Tf 1 0 0 1 42 762 Tm (AI Kubernetes Investigation Report) Tj ET
+BT 0.72 0.80 0.90 rg /F1 9 Tf 1 0 0 1 42 740 Tm (Generated 2026-09-08T16:42:56.351133+00:00) Tj ET
+BT 0.58 0.76 0.95 rg /F2 9 Tf 1 0 0 1 500 740 Tm (Confidential) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 48 690 Tm (22:12:56) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 162 690 Tm (Collected Cluster Metrics) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 48 674 Tm (22:12:56) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 162 674 Tm (Evidence Collection Complete) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 48 658 Tm (22:12:56) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 162 658 Tm (Root Cause Generated) Tj ET
+BT 0.55 0.66 0.80 rg /F1 9 Tf 1 0 0 1 48 640 Tm (Times are when the platform completed each collection step.) Tj ET
+0.09 0.14 0.21 rg 36 607 540 28 re f
+0.17 0.55 0.75 RG 36 607 540 28 re S
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 48 615 Tm (Root Cause) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 583 Tm (The diagnosis was generated from collected Kubernetes evidence. No failure pattern matched) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 60 568 Tm (the observed signals.) Tj ET
+0.09 0.14 0.21 rg 36 531 540 28 re f
+0.17 0.55 0.75 RG 36 531 540 28 re S
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 48 539 Tm (Evidence) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 507 Tm (0 of 10 applicable evidence records were collected successfully.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 488 Tm (1 record\(s\) did not apply to this cluster and were excluded from that figure.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 469 Tm (Gap - k8s.pods: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access,) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 60 454 Tm (and kubectl permissions.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 435 Tm (Gap - k8s.events: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 60 420 Tm (access, and kubectl permissions.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 401 Tm (Gap - k8s.deployments: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 60 386 Tm (access, and kubectl permissions.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 367 Tm (Gap - k8s.network: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 60 352 Tm (access, and kubectl permissions.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 333 Tm (Gap - k8s.nodes: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access,) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 60 318 Tm (and kubectl permissions.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 299 Tm (Gap - k8s.storage: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 60 284 Tm (access, and kubectl permissions.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 265 Tm (Gap - k8s.workloads: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 60 250 Tm (access, and kubectl permissions.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 231 Tm (Gap - k8s.nodes.raw: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 60 216 Tm (access, and kubectl permissions.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 197 Tm (Gap - k8s.pods.logs: Skipped because required evidence was unavailable: k8s.pods.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 178 Tm (Gap - k8s.metrics.nodes: metrics-server is unavailable or kubectl top is not permitted.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 159 Tm (Gap - k8s.metrics.pods: metrics-server is unavailable or kubectl top is not permitted.) Tj ET
+0.09 0.14 0.21 rg 36 122 540 28 re f
+0.17 0.55 0.75 RG 36 122 540 28 re S
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 48 130 Tm (Confidence Assessment) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 98 Tm (Overall confidence: 24%.) Tj ET
+BT 0.52 0.66 0.84 rg /F2 9 Tf 1 0 0 1 48 75 Tm (Component) Tj ET
+BT 0.52 0.66 0.84 rg /F2 9 Tf 1 0 0 1 264 75 Tm (Score) Tj ET
+BT 0.52 0.66 0.84 rg /F2 9 Tf 1 0 0 1 315 75 Tm (Weight) Tj ET
+BT 0.52 0.66 0.84 rg /F2 9 Tf 1 0 0 1 418 75 Tm (Contribution) Tj ET
+0.20 0.28 0.38 RG 48 67 m 564 67 l S
+BT 0.45 0.55 0.68 rg /F1 8 Tf 1 0 0 1 511 32 Tm (Page 2 of 4) Tj ET
+endstream
+endobj
+12 0 obj
+<< /Length 4255 >>
+stream
+0.04 0.07 0.11 rg 0 0 612 792 re f
+0.08 0.14 0.22 rg 0 720 612 72 re f
+0.19 0.78 0.92 rg 0 720 6 72 re f
+BT 1.00 1.00 1.00 rg /F2 18 Tf 1 0 0 1 42 762 Tm (AI Kubernetes Investigation Report) Tj ET
+BT 0.72 0.80 0.90 rg /F1 9 Tf 1 0 0 1 42 740 Tm (Generated 2026-09-08T16:42:56.351133+00:00) Tj ET
+BT 0.58 0.76 0.95 rg /F2 9 Tf 1 0 0 1 500 740 Tm (Confidential) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 48 690 Tm (Evidence Strength) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 264 690 Tm (35%) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 315 690 Tm (weight 70%) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 418 690 Tm (contributes 24) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 48 674 Tm (Evidence Completeness) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 264 674 Tm (0%) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 315 674 Tm (weight 30%) Tj ET
+BT 0.86 0.91 0.96 rg /F1 9 Tf 1 0 0 1 418 674 Tm (contributes 0) Tj ET
+0.09 0.14 0.21 rg 36 640 540 28 re f
+0.17 0.55 0.75 RG 36 640 540 28 re S
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 48 648 Tm (Resolution) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 616 Tm (Review the collected pod, event, deployment, and networking evidence for the first failing) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 60 601 Tm (workload.) Tj ET
+0.09 0.14 0.21 rg 36 564 540 28 re f
+0.17 0.55 0.75 RG 36 564 540 28 re S
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 48 572 Tm (Lessons Learned) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 540 Tm (Evidence that would have shortened this investigation:) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 521 Tm (  - No failing pod logs were collected.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 502 Tm (  - Metrics-server data is unavailable or not permitted.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 483 Tm (  - Storage resources could not be inspected.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 464 Tm (  - Node conditions could not be inspected.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 445 Tm (  - Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 60 430 Tm (permissions.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 411 Tm (  - Skipped because required evidence was unavailable: k8s.pods.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 392 Tm (  - metrics-server is unavailable or kubectl top is not permitted.) Tj ET
+0.09 0.14 0.21 rg 36 355 540 28 re f
+0.17 0.55 0.75 RG 36 355 540 28 re S
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 48 363 Tm (Preventive Actions) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 331 Tm (Add health checks, clear rollout alerts, and deployment validation for Kubernetes manifests.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 312 Tm (Follow-up actions:) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 293 Tm (  - Review warning events and failing workload conditions first.) Tj ET
+BT 0.82 0.88 0.95 rg /F1 10 Tf 1 0 0 1 48 274 Tm (  - Collect additional logs or metrics for any workload with unclear evidence.) Tj ET
+0.09 0.14 0.21 rg 36 237 540 28 re f
+0.17 0.55 0.75 RG 36 237 540 28 re S
+BT 1.00 1.00 1.00 rg /F2 12 Tf 1 0 0 1 48 245 Tm (Appendix: Commands Executed) Tj ET
+BT 0.78 0.93 1.00 rg /F3 8 Tf 1 0 0 1 52 213 Tm (kubectl --chunk-size=500 get events -n default -o json) Tj ET
+BT 0.78 0.93 1.00 rg /F3 8 Tf 1 0 0 1 52 196 Tm (kubectl --chunk-size=500 get deployments -n default -o json) Tj ET
+BT 0.78 0.93 1.00 rg /F3 8 Tf 1 0 0 1 52 179 Tm (kubectl --chunk-size=500 get pods -n default -o json) Tj ET
+BT 0.78 0.93 1.00 rg /F3 8 Tf 1 0 0 1 52 162 Tm (kubectl --chunk-size=500 get services -n default -o json) Tj ET
+BT 0.78 0.93 1.00 rg /F3 8 Tf 1 0 0 1 52 145 Tm (kubectl --chunk-size=500 get endpoints -n default -o json) Tj ET
+BT 0.78 0.93 1.00 rg /F3 8 Tf 1 0 0 1 52 128 Tm (kubectl --chunk-size=500 get nodes -o json) Tj ET
+BT 0.78 0.93 1.00 rg /F3 8 Tf 1 0 0 1 52 111 Tm (kubectl --chunk-size=500 get pvc -n default -o json) Tj ET
+BT 0.78 0.93 1.00 rg /F3 8 Tf 1 0 0 1 52 94 Tm (kubectl --chunk-size=500 get pv -o json) Tj ET
+BT 0.78 0.93 1.00 rg /F3 8 Tf 1 0 0 1 52 77 Tm (kubectl --chunk-size=500 get statefulsets -n default -o json) Tj ET
+BT 0.45 0.55 0.68 rg /F1 8 Tf 1 0 0 1 511 32 Tm (Page 3 of 4) Tj ET
+endstream
+endobj
+13 0 obj
+<< /Length 1272 >>
+stream
+0.04 0.07 0.11 rg 0 0 612 792 re f
+0.08 0.14 0.22 rg 0 720 612 72 re f
+0.19 0.78 0.92 rg 0 720 6 72 re f
+BT 1.00 1.00 1.00 rg /F2 18 Tf 1 0 0 1 42 762 Tm (AI Kubernetes Investigation Report) Tj ET
+BT 0.72 0.80 0.90 rg /F1 9 Tf 1 0 0 1 42 740 Tm (Generated 2026-09-08T16:42:56.351133+00:00) Tj ET
+BT 0.58 0.76 0.95 rg /F2 9 Tf 1 0 0 1 500 740 Tm (Confidential) Tj ET
+BT 0.78 0.93 1.00 rg /F3 8 Tf 1 0 0 1 52 690 Tm (kubectl --chunk-size=500 get daemonsets -n default -o json) Tj ET
+BT 0.78 0.93 1.00 rg /F3 8 Tf 1 0 0 1 52 673 Tm (kubectl --chunk-size=500 get jobs -n default -o json) Tj ET
+BT 0.78 0.93 1.00 rg /F3 8 Tf 1 0 0 1 52 656 Tm (kubectl --chunk-size=500 get cronjobs -n default -o json) Tj ET
+BT 0.78 0.93 1.00 rg /F3 8 Tf 1 0 0 1 52 639 Tm (kubectl --chunk-size=500 get nodes -o json) Tj ET
+BT 0.78 0.93 1.00 rg /F3 8 Tf 1 0 0 1 52 622 Tm (kubectl top pods -A --no-headers) Tj ET
+BT 0.78 0.93 1.00 rg /F3 8 Tf 1 0 0 1 52 605 Tm (kubectl top nodes --no-headers) Tj ET
+BT 0.55 0.66 0.80 rg /F1 9 Tf 1 0 0 1 48 586 Tm (Every command the platform ran during this investigation. All are read-only; the platform cannot modify) Tj ET
+BT 0.55 0.66 0.80 rg /F1 9 Tf 1 0 0 1 60 571 Tm (a cluster.) Tj ET
+BT 0.45 0.55 0.68 rg /F1 8 Tf 1 0 0 1 511 32 Tm (Page 4 of 4) Tj ET
+endstream
+endobj
+xref
+0 14
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000133 00000 n 
+0000000280 00000 n 
+0000000427 00000 n 
+0000000574 00000 n 
+0000000721 00000 n 
+0000000818 00000 n 
+0000000920 00000 n 
+0000001015 00000 n 
+0000005783 00000 n 
+0000010427 00000 n 
+0000014735 00000 n 
+trailer
+<< /Size 14 /Root 1 0 R >>
+startxref
+16060
+%%EOF

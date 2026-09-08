@@ -1,0 +1,891 @@
+{
+  "incident_id": "INC-20260908-0E9B3943",
+  "timestamp": "2026-09-08T16:42:56.351133+00:00",
+  "status": "success",
+  "namespace": "unknown",
+  "report_metadata": {
+    "cluster": "Current Context",
+    "environment": "Unknown",
+    "severity": "Unknown",
+    "incident_status": "Open",
+    "business_impact": [
+      "Unable to retrieve one or more Kubernetes resource groups.",
+      "Monitoring and troubleshooting visibility are degraded.",
+      "New deployments may be blocked until cluster access is restored."
+    ],
+    "confidence_breakdown": [
+      {
+        "source": "Pod Analysis",
+        "contribution": 0
+      },
+      {
+        "source": "Event Analysis",
+        "contribution": 0
+      },
+      {
+        "source": "Node Analysis",
+        "contribution": 25
+      },
+      {
+        "source": "Network Analysis",
+        "contribution": 35
+      },
+      {
+        "source": "API Connectivity",
+        "contribution": 40
+      }
+    ],
+    "evidence_matrix": [
+      {
+        "source": "Pods",
+        "status": "Failed"
+      },
+      {
+        "source": "Events",
+        "status": "Failed"
+      },
+      {
+        "source": "Nodes",
+        "status": "Failed"
+      },
+      {
+        "source": "Deployments",
+        "status": "Failed"
+      },
+      {
+        "source": "Services",
+        "status": "Failed"
+      },
+      {
+        "source": "Storage",
+        "status": "Failed"
+      },
+      {
+        "source": "Extended Workloads",
+        "status": "Failed"
+      },
+      {
+        "source": "API Connectivity",
+        "status": "Unavailable"
+      },
+      {
+        "source": "Port 6443",
+        "status": "Unverified"
+      }
+    ]
+  },
+  "diagnosis": {
+    "root_cause": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+    "explanation": "The diagnosis was generated from collected Kubernetes evidence. No failure pattern matched the observed signals. OpenAI status: No API key configured for the openai provider",
+    "fix": "Review the collected pod, event, deployment, and networking evidence for the first failing workload.",
+    "kubectl_commands": [
+      "kubectl get pods -A",
+      "kubectl get events -A --sort-by=.lastTimestamp",
+      "kubectl get deployments -A"
+    ],
+    "prevention": "Add health checks, clear rollout alerts, and deployment validation for Kubernetes manifests.",
+    "evidence_gaps": [
+      "No failing pod logs were collected.",
+      "Metrics-server data is unavailable or not permitted.",
+      "Storage resources could not be inspected.",
+      "Node conditions could not be inspected.",
+      "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+      "Skipped because required evidence was unavailable: k8s.pods.",
+      "metrics-server is unavailable or kubectl top is not permitted."
+    ],
+    "next_steps": [
+      "Review warning events and failing workload conditions first.",
+      "Collect additional logs or metrics for any workload with unclear evidence."
+    ],
+    "confidence": 24,
+    "confidence_reasoning": [
+      "No strong failure signal was found in the collected evidence"
+    ],
+    "confidence_breakdown": [
+      {
+        "component": "Evidence Strength",
+        "weight": 70,
+        "score": 35,
+        "contribution": 24,
+        "detail": "No hypothesis matched; scored from raw evidence heuristics."
+      },
+      {
+        "component": "Evidence Completeness",
+        "weight": 30,
+        "score": 0,
+        "contribution": 0,
+        "detail": "0% of attempted evidence was collected successfully."
+      }
+    ],
+    "remediation_risk": {
+      "level": "Low",
+      "impact": [
+        "Restart Required",
+        "No downtime expected",
+        "Rollback Available"
+      ]
+    },
+    "remediation_plan": {
+      "requires_approval": true,
+      "dry_run_first": true,
+      "pre_checks": [
+        "Confirm the selected context and namespace before changing resources.",
+        "Capture current rollout/resource state before applying a fix."
+      ],
+      "review_commands": [
+        "kubectl get pods -A",
+        "kubectl get events -A --sort-by=.lastTimestamp",
+        "kubectl get deployments -A"
+      ],
+      "rollback_commands": [
+        "kubectl rollout history deployment <deployment-name> -n <namespace>"
+      ]
+    },
+    "remediation": null,
+    "patches": [],
+    "signals": [],
+    "hypotheses": [],
+    "incidents": [],
+    "selection_rationale": "",
+    "selected_hypothesis": null,
+    "cited_signals": [],
+    "cited_evidence": [],
+    "grounding": {
+      "valid": true,
+      "reason": "Deterministic diagnosis; no model output was used.",
+      "selected_hypothesis": null,
+      "cited_signals": [],
+      "rejected_citations": [],
+      "checks_passed": []
+    },
+    "ai_generated": false
+  },
+  "investigation": {
+    "context": null,
+    "scope": {
+      "namespace": "default",
+      "resource_kind": "cluster",
+      "resource_name": ""
+    },
+    "health": {
+      "status": "error",
+      "message": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions."
+    },
+    "overview": {
+      "nodes": "Unavailable",
+      "pods": "0 Running",
+      "cpu_usage": "N/A",
+      "memory_usage": "N/A",
+      "alerts": 0,
+      "critical_issues": 0
+    },
+    "severity": {
+      "severity": "Unknown",
+      "impact": "Not established \u2014 the cluster could not be fully inspected",
+      "affected_workloads": 0,
+      "affected_namespace": "none"
+    },
+    "metrics": {
+      "available": false,
+      "cpu_usage": "N/A",
+      "memory_usage": "N/A",
+      "node_metrics": [],
+      "top_pods": [],
+      "message": "metrics-server is unavailable or kubectl top is not permitted."
+    },
+    "security": {
+      "status": "pass",
+      "warning_count": 0,
+      "findings": [
+        {
+          "label": "No Privileged Containers",
+          "status": "pass",
+          "detail": "No privileged containers detected."
+        },
+        {
+          "label": "Latest Tag Used",
+          "status": "pass",
+          "detail": "Images are pinned to explicit tags."
+        },
+        {
+          "label": "Missing Resource Limits",
+          "status": "pass",
+          "detail": "All inspected containers define resource limits."
+        },
+        {
+          "label": "High CVEs Found",
+          "status": "unknown",
+          "detail": "Image vulnerability scan is not configured in this local evidence collection."
+        }
+      ]
+    },
+    "topology": {
+      "cluster": "Current Context",
+      "nodes": []
+    },
+    "evidence": [
+      {
+        "id": "k8s.pods:cluster/_cluster/current-context",
+        "kind": "k8s.pods",
+        "source": "kubectl",
+        "status": "unavailable",
+        "target": {
+          "kind": "Cluster",
+          "name": "current-context",
+          "namespace": null,
+          "uid": null
+        },
+        "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+        "command": "kubectl --chunk-size=500 get pods -n default -o json",
+        "collector_id": "k8s.pods",
+        "duration_ms": 58,
+        "redacted": true,
+        "collected_at": "2026-09-08T16:42:56.282934+00:00"
+      },
+      {
+        "id": "k8s.events:cluster/_cluster/current-context",
+        "kind": "k8s.events",
+        "source": "kubectl",
+        "status": "unavailable",
+        "target": {
+          "kind": "Cluster",
+          "name": "current-context",
+          "namespace": null,
+          "uid": null
+        },
+        "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+        "command": "kubectl --chunk-size=500 get events -n default -o json",
+        "collector_id": "k8s.events",
+        "duration_ms": 58,
+        "redacted": true,
+        "collected_at": "2026-09-08T16:42:56.283846+00:00"
+      },
+      {
+        "id": "k8s.deployments:cluster/_cluster/current-context",
+        "kind": "k8s.deployments",
+        "source": "kubectl",
+        "status": "unavailable",
+        "target": {
+          "kind": "Cluster",
+          "name": "current-context",
+          "namespace": null,
+          "uid": null
+        },
+        "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+        "command": "kubectl --chunk-size=500 get deployments -n default -o json",
+        "collector_id": "k8s.deployments",
+        "duration_ms": 57,
+        "redacted": true,
+        "collected_at": "2026-09-08T16:42:56.282176+00:00"
+      },
+      {
+        "id": "k8s.network:cluster/_cluster/current-context",
+        "kind": "k8s.network",
+        "source": "kubectl",
+        "status": "unavailable",
+        "target": {
+          "kind": "Cluster",
+          "name": "current-context",
+          "namespace": null,
+          "uid": null
+        },
+        "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+        "command": "kubectl --chunk-size=500 get services -n default -o json",
+        "collector_id": "k8s.network",
+        "duration_ms": 58,
+        "redacted": true,
+        "collected_at": "2026-09-08T16:42:56.283602+00:00"
+      },
+      {
+        "id": "k8s.nodes:cluster/_cluster/current-context",
+        "kind": "k8s.nodes",
+        "source": "kubectl",
+        "status": "unavailable",
+        "target": {
+          "kind": "Cluster",
+          "name": "current-context",
+          "namespace": null,
+          "uid": null
+        },
+        "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+        "command": "kubectl --chunk-size=500 get nodes -o json",
+        "collector_id": "k8s.nodes",
+        "duration_ms": 58,
+        "redacted": true,
+        "collected_at": "2026-09-08T16:42:56.283981+00:00"
+      },
+      {
+        "id": "k8s.storage:cluster/_cluster/current-context",
+        "kind": "k8s.storage",
+        "source": "kubectl",
+        "status": "unavailable",
+        "target": {
+          "kind": "Cluster",
+          "name": "current-context",
+          "namespace": null,
+          "uid": null
+        },
+        "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+        "command": "kubectl --chunk-size=500 get pvc -n default -o json",
+        "collector_id": "k8s.storage",
+        "duration_ms": 74,
+        "redacted": true,
+        "collected_at": "2026-09-08T16:42:56.299577+00:00"
+      },
+      {
+        "id": "k8s.workloads:cluster/_cluster/current-context",
+        "kind": "k8s.workloads",
+        "source": "kubectl",
+        "status": "unavailable",
+        "target": {
+          "kind": "Cluster",
+          "name": "current-context",
+          "namespace": null,
+          "uid": null
+        },
+        "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+        "command": "kubectl --chunk-size=500 get statefulsets -n default -o json",
+        "collector_id": "k8s.workloads",
+        "duration_ms": 85,
+        "redacted": true,
+        "collected_at": "2026-09-08T16:42:56.310762+00:00"
+      },
+      {
+        "id": "k8s.nodes.raw:cluster/_cluster/current-context",
+        "kind": "k8s.nodes.raw",
+        "source": "kubectl",
+        "status": "unavailable",
+        "target": {
+          "kind": "Cluster",
+          "name": "current-context",
+          "namespace": null,
+          "uid": null
+        },
+        "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+        "command": "kubectl --chunk-size=500 get nodes -o json",
+        "collector_id": "k8s.nodes.raw",
+        "duration_ms": 89,
+        "redacted": false,
+        "collected_at": "2026-09-08T16:42:56.314137+00:00"
+      },
+      {
+        "id": "k8s.pods.logs:cluster/_cluster/current-context",
+        "kind": "k8s.pods.logs",
+        "source": "kubectl",
+        "status": "not_applicable",
+        "target": {
+          "kind": "Cluster",
+          "name": "current-context",
+          "namespace": null,
+          "uid": null
+        },
+        "detail": "Skipped because required evidence was unavailable: k8s.pods.",
+        "command": null,
+        "collector_id": "k8s.pods.logs",
+        "duration_ms": 0,
+        "redacted": false,
+        "collected_at": "2026-09-08T16:42:56.314239+00:00"
+      },
+      {
+        "id": "k8s.metrics.nodes:cluster/_cluster/current-context",
+        "kind": "k8s.metrics.nodes",
+        "source": "kubectl",
+        "status": "unavailable",
+        "target": {
+          "kind": "Cluster",
+          "name": "current-context",
+          "namespace": null,
+          "uid": null
+        },
+        "detail": "metrics-server is unavailable or kubectl top is not permitted.",
+        "command": "kubectl top nodes --no-headers",
+        "collector_id": "k8s.metrics",
+        "duration_ms": 35,
+        "redacted": false,
+        "collected_at": "2026-09-08T16:42:56.349455+00:00"
+      },
+      {
+        "id": "k8s.metrics.pods:cluster/_cluster/current-context",
+        "kind": "k8s.metrics.pods",
+        "source": "kubectl",
+        "status": "unavailable",
+        "target": {
+          "kind": "Cluster",
+          "name": "current-context",
+          "namespace": null,
+          "uid": null
+        },
+        "detail": "metrics-server is unavailable or kubectl top is not permitted.",
+        "command": "kubectl top pods -A --no-headers",
+        "collector_id": "k8s.metrics",
+        "duration_ms": 35,
+        "redacted": false,
+        "collected_at": "2026-09-08T16:42:56.349465+00:00"
+      }
+    ],
+    "evidence_coverage": {
+      "total": 11,
+      "applicable": 10,
+      "usable": 0,
+      "not_applicable": 1,
+      "completeness": 0,
+      "by_status": {
+        "unavailable": 10,
+        "not_applicable": 1
+      },
+      "degraded": [
+        {
+          "kind": "k8s.pods",
+          "status": "unavailable",
+          "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions."
+        },
+        {
+          "kind": "k8s.events",
+          "status": "unavailable",
+          "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions."
+        },
+        {
+          "kind": "k8s.deployments",
+          "status": "unavailable",
+          "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions."
+        },
+        {
+          "kind": "k8s.network",
+          "status": "unavailable",
+          "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions."
+        },
+        {
+          "kind": "k8s.nodes",
+          "status": "unavailable",
+          "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions."
+        },
+        {
+          "kind": "k8s.storage",
+          "status": "unavailable",
+          "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions."
+        },
+        {
+          "kind": "k8s.workloads",
+          "status": "unavailable",
+          "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions."
+        },
+        {
+          "kind": "k8s.nodes.raw",
+          "status": "unavailable",
+          "detail": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions."
+        },
+        {
+          "kind": "k8s.pods.logs",
+          "status": "not_applicable",
+          "detail": "Skipped because required evidence was unavailable: k8s.pods."
+        },
+        {
+          "kind": "k8s.metrics.nodes",
+          "status": "unavailable",
+          "detail": "metrics-server is unavailable or kubectl top is not permitted."
+        },
+        {
+          "kind": "k8s.metrics.pods",
+          "status": "unavailable",
+          "detail": "metrics-server is unavailable or kubectl top is not permitted."
+        }
+      ]
+    },
+    "deep_evidence": {},
+    "pods": {
+      "healthy": false,
+      "error": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+      "evidence_id": "k8s.pods:cluster/_cluster/current-context",
+      "evidence_status": "unavailable"
+    },
+    "logs": {
+      "healthy": false,
+      "error": "Skipped because required evidence was unavailable: k8s.pods.",
+      "evidence_id": "k8s.pods.logs:cluster/_cluster/current-context",
+      "evidence_status": "not_applicable"
+    },
+    "events": {
+      "healthy": false,
+      "error": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+      "evidence_id": "k8s.events:cluster/_cluster/current-context",
+      "evidence_status": "unavailable"
+    },
+    "deployments": {
+      "healthy": false,
+      "error": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+      "evidence_id": "k8s.deployments:cluster/_cluster/current-context",
+      "evidence_status": "unavailable"
+    },
+    "network": {
+      "healthy": false,
+      "error": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+      "evidence_id": "k8s.network:cluster/_cluster/current-context",
+      "evidence_status": "unavailable"
+    },
+    "nodes": {
+      "healthy": false,
+      "error": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+      "evidence_id": "k8s.nodes:cluster/_cluster/current-context",
+      "evidence_status": "unavailable"
+    },
+    "storage": {
+      "healthy": false,
+      "error": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+      "evidence_id": "k8s.storage:cluster/_cluster/current-context",
+      "evidence_status": "unavailable"
+    },
+    "workloads": {
+      "healthy": false,
+      "error": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+      "evidence_id": "k8s.workloads:cluster/_cluster/current-context",
+      "evidence_status": "unavailable"
+    },
+    "graph": {
+      "nodes": [],
+      "edges": [],
+      "counts": {
+        "nodes": 0,
+        "edges": 0
+      }
+    },
+    "playbook_rounds": [],
+    "collection_limits": {
+      "max_list_items": 2000,
+      "truncated": false,
+      "reads": []
+    },
+    "timeline": [
+      {
+        "time": "22:12:56",
+        "message": "Investigation Started"
+      },
+      {
+        "time": "22:12:56",
+        "message": "Retrieved Pods"
+      },
+      {
+        "time": "22:12:56",
+        "message": "Read Pod Logs"
+      },
+      {
+        "time": "22:12:56",
+        "message": "Retrieved Events"
+      },
+      {
+        "time": "22:12:56",
+        "message": "Validated Deployments"
+      },
+      {
+        "time": "22:12:56",
+        "message": "Checked Networking"
+      },
+      {
+        "time": "22:12:56",
+        "message": "Checked Nodes"
+      },
+      {
+        "time": "22:12:56",
+        "message": "Checked Storage"
+      },
+      {
+        "time": "22:12:56",
+        "message": "Checked Extended Workloads"
+      },
+      {
+        "time": "22:12:56",
+        "message": "Collected Cluster Metrics"
+      },
+      {
+        "time": "22:12:56",
+        "message": "Evidence Collection Complete"
+      },
+      {
+        "time": "22:12:56",
+        "message": "Root Cause Generated"
+      }
+    ],
+    "executed_commands": [
+      "kubectl --chunk-size=500 get events -n default -o json",
+      "kubectl --chunk-size=500 get deployments -n default -o json",
+      "kubectl --chunk-size=500 get pods -n default -o json",
+      "kubectl --chunk-size=500 get services -n default -o json",
+      "kubectl --chunk-size=500 get endpoints -n default -o json",
+      "kubectl --chunk-size=500 get nodes -o json",
+      "kubectl --chunk-size=500 get pvc -n default -o json",
+      "kubectl --chunk-size=500 get pv -o json",
+      "kubectl --chunk-size=500 get statefulsets -n default -o json",
+      "kubectl --chunk-size=500 get daemonsets -n default -o json",
+      "kubectl --chunk-size=500 get jobs -n default -o json",
+      "kubectl --chunk-size=500 get cronjobs -n default -o json",
+      "kubectl --chunk-size=500 get nodes -o json",
+      "kubectl top pods -A --no-headers",
+      "kubectl top nodes --no-headers"
+    ],
+    "cluster_access": {
+      "provider": "kubeconfig",
+      "cluster_id": "current-context"
+    },
+    "collection_cache": {
+      "enabled": true,
+      "ttl_seconds": 60.0,
+      "hits": 0,
+      "misses": 15,
+      "oldest_evidence_seconds": null
+    }
+  },
+  "report": {
+    "incident_id": "INC-20260908-0E9B3943",
+    "title": "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+    "generated_at": "2026-09-08T16:42:56.351133+00:00",
+    "sections": [
+      {
+        "title": "Executive Summary",
+        "body": [
+          "Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions."
+        ],
+        "fields": [
+          {
+            "label": "Incident",
+            "value": "INC-20260908-0E9B3943"
+          },
+          {
+            "label": "Cluster",
+            "value": "Current Context"
+          },
+          {
+            "label": "Namespace",
+            "value": "unknown"
+          },
+          {
+            "label": "Severity",
+            "value": "Unknown"
+          },
+          {
+            "label": "Status",
+            "value": "success"
+          },
+          {
+            "label": "Confidence",
+            "value": "24%"
+          },
+          {
+            "label": "Evidence completeness",
+            "value": "0%"
+          },
+          {
+            "label": "Diagnosis source",
+            "value": "Deterministic analysis"
+          }
+        ],
+        "table": [],
+        "headers": [],
+        "note": ""
+      },
+      {
+        "title": "Impact",
+        "body": [
+          "Restart Required",
+          "No downtime expected",
+          "Rollback Available"
+        ],
+        "fields": [],
+        "table": [],
+        "headers": [],
+        "note": ""
+      },
+      {
+        "title": "Investigation Timeline",
+        "body": [],
+        "fields": [],
+        "table": [
+          [
+            "22:12:56",
+            "Investigation Started"
+          ],
+          [
+            "22:12:56",
+            "Retrieved Pods"
+          ],
+          [
+            "22:12:56",
+            "Read Pod Logs"
+          ],
+          [
+            "22:12:56",
+            "Retrieved Events"
+          ],
+          [
+            "22:12:56",
+            "Validated Deployments"
+          ],
+          [
+            "22:12:56",
+            "Checked Networking"
+          ],
+          [
+            "22:12:56",
+            "Checked Nodes"
+          ],
+          [
+            "22:12:56",
+            "Checked Storage"
+          ],
+          [
+            "22:12:56",
+            "Checked Extended Workloads"
+          ],
+          [
+            "22:12:56",
+            "Collected Cluster Metrics"
+          ],
+          [
+            "22:12:56",
+            "Evidence Collection Complete"
+          ],
+          [
+            "22:12:56",
+            "Root Cause Generated"
+          ]
+        ],
+        "headers": [
+          "Time",
+          "Step"
+        ],
+        "note": "Times are when the platform completed each collection step."
+      },
+      {
+        "title": "Root Cause",
+        "body": [
+          "The diagnosis was generated from collected Kubernetes evidence. No failure pattern matched the observed signals."
+        ],
+        "fields": [],
+        "table": [],
+        "headers": [
+          "Candidate cause",
+          "Confidence",
+          "Severity",
+          "Selection"
+        ],
+        "note": ""
+      },
+      {
+        "title": "Evidence",
+        "body": [
+          "0 of 10 applicable evidence records were collected successfully.",
+          "1 record(s) did not apply to this cluster and were excluded from that figure.",
+          "Gap \u2014 k8s.pods: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+          "Gap \u2014 k8s.events: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+          "Gap \u2014 k8s.deployments: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+          "Gap \u2014 k8s.network: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+          "Gap \u2014 k8s.nodes: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+          "Gap \u2014 k8s.storage: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+          "Gap \u2014 k8s.workloads: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+          "Gap \u2014 k8s.nodes.raw: Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+          "Gap \u2014 k8s.pods.logs: Skipped because required evidence was unavailable: k8s.pods.",
+          "Gap \u2014 k8s.metrics.nodes: metrics-server is unavailable or kubectl top is not permitted.",
+          "Gap \u2014 k8s.metrics.pods: metrics-server is unavailable or kubectl top is not permitted."
+        ],
+        "fields": [],
+        "table": [],
+        "headers": [
+          "Severity",
+          "Observation",
+          "Provenance"
+        ],
+        "note": ""
+      },
+      {
+        "title": "Confidence Assessment",
+        "body": [
+          "Overall confidence: 24%."
+        ],
+        "fields": [],
+        "table": [
+          [
+            "Evidence Strength",
+            "35%",
+            "weight 70%",
+            "contributes 24"
+          ],
+          [
+            "Evidence Completeness",
+            "0%",
+            "weight 30%",
+            "contributes 0"
+          ]
+        ],
+        "headers": [
+          "Component",
+          "Score",
+          "Weight",
+          "Contribution"
+        ],
+        "note": ""
+      },
+      {
+        "title": "Resolution",
+        "body": [
+          "Review the collected pod, event, deployment, and networking evidence for the first failing workload."
+        ],
+        "fields": [],
+        "table": [],
+        "headers": [],
+        "note": ""
+      },
+      {
+        "title": "Lessons Learned",
+        "body": [
+          "Evidence that would have shortened this investigation:",
+          "  - No failing pod logs were collected.",
+          "  - Metrics-server data is unavailable or not permitted.",
+          "  - Storage resources could not be inspected.",
+          "  - Node conditions could not be inspected.",
+          "  - Unable to connect to Kubernetes cluster. Verify kubeconfig, cluster access, and kubectl permissions.",
+          "  - Skipped because required evidence was unavailable: k8s.pods.",
+          "  - metrics-server is unavailable or kubectl top is not permitted."
+        ],
+        "fields": [],
+        "table": [],
+        "headers": [],
+        "note": ""
+      },
+      {
+        "title": "Preventive Actions",
+        "body": [
+          "Add health checks, clear rollout alerts, and deployment validation for Kubernetes manifests.",
+          "Follow-up actions:",
+          "  - Review warning events and failing workload conditions first.",
+          "  - Collect additional logs or metrics for any workload with unclear evidence."
+        ],
+        "fields": [],
+        "table": [],
+        "headers": [],
+        "note": ""
+      },
+      {
+        "title": "Appendix: Commands Executed",
+        "body": [
+          "kubectl --chunk-size=500 get events -n default -o json",
+          "kubectl --chunk-size=500 get deployments -n default -o json",
+          "kubectl --chunk-size=500 get pods -n default -o json",
+          "kubectl --chunk-size=500 get services -n default -o json",
+          "kubectl --chunk-size=500 get endpoints -n default -o json",
+          "kubectl --chunk-size=500 get nodes -o json",
+          "kubectl --chunk-size=500 get pvc -n default -o json",
+          "kubectl --chunk-size=500 get pv -o json",
+          "kubectl --chunk-size=500 get statefulsets -n default -o json",
+          "kubectl --chunk-size=500 get daemonsets -n default -o json",
+          "kubectl --chunk-size=500 get jobs -n default -o json",
+          "kubectl --chunk-size=500 get cronjobs -n default -o json",
+          "kubectl --chunk-size=500 get nodes -o json",
+          "kubectl top pods -A --no-headers",
+          "kubectl top nodes --no-headers"
+        ],
+        "fields": [],
+        "table": [],
+        "headers": [],
+        "note": "Every command the platform ran during this investigation. All are read-only; the platform cannot modify a cluster."
+      }
+    ]
+  }
+}

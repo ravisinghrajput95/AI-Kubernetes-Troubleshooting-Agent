@@ -8,7 +8,31 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
-## [Unreleased]
+## [0.2.3] — 2026-09-08
+
+Six changes, no breaking change. **Every one is in the checking apparatus
+rather than the platform**, which is the whole character of this release: one
+defect in a shipped guarantee, and five in the things that were supposed to
+notice.
+
+The shipped defect is F27 — an agent-collected evidence record did not say
+whose RBAC produced it. The reads *were* impersonated on both paths; the record
+was not, so the two transports disagreed about whose permissions produced the
+same fact, and an audit of an agent-served investigation could not answer it.
+
+The rest are harnesses that were wrong about themselves. The differential
+comparison bracketed one provider and so could not see kubectl's own
+nondeterminism. The soak refused to start without a caller RBAC grant and then
+routed 100% of collection through an agent that ignored it. The console's
+overflow check passed identically whether or not there was anything long enough
+to overflow. The SSE check punished the platform for being fast and failed a
+required job by three tenths of a percentage point. And `--all-containers` was
+recorded as having a stable container order it does not have.
+
+Two of them were caught by measuring before building something, and one by
+checking a claim I had just written and found to be an over-claim. None came
+from a test suite: 1,584 backend and 256 frontend tests are green with all six
+present.
 
 ### Fixed
 
