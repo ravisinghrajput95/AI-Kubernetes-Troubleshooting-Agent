@@ -528,6 +528,37 @@ def sample_thread(
         stop.wait(interval)
 
 
+def host_disturbances(samples, workers, drop: float = 0.20) -> list[int]:
+    """Sample indices where *every* worker's RSS fell sharply at once.
+
+    Two independent processes do not release memory together for a reason of
+    their own, so a simultaneous fall is the host reclaiming pages — and the
+    refault that follows reads as growth to anything fitting a slope.
+
+    This run is why the check exists. Both workers stepped down at minute 15
+    and wandered for eight minutes (worker-2 as low as 35 MB against a 124 MB
+    peak) before settling at a new baseline. The published summary reported
+    start, peak, end and a second-half trend, so the trough appeared nowhere
+    and worker-2 was credited with **+8.4 MB/h while ending 41 MB below its
+    start**. Neither number was wrong on its own; together they described a run
+    that did not happen.
+
+    `ps rss` is not the noisy part: sampled every two seconds for a minute
+    under the same workload it did not move by a single kilobyte.
+    """
+    hits: list[int] = []
+    for index in range(1, len(samples)):
+        previous, current = samples[index - 1], samples[index]
+        falls = [
+            current.rss[w] < previous.rss[w] * (1.0 - drop)
+            for w in workers
+            if previous.rss.get(w) and current.rss.get(w)
+        ]
+        if falls and all(falls) and len(falls) == len(workers):
+            hits.append(index)
+    return hits
+
+
 def trend_per_hour(points: list[tuple[float, float]]) -> float:
     """Least-squares slope in units per hour. Empty or degenerate input is 0."""
     if len(points) < 3:
@@ -942,15 +973,35 @@ def summarise(state: dict) -> int:
     # --- memory --------------------------------------------------------------
     print("\nResident memory")
     half = samples[len(samples) // 2 :]
+    disturbed = host_disturbances(samples, state["worker_names"])
     for worker in state["worker_names"]:
         series = [(s.at, s.rss[worker]) for s in samples if worker in s.rss and s.rss[worker] > 0]
-        late = [(s.at, s.rss[worker]) for s in half if worker in s.rss and s.rss[worker] > 0]
         if not series:
             continue
-        slope = trend_per_hour(late)
+        # A disturbed run gets no trend at all. Fitting one *after* the last
+        # disturbance was tried and is worse: the refault climbs back toward
+        # the old baseline for the rest of the run, so worker-2 went from
+        # "+8.4 MB/h" to "+13.1 MB/h" — a better-founded window fitted to the
+        # same recovery. There is no window that makes this run answer the
+        # question, so it says so rather than publishing a number it cannot
+        # support.
+        late = [(s.at, s.rss[worker]) for s in half if worker in s.rss and s.rss[worker] > 0]
+        trend = "n/a (host disturbance)" if disturbed else f"{trend_per_hour(late):+.1f} MB/h"
         print(
-            f"  {worker:<10} start {series[0][1]:6.1f} MB  peak {max(v for _, v in series):6.1f} MB"
-            f"  end {series[-1][1]:6.1f} MB  trend(2nd half) {slope:+.1f} MB/h"
+            f"  {worker:<10} start {series[0][1]:6.1f} MB  low {min(v for _, v in series):6.1f} MB"
+            f"  peak {max(v for _, v in series):6.1f} MB  end {series[-1][1]:6.1f} MB"
+            f"  trend {trend}"
+        )
+    if disturbed:
+        origin = samples[0].at
+        at = ", ".join(f"{(samples[i].at - origin) / 60:.0f}m" for i in disturbed[:4])
+        print(
+            f"  ! every worker's resident memory fell together at {at} — two"
+            f" independent processes do not release memory at the same instant,"
+            f" so that is the host reclaiming pages. The refault that follows"
+            f" reads as growth to anything fitting a slope, which is why no"
+            f" trend is reported for this run. Memory is the one claim this hour"
+            f" cannot make; the rest of the report stands."
         )
     for worker in state["worker_names"]:
         threads = [s.threads.get(worker, 0) for s in samples if s.threads.get(worker)]

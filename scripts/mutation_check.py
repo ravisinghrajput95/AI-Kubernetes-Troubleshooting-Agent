@@ -79,6 +79,22 @@ MUTATIONS = [
         tests="tests/test_differential_control.py",
     ),
     Mutation(
+        name="soak-refuses-a-trend-through-a-host-disturbance",
+        why=(
+            "The soak publishes resident memory as start/peak/end plus a "
+            "second-half trend, and the envelope quotes those trends as "
+            "evidence of no leak. A run where both workers' RSS fell together "
+            "at minute 15 — worker-2 to 35 MB against a 124 MB peak — reported "
+            "`start 118.5 MB, end 77.2 MB, trend +8.4 MB/h`: growth credited to "
+            "a process that ended 41 MB lower, with the trough shown nowhere "
+            "because only the peak was printed."
+        ),
+        path="../scripts/soak_bench.py",
+        old="        if falls and all(falls) and len(falls) == len(workers):",
+        new="        if False:  # mutation: no fall is ever the host's doing",
+        tests="tests/test_soak_memory_report.py",
+    ),
+    Mutation(
         name="sse-check-counts-only-live-frames",
         why=(
             "The SSE incremental-delivery check compared the client's whole "

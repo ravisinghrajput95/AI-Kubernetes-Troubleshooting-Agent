@@ -8,6 +8,42 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
+## [Unreleased]
+
+### Fixed
+
+- **The soak credited a worker with memory growth for ending 41 MB lower.** It
+  publishes resident memory as start / peak / end plus a trend over the second
+  half, and `docs/PERFORMANCE_ENVELOPE.md` quotes those trends as evidence of
+  no leak. A 60-minute run reported `worker-2 start 118.5 MB, end 77.2 MB,
+  trend(2nd half) +8.4 MB/h`. Both numbers were computed correctly; together
+  they describe a run that did not happen.
+
+  Both workers had stepped down together at minute 15 — worker-2 as low as
+  **34.9 MB against a 123.8 MB peak** — wandered for eight minutes and settled
+  on a new baseline. Two independent processes do not release memory at the
+  same instant for a reason of their own, so that is the host reclaiming pages,
+  and the refault that follows reads as growth to anything fitting a slope. The
+  trough appeared nowhere in the report, because only the peak was printed.
+
+  `ps rss` is not the noisy part, which was checked rather than assumed:
+  sampled every two seconds for a minute under the same workload it did not
+  move by a single kilobyte.
+
+  So the report prints the **low** as well as the peak, and a run with a
+  simultaneous fall gets **no trend at all**. Fitting one after the last
+  disturbance was the obvious fix and is worse — the refault climbs back toward
+  the old baseline for the rest of the run, taking worker-2 from +8.4 to
+  **+13.1 MB/h** on a better-founded window. There is no window that makes such
+  a run answer the question, so it says so: `trend n/a (host disturbance)`,
+  naming the minutes it fell. Memory is the one claim that hour cannot make;
+  every other number in it stands.
+
+  Found by running the first 60-minute soak with the agent impersonating. Five
+  hermetic tests driven by the real series, three mutations watched fail —
+  including the over-strict one, where a single worker falling alone would be
+  called a host event and a bounded cache evicting would be discarded as noise.
+
 ## [0.2.3] — 2026-09-08
 
 Six changes, no breaking change. **Every one is in the checking apparatus

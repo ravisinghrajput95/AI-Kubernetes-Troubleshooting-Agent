@@ -1867,6 +1867,21 @@ zero. Same rule as `_safe()` in `app/observability`.
 against one kind cluster is a stress test of Docker Desktop, not a workload;
 it took the daemon down twice before an hour was reached. An hour is the point.
 
+**A memory trend is only meaningful on an undisturbed run, and the report used
+to publish one either way.** Both workers' RSS fell together at minute 15 of a
+60-minute run — worker-2 to 34.9 MB against a 123.8 MB peak — wandered for
+eight minutes and settled on a new baseline. Two independent processes do not
+release memory at the same instant for a reason of their own, so that is the
+host reclaiming pages, and the refault that follows reads as *growth* to
+anything fitting a slope: the run reported `start 118.5 MB, end 77.2 MB, trend
++8.4 MB/h`. Both numbers were computed correctly and together they described a
+run that did not happen, with the trough printed nowhere because only the peak
+was. `host_disturbances()` detects the simultaneous fall, the report prints the
+**low** beside the peak, and a disturbed run gets `trend n/a` — fitting one
+after the last disturbance was tried and is worse, taking worker-2 to +13.1
+MB/h on the recovery. **`ps rss` is not the noisy part**: sampled every two
+seconds for a minute under the same workload it did not move by a kilobyte.
+
 **Send the output somewhere that is not `/tmp`.** The run's working directory
 defaults to `/tmp/k8s-soak-<stamp>` and `--json` writes wherever it is pointed;
 macOS cleans `/tmp`, and a completed hour whose report and series lived there

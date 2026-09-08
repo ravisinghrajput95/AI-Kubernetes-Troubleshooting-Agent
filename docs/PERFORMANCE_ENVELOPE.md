@@ -316,6 +316,51 @@ Two things an hour found that a short run cannot:
 loopback. It is a claim about *duration*, not about scale — the scale numbers
 are above, and they were taken separately for that reason.
 
+#### A third hour — the first with the agent impersonating
+
+Every soak before this one ran its agent without `--impersonate`, so all of its
+reads went through the agent's own broad ServiceAccount. `--agent` routes 100%
+of collection through the agent, so **F13's "the platform cannot see more than
+you can" had never been exercised by a soak at all** — the caller RBAC grant the
+run refuses to start without was protecting a path it did not take. Run again on
+2026-09-08 against v0.2.3 with the flag on:
+
+| | second hour | third hour (impersonating) |
+|---|---|---|
+| investigations | 1,167, 100% usable | **1,166, 100% usable** |
+| longest quiet gap | 0.2m | 0.2m |
+| latency | p50 0.41s, p95 0.62s | **p50 0.45s**, p95 0.62s, max 2.57s |
+| throughput | 19.4/min | 19.4/min |
+| certificate renewals | 3, 0 stream drops | 3, 0 stream drops, 98 after the last |
+| sweep cost | 9 ms | 11 ms |
+| cache | 77% reused | 77% reused |
+| SSE | 29,288 frames, 0 out of order | 28,931 frames, 0 out of order |
+
+**Impersonation costs about 10% of p50 and nothing measurable at p95.** Every
+read carries `Impersonate-User` and an extra authorization check at the API
+server; 0.41s → 0.45s is the price, throughput is unchanged, and the guarantee
+is now one a soak has actually held for an hour.
+
+**This run reports no memory trend, and that is the finding.** Both workers'
+resident memory fell together at minute 15 — worker-2 to **34.9 MB against a
+123.8 MB peak** — wandered for eight minutes and settled on a new baseline. Two
+independent processes do not release memory at the same instant for a reason of
+their own; the host reclaimed pages, and the refault that follows reads as
+growth to anything fitting a slope. The report originally said
+`start 118.5 MB, end 77.2 MB, trend +8.4 MB/h`: growth credited to a process
+that ended 41 MB lower, with the trough printed nowhere.
+
+`ps rss` is not the noisy part — sampled every two seconds for a minute under
+the same workload it did not move by a kilobyte. The harness now prints the low
+as well as the peak and refuses a trend for a disturbed run; fitting one after
+the disturbance is worse, taking worker-2 to +13.1 MB/h on the recovery.
+
+**Read the first two hours' trends knowing this was invisible then.** +0.8,
++7.9, +0.1 and +0.6 MB/h were all reported by a harness that could not have
+told you a disturbance had happened. Nothing says those hours were disturbed —
+their starts, peaks and ends are mutually consistent, which this one's are
+not — but they were measured on an instrument that had no such check.
+
 #### A second hour, on a larger cluster
 
 The same command was run again on 2026-09-06 against a 24-pod cluster, and the
