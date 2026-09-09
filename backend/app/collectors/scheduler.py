@@ -57,7 +57,7 @@ class CollectionScheduler:
                 collectors=", ".join(collector.id for collector in runnable),
             )
 
-            context.report(
+            await context.report(
                 f"Collecting evidence (wave {index} of {len(waves)})",
                 wave=index,
                 total_waves=len(waves),
@@ -163,7 +163,7 @@ class CollectionScheduler:
                     )
 
         duration_ms = int((time.monotonic() - started) * 1000)
-        context.report(
+        await context.report(
             getattr(collector, "label", "") or f"Collected {collector.id}",
             collector=collector.id,
             duration_ms=duration_ms,

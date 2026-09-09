@@ -91,10 +91,62 @@ python scripts/fleet_bench.py --clusters 48 --agent-processes 6 \
     --investigations 400 --load-processes 6 --slots 32
 ```
 
-**Still not measured:** where the per-worker limit actually binds. It is a
-serialisation inside one process, not CPU and not the Postgres pool, but which
-of the loop, the GIL or the gRPC stream handling dominates was not isolated.
-Scale-out makes it a sizing question rather than a blocker.
+**Attempt 4 — the serialisation, isolated and removed.** The line above used
+to read *"still not measured: which of the loop, the GIL or the gRPC stream
+handling dominates."* It was **the loop**, and the sampling in Attempt 3 had
+already photographed it: a stack sampler cannot tell a thread *waiting for
+work* from a thread *stuck in a socket*, so one worker's event loop blocked
+inside a synchronous write reads as "92% idle, every non-idle sample in a
+Postgres or Redis socket wait". Both descriptions are of the same worker. What
+was missing was never another profile — it was a measure of whether the loop
+could still advance a task, which is what `scripts/loop_bench.py` adds.
+
+A progress event is a committed Postgres row plus a Redis publish. Every call
+site — the collection scheduler, the playbook orchestrator, the investigation
+runner — is a coroutine on the event loop, and `ProgressReporter.report` was
+synchronous, so each of the ~50 progress events an investigation emits stopped
+the worker advancing *anything*: not the HTTP request beside it, not an SSE
+frame, not a message on any attached agent's gRPC stream. `create`, `enqueue`
+and `mark_running` did the same on the submit and start paths.
+
+```bash
+docker compose up -d postgres redis
+python scripts/loop_bench.py --investigations 48 --slots 8 --reset
+```
+
+| | before | after |
+|---|---|---|
+| 48 investigations | 10.04 s | **5.06 s / 5.34 s** |
+| event loop blocked | 97% of wall clock | **33–36%** |
+| job-store calls made *on* the loop | 2,592 of 2,688 | **0 of 2,688** |
+| loop lag p50 / p99 | 75 ms / 306 ms | **0.8 ms / 7.1 ms** |
+
+Bracketed — after, before, after — because the absolute throughput on a laptop
+drifts with whatever else is running, and only a measurement that brackets its
+control can tell a fix from a quiet machine. Both *after* rounds agree and sit
+either side of the *before*.
+
+**The p50 loop lag is the number with the widest reach**, and it is not a
+throughput number at all. Every request that worker serves, every SSE frame it
+writes and every agent stream message it handles was waiting a median 75 ms for
+the loop, on a platform whose entire measured work per investigation is 0.21 s.
+
+**What has not changed is the conclusion.** Throughput is still flat against
+`JOB_MAX_CONCURRENT` — 2, 8 and 32 slots all land within noise of each other in
+both arms — so the platform's own rule still applies and *the remaining ceiling
+is still not concurrency*. What moved is its height: roughly **2x per worker**,
+with the loop no longer the binding constraint and CPU now measured at 144–169%
+of one core rather than a machine sitting idle. **Add workers, not slots**
+remains the operational advice.
+
+**Two arms measured against different amounts of data are not comparable**, and
+this cost a complete A/B before it was noticed. Each investigation writes ~50
+rows to `investigation_events`; a few runs leave tens of thousands behind, and
+the arm that runs second is measured against the bigger table. The first
+uncontrolled comparison reported 2.0x where the controlled one reports 1.9-3.0x
+depending on harness shape — the direction survived, but the number did not.
+`loop_bench.py` prints the starting row count and takes `--reset` for this
+reason.
 
 ### Memory per investigation
 

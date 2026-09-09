@@ -99,7 +99,7 @@ class InvestigationOrchestrator:
                 playbooks=", ".join(selected),
                 count=len(planned),
             )
-            context.report(
+            await context.report(
                 f"Running deep investigation ({', '.join(selected)})",
                 round=round_number,
                 playbooks=selected,

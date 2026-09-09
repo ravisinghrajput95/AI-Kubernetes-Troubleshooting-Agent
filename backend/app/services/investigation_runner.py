@@ -71,7 +71,7 @@ async def run_investigation(
         investigation = await service.run()
 
     if reporter is not None:
-        reporter.report("Analyzing root cause")
+        await reporter.report("Analyzing root cause")
 
     # Reasoning and report writing both block; keep them off the event loop.
     with span("analyse"):
@@ -84,7 +84,7 @@ async def run_investigation(
     )
 
     if reporter is not None:
-        reporter.report("Root Cause Generated")
+        await reporter.report("Root Cause Generated")
 
     with span("report"):
         history_item = await asyncio.to_thread(
@@ -97,7 +97,7 @@ async def run_investigation(
         )
 
     if reporter is not None:
-        reporter.report("Report generated")
+        await reporter.report("Report generated")
 
     logger.info("Investigation finished for context={context}", context=service.context)
     return {

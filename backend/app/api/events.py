@@ -138,7 +138,7 @@ async def _start(trigger, principal) -> str | None:
     from app.jobs.runner import get_job_runner
 
     try:
-        job = get_job_runner().submit(
+        job = await get_job_runner().submit(
             # An alert is a claim that the cluster just changed, so reusing a
             # read taken before it fired would investigate the world the alert
             # is complaining about the absence of. `refresh` still *writes* what

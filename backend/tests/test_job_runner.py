@@ -61,7 +61,7 @@ class TestDispatch:
         store = InMemoryJobStore()
         runner = InvestigationJobRunner(store)
 
-        job = runner.submit(None)
+        job = await runner.submit(None)
         await asyncio.wait_for(never_finishes.wait(), timeout=2)
 
         assert runner.busy == 1
@@ -72,7 +72,7 @@ class TestDispatch:
         store = QueueingStore()
         runner = InvestigationJobRunner(store)
 
-        job = runner.submit(None)
+        job = await runner.submit(None)
         await asyncio.sleep(0.05)
 
         assert store.queued == [job.id]
@@ -85,7 +85,7 @@ class TestCancellation:
         store = InMemoryJobStore()
         runner = InvestigationJobRunner(store)
 
-        job = runner.submit(None)
+        job = await runner.submit(None)
         await asyncio.wait_for(never_finishes.wait(), timeout=2)
 
         store.request_cancel(job.id)
@@ -122,7 +122,7 @@ class TestShutdown:
         store = InMemoryJobStore()
         runner = InvestigationJobRunner(store)
 
-        job = runner.submit(None)
+        job = await runner.submit(None)
         await asyncio.wait_for(never_finishes.wait(), timeout=2)
 
         await runner.shutdown()
@@ -135,8 +135,8 @@ class TestShutdown:
         store = InMemoryJobStore()
         runner = InvestigationJobRunner(store)
 
-        runner.submit(None)
-        runner.submit(None)
+        await runner.submit(None)
+        await runner.submit(None)
         await asyncio.wait_for(never_finishes.wait(), timeout=2)
 
         await runner.shutdown()

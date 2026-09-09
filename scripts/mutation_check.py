@@ -62,6 +62,35 @@ class Mutation:
 
 MUTATIONS = [
     Mutation(
+        name="progress-reporting-blocks-the-event-loop",
+        why=(
+            "F28: a progress event is a committed Postgres row plus a Redis "
+            "publish, and every call site is a coroutine on the event loop, so "
+            "reporting it inline stopped the worker advancing any task at all "
+            "— HTTP, SSE and every attached agent's gRPC stream — around fifty "
+            "times per investigation. Measured against real Postgres and Redis: "
+            "2,592 of 2,688 store calls on the loop, blocked 97% of wall clock, "
+            "and 48 investigations took 10.04s against 5.06s once dispatched. "
+            "The whole test suite passed with the defect present, because no "
+            "test had ever driven a ProgressReporter — every progress test "
+            "called store.publish() directly, so the bridge was covered at "
+            "neither end."
+        ),
+        path="app/jobs/runner.py",
+        old="""    async def report(self, message: str, **data) -> None:
+        await asyncio.to_thread(
+            self._store.publish,
+            self._job_id,
+            JobEvent(JobEventType.PROGRESS, message, data=data),
+        )""",
+        new="""    async def report(self, message: str, **data) -> None:
+        self._store.publish(  # mutation: back on the event loop
+            self._job_id,
+            JobEvent(JobEventType.PROGRESS, message, data=data),
+        )""",
+        tests="tests/test_progress_reporting.py",
+    ),
+    Mutation(
         name="churn-is-not-divergence",
         why=(
             "F26: the differential suite compared two live reads and called "

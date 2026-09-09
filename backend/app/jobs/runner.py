@@ -85,14 +85,30 @@ def agent_affinity(request: InvestigationRequest | None) -> str:
 
 
 class JobProgressReporter:
-    """Bridges collection progress into a job's event stream."""
+    """Bridges collection progress into a job's event stream.
+
+    **The publish goes to a worker thread, and that is the whole reason this
+    protocol is awaitable.** On the distributed store a progress event is a
+    committed Postgres row plus a Redis publish — two network round trips —
+    and every call site is a coroutine on the event loop. Reported inline, a
+    worker stopped advancing *any* task for the duration, roughly fifty times
+    per investigation: measured at 94% of wall clock blocked, of which
+    `publish` was 89.6%, and a p50 event-loop lag of 75 ms that every HTTP
+    request, SSE frame and agent stream message on that worker waited behind.
+
+    Ordering is preserved because the caller awaits: the row is committed
+    before the collector's coroutine proceeds, so sequences stay monotonic and
+    a terminal event cannot overtake the progress events before it. What
+    changes is only that *other* tasks run during the write.
+    """
 
     def __init__(self, store, job_id: str) -> None:
         self._store = store
         self._job_id = job_id
 
-    def report(self, message: str, **data) -> None:
-        self._store.publish(
+    async def report(self, message: str, **data) -> None:
+        await asyncio.to_thread(
+            self._store.publish,
             self._job_id,
             JobEvent(JobEventType.PROGRESS, message, data=data),
         )
@@ -121,13 +137,26 @@ class InvestigationJobRunner:
         """How many investigations this worker is currently running."""
         return len(self._tasks)
 
-    def submit(
+    async def submit(
         self,
         request: InvestigationRequest | None,
         principal: Principal | None = None,
     ) -> InvestigationJob:
+        """Accept an investigation. **Async because accepting one is I/O.**
+
+        `create` is an insert plus a `queued` event, and on the distributed
+        store `enqueue` is a presence read and a queue push — four network
+        round trips on the request path. Inline, they were four round trips
+        this worker's event loop spent unable to advance anything else, so a
+        burst of submissions delayed every SSE frame and agent stream on it,
+        and each submission waited behind the ones before it.
+
+        `start` stays on the loop: it creates a task, which is the one thing
+        here that requires this thread.
+        """
         payload = request.model_dump() if request else {}
-        job = self.store.create(
+        job = await asyncio.to_thread(
+            self.store.create,
             payload,
             owner=principal.subject if principal else "",
             principal=principal.to_dict() if principal else None,
@@ -143,7 +172,13 @@ class InvestigationJobRunner:
 
         metrics.investigation_submitted()
         if self.store.distributed:
-            self.store.enqueue(job.id, agent_affinity(request))
+            # `agent_affinity` reads the presence index, so the routing lookup
+            # is I/O too and goes to the thread with the push it feeds.
+            # Both in the same dispatch: passing `agent_affinity(request)` as
+            # an argument would evaluate the presence read on the loop and send
+            # only the push to the thread — a comment that reads right beside
+            # code that does half of it.
+            await asyncio.to_thread(lambda: self.store.enqueue(job.id, agent_affinity(request)))
         else:
             self.start(job.id, request, principal)
 
@@ -277,8 +312,6 @@ class InvestigationJobRunner:
         principal: Principal | None = None,
         already_running: bool = False,
     ) -> None:
-        if not already_running:
-            self.store.mark_running(job_id)
         reporter = JobProgressReporter(self.store, job_id)
         watchdog = self._start_watchdog(job_id)
         # Timed here rather than from the stored row: this is the process that
@@ -287,6 +320,14 @@ class InvestigationJobRunner:
         started = time.perf_counter()
 
         try:
+            if not already_running:
+                # Off the loop for the same reason as the progress events, and
+                # **inside the try**, which the synchronous version did not have
+                # to be. Dispatching it introduces an await, and an await is a
+                # place a cancellation can land — outside, a job cancelled in
+                # that window would leave the loop with no terminal transition
+                # at all and wait for the reaper's lease expiry to settle it.
+                await asyncio.to_thread(self.store.mark_running, job_id)
             result = await run_investigation(
                 request,
                 reporter=reporter,

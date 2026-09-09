@@ -172,7 +172,7 @@ async def start_investigation_job(
 
     Must stay async: task creation requires the event loop thread.
     """
-    job = runner.submit(request, principal=principal)
+    job = await runner.submit(request, principal=principal)
     get_audit_log().record_action(
         "investigation.submit",
         principal,

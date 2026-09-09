@@ -105,7 +105,7 @@ async def start_investigation(
     from app.jobs.runner import get_job_runner
     from app.models.investigation import InvestigationRequest
 
-    job = get_job_runner().submit(
+    job = await get_job_runner().submit(
         InvestigationRequest(context=cluster or None, namespace=namespace or None),
         principal=principal,
     )

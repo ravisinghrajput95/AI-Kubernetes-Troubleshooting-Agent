@@ -48,15 +48,33 @@ class CollectionBudget:
 
 
 class ProgressReporter(Protocol):
-    """Sink for progress notifications emitted during collection."""
+    """Sink for progress notifications emitted during collection.
 
-    def report(self, message: str, **data: Any) -> None: ...
+    **Awaitable, because the only implementation that does anything writes to
+    a database.** `JobProgressReporter.report` commits a row and publishes on
+    Redis, and every call site is inside a coroutine on the event loop — so a
+    synchronous protocol meant a worker stopped serving HTTP, SSE and every
+    attached agent's gRPC stream for the duration of two network round trips,
+    around fifty times per investigation. Measured before the change: the loop
+    was blocked 94% of wall clock and `publish` was 89.6% of it.
+
+    Making the protocol itself async is what puts the thread dispatch in one
+    place. A sink that needs a thread asks for one; a caller only ever awaits,
+    and there is no second thing to remember at a new call site.
+    """
+
+    async def report(self, message: str, **data: Any) -> None: ...
 
 
 class NullProgressReporter:
-    """Default reporter: collection is silent unless someone is listening."""
+    """Default reporter: collection is silent unless someone is listening.
 
-    def report(self, message: str, **data: Any) -> None:
+    Deliberately does not dispatch to a thread — there is nothing to dispatch,
+    and a sync investigation should pay nothing for a progress sink it has not
+    installed.
+    """
+
+    async def report(self, message: str, **data: Any) -> None:
         return None
 
 
@@ -75,8 +93,8 @@ class CollectionContext:
         """Fetch evidence declaratively. The interface collectors should use."""
         return await self.provider.fetch(request)
 
-    def report(self, message: str, **data: Any) -> None:
-        self.reporter.report(message, **data)
+    async def report(self, message: str, **data: Any) -> None:
+        await self.reporter.report(message, **data)
 
     @property
     def elapsed(self) -> float:

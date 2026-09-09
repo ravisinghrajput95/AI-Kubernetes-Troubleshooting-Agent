@@ -346,7 +346,7 @@ class TestTheRefusalReachesTheCaller:
 
         store = InMemoryJobStore()
         runner = InvestigationJobRunner(store)
-        job = runner.submit(InvestigationRequest(context="prod-eu"))
+        job = await runner.submit(InvestigationRequest(context="prod-eu"))
 
         import asyncio
 

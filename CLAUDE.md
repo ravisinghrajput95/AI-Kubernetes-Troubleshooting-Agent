@@ -289,6 +289,30 @@ Scope boundary: M3 gives durable, correctly-terminated records, **not mid-run re
 
 Progress flows through the `ProgressReporter` protocol on `CollectionContext` (default `NullProgressReporter`, so sync runs stay silent). Collectors carry a `label` used as the progress message — the generic scheduler must not gain a mapping of Kubernetes collector ids.
 
+**`ProgressReporter.report` is `async`, and that is load-bearing rather than
+stylistic.** On the distributed store a progress event is a committed Postgres
+row plus a Redis publish, and every call site is a coroutine on the event loop
+— so while it was synchronous, each of the ~50 events an investigation emits
+stopped the worker advancing *any* task: not the HTTP request beside it, not an
+SSE frame, not a message on any attached agent's gRPC stream. Measured at
+**2,592 of 2,688 job-store calls on the loop, blocked 97% of wall clock, p50
+lag 75 ms**, against a platform whose whole measured work per investigation is
+0.21 s. Awaitable is what puts the thread dispatch in the **one implementation
+that does I/O** — `JobProgressReporter` — rather than at each call site, so a
+caller only ever awaits and there is nothing to remember at a new one;
+`NullProgressReporter` deliberately dispatches nothing, because a sync run
+should pay nothing for a sink it has not installed. **Ordering is preserved by
+the caller awaiting**: the row is committed before the collector's coroutine
+proceeds, so sequences stay monotonic and a terminal event cannot overtake the
+progress before it. Do not make this fire-and-forget to save the await — the
+sequence is the SSE frame id `Last-Event-ID` resumes from. `submit` is `async`
+for the same reason, and `start` is not: it creates a task, which is the one
+thing there that needs the loop thread. Pinned by
+`tests/test_progress_reporting.py`, which observes lag from a heartbeat task
+rather than checking the calling thread — a thread check would have to name
+each store method, and the whole suite passed with the defect present because
+no test had ever driven a `ProgressReporter` at all.
+
 `JobConsumer` (`app/jobs/consumer.py`) runs only in the distributed deployment: a queue loop that claims and runs, a control loop that delivers cancels, and a reaper that fails jobs whose lease expired and re-offers ones the queue lost. An **idle** consumer is the normal state — `RedisBus` gives its socket deadline headroom over the blocking read, because redis-py defaults both to five seconds and the collision crashed the loop every cycle.
 
 Testing note: `TestClient` must be used as a context manager (`with TestClient(app) as c`). Without it the event loop is torn down per request and background jobs are cancelled mid-run. `TestClient` also buffers streamed responses, so it verifies SSE framing but not progressive delivery — that needs a real server.
@@ -616,6 +640,23 @@ Python process serialises HTTP, every agent's gRPC stream, the queue consumer
 and analysis, and `asyncio.to_thread` moves blocking calls off the loop but not
 off the GIL. `JOB_MAX_CONCURRENT` above a small number buys nothing on one
 worker: slots fill, `collect` inflates in proportion, throughput does not move.
+
+**That sampling had already photographed the answer and could not read it**
+(F28). A stack sampler cannot tell a thread *waiting for work* from a thread
+*stuck in a socket*, so "92% idle, every non-idle sample in a Postgres or Redis
+socket wait" and "the event loop was blocked 97% of wall clock" are the same
+worker described twice. What was missing was not another profile but a measure
+of whether the loop could still advance a task — `scripts/loop_bench.py`, which
+counts how many job-store calls are made *on* the loop and how long a heartbeat
+waits to be scheduled. It was **2,592 of 2,688 calls**, mostly the progress
+events; making `ProgressReporter` awaitable took it to **0**, the blocking to
+33–36%, p50 lag from 75 ms to 0.8 ms and 48 investigations from 10.04 s to
+5.06 s. **The conclusion is unchanged and the ceiling is about 2× higher**:
+throughput is still flat against `JOB_MAX_CONCURRENT` in both arms, so the
+remaining limit is still not concurrency, and it is still add workers, not
+slots. Run the arms bracketed and with `--reset` — each investigation writes
+~50 rows to `investigation_events`, so an uncontrolled A/B measures the second
+arm against a bigger table, which cost one complete comparison here.
 
 **The rule: throughput that does not rise with `JOB_MAX_CONCURRENT` is not the
 platform's.** `fleet_bench.py` now refuses to print "platform-bound" from a
