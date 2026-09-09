@@ -138,6 +138,31 @@ collection_cache_reads_total = Counter(
     registry=REGISTRY,
 )
 
+collection_cache_bytes = Gauge(
+    "k8sagent_collection_cache_bytes",
+    "Bytes the in-process collection cache is holding, against "
+    "COLLECTION_CACHE_MAX_BYTES. Unlabelled, like every gauge here: it is a "
+    "property of the worker, and a cluster label would undo M6 in one word.",
+    registry=REGISTRY,
+)
+
+collection_cache_entries = Gauge(
+    "k8sagent_collection_cache_entries",
+    "Reads currently held by the collection cache. Expiry is lazy — an entry "
+    "nobody asks for again is removed by the size bound, not by the clock — so "
+    "this is what the worker is carrying, not what is still fresh.",
+    registry=REGISTRY,
+)
+
+collection_cache_evictions_total = Counter(
+    "k8sagent_collection_cache_evictions_total",
+    "Entries dropped because the cache reached COLLECTION_CACHE_MAX_BYTES. "
+    "Zero for a worker that has never filled it, which is the fact that "
+    "separates a cache still filling from one at its bound — and the question "
+    "a soak could not answer about a slow, monotonic rise in resident memory.",
+    registry=REGISTRY,
+)
+
 collection_duration_seconds = Histogram(
     "k8sagent_collection_duration_seconds",
     "Wall time for one collection wave.",
@@ -340,6 +365,45 @@ def collection_cache(outcome: str) -> None:
     age lives in the payload, where the caller is already authorised to see it.
     """
     _safe(lambda: collection_cache_reads_total.labels(outcome=outcome).inc())
+
+
+def collection_cache_size(stats: dict[str, int]) -> None:
+    """What the cache is holding, sampled from its own accounting.
+
+    `CollectionCache.stats()` has carried bytes, entries and evictions since
+    F18 and nothing read them, so the one question a resident-memory trend
+    raises — is this the cache filling toward its bound, or a leak? — had no
+    answer but inference from RSS. An eviction count that is still zero after
+    an hour says the bound has never bound.
+
+    Evictions are monotonic in the cache and this is a `Counter`, so the
+    increment is the difference since the last sample; a restarted worker
+    starts both at zero together.
+    """
+    _safe(lambda: collection_cache_bytes.set(stats.get("bytes", 0)))
+    _safe(lambda: collection_cache_entries.set(stats.get("entries", 0)))
+    _safe(lambda: _record_evictions(stats))
+
+
+_evictions_seen = 0
+
+
+def _record_evictions(stats: dict[str, int]) -> None:
+    """Turn the cache's running total into this counter's increment.
+
+    **Inside `_safe`, including the arithmetic.** The first version coerced
+    `stats["evictions"]` to `int` outside it, so a probe handed `None` raised
+    straight into the collection wave that called it — instrumentation failing
+    the thing it measures, which is the one rule this module has. Its own test
+    caught it.
+    """
+    global _evictions_seen
+    total = int(stats.get("evictions") or 0)
+    if total > _evictions_seen:
+        collection_cache_evictions_total.inc(total - _evictions_seen)
+        _evictions_seen = total
+    elif total < _evictions_seen:  # the cache was cleared or rebuilt
+        _evictions_seen = total
 
 
 def collection_finished(duration_seconds: float, statuses: dict[str, int]) -> None:

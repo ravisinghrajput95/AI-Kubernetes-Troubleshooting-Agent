@@ -12,6 +12,32 @@ to. A change that fixed a defect names the defect.
 
 ### Fixed
 
+- **The collection cache never said how much it was holding.**
+  `CollectionCache.stats()` has carried bytes, entries and evictions since F18
+  and no caller read them — not the investigation payload, which reports what
+  *that* investigation took from the cache, and not the soak, which records the
+  hit rate. So the question a resident-memory trend raises — is this the cache
+  filling toward its 64 MB bound, or a leak? — had no answer but inference from
+  RSS, and the envelope had to say an hour cannot separate them. **An eviction
+  count still at zero says the bound has never bound**, and the cache knew that
+  the whole time.
+
+  Three series, sampled once per collection wave rather than per read:
+  `k8sagent_collection_cache_bytes`, `_entries` and `_evictions_total`. All
+  unlabelled — they are properties of the worker, and the rule that no series
+  carries a cluster, tenant, namespace, user or investigation id is untouched.
+  It also answers a question an operator could not previously ask at all:
+  whether `COLLECTION_CACHE_MAX_BYTES` is anywhere near right for their fleet.
+
+  **The recorder's first version could raise into the collection wave that
+  called it** — it coerced `stats["evictions"]` to `int` outside `_safe`, so a
+  probe handed `None` propagated, which is the one thing this module forbids.
+  Its own test caught that. The obvious repair then made the guard untestable:
+  with `or 0` absorbing None inside the recorder, removing the `_safe` wrapper
+  passed every test, and the mutation survived until the test was given inputs
+  only the wrapper can absorb. Three mutations now fail, one in
+  `scripts/mutation_check.py`.
+
 - **A published claim that impersonation costs ~10% of p50 is retracted.** It
   came from one hour either side of the change — 0.41s without, 0.45s with. A
   fourth hour in the *same* impersonating configuration returned **0.52s**, so

@@ -79,6 +79,23 @@ MUTATIONS = [
         tests="tests/test_differential_control.py",
     ),
     Mutation(
+        name="cache-size-recording-cannot-raise",
+        why=(
+            "`app/observability` has one rule — instrumentation that can fail "
+            "the thing it measures turns an observability bug into an outage — "
+            "and the first version of the cache-size recorder coerced "
+            "`stats['evictions']` to int *outside* `_safe`, so a probe handed "
+            "None raised into the collection wave that called it. Its own test "
+            "caught it, and then the obvious fix (`or 0`) made the wrapper "
+            "untestable: the mutation survived until the test was given an "
+            "input only the wrapper can absorb."
+        ),
+        path="app/observability/metrics.py",
+        old="    _safe(lambda: _record_evictions(stats))",
+        new="    _record_evictions(stats)  # mutation: arithmetic outside the guard",
+        tests="tests/test_cache_size_metrics.py",
+    ),
+    Mutation(
         name="soak-refuses-a-trend-through-a-host-disturbance",
         why=(
             "The soak publishes resident memory as start/peak/end plus a "

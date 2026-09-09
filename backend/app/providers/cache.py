@@ -418,6 +418,10 @@ class CachingProvider(ClusterProvider):
 
         if any(result is None for result in results):  # pragma: no cover - defensive
             raise RuntimeError("A provider answered fewer reads than it was asked for.")
+
+        # Once per wave rather than per read: the value is process-wide, so
+        # sampling it more often costs a lock and says nothing new.
+        metrics.collection_cache_size(self._cache.stats())
         return [result for result in results if result is not None]
 
     def _record_hit(self, entry: CacheEntry, window: FreshnessWindow | None) -> None:
