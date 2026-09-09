@@ -138,3 +138,19 @@ agent_identity/
 enrolment.json
 *.key
 !**/testdata/**/*.key
+
+# =========================================================
+# INVESTIGATION REPORTS WRITTEN AT THE REPOSITORY ROOT
+# =========================================================
+# `FilesystemReportStore` writes to a **relative** `data/investigations`, so
+# where the reports land is decided by the working directory the backend was
+# started from. `backend/.gitignore` covers the documented case; started from
+# the repository root instead — which every `scripts/*_bench.py` does, since
+# they are run from there — it writes here, and nothing covered that.
+#
+# Four report artefacts from a failed investigation were already committed
+# this way, swept into the v0.2.3 release commit by a `git add`. That one
+# reached no cluster, so it carried nothing; the same accident on an
+# investigation that *had* connected would have committed pod names,
+# namespaces and log lines to a public repository.
+/data/
