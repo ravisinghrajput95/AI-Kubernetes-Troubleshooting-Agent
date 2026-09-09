@@ -1643,6 +1643,19 @@ standing warning about stale "this is dead" notes.
 
 `/connect` (`ConnectClusterPage`) is the onboarding flow: name a cluster, mint an enrolment, copy the manifest, watch for the agent to check in. `AgentDot` renders agent reachability in three states — online, degraded, silent — and never in colour alone.
 
+**Nothing a browser initiates on its own can carry a credential**, and that one
+sentence covers F29 and F30 both. `EventSource` sends no `Authorization`
+header and `<a href>` sends none either, so the progress stream and all three
+report downloads were answered 401 in every authenticated deployment — the
+stream fell back to polling, and the downloads saved the JSON error body under
+the name of a report. Both are `fetch` now, with the credential the rest of the
+console already sends. **When you add a browser-initiated request here, that is
+the question to ask first.** A corollary bit immediately: a response header
+CORS does not expose is invisible to script — no error, just a `null` that
+reads exactly like a header the server never sent — so `expose_headers` names
+`Content-Disposition` (the report filename the console reads) and
+`X-Correlation-ID` (the id operators are told to quote).
+
 **The SSE path has now been dead twice, for two independent reasons, and the
 fallback hid both.** The second is F29: `EventSource` cannot send an
 `Authorization` header — there is no option for it — and every endpoint is

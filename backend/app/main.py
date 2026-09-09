@@ -64,6 +64,19 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # **A response header a browser cannot read is a header the console
+        # does not have.** CORS exposes only a handful by default, so
+        # everything else is present on the wire and invisible to `fetch` —
+        # which is not an error anywhere, just a `null` that reads exactly like
+        # a header the server never sent.
+        #
+        # `Content-Disposition` carries the name every report is saved under,
+        # and the console reads it so the platform stays the one thing that
+        # names a report; unexposed, it silently fell back to a generic name.
+        # `X-Correlation-ID` is the id an operator is invited to quote when
+        # reporting a problem, which they cannot do if it never reaches the
+        # page.
+        expose_headers=["Content-Disposition", "X-Correlation-ID"],
     )
 
     @app.middleware("http")

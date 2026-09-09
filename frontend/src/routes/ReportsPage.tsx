@@ -3,10 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ReportPreview } from "../components/report/ReportPreview";
 import {
+  downloadReport,
   getInvestigationHistory,
   getInvestigationReport,
   regenerateInvestigationReport,
-  reportUrl,
 } from "../services/api";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
@@ -49,6 +49,19 @@ export function HistoryTable() {
     enabled: Boolean(selectedReportId),
   });
 
+  const [downloadError, setDownloadError] = useState("");
+
+  async function save(path: string, fallback: string) {
+    setDownloadError("");
+    try {
+      await downloadReport(path, fallback);
+    } catch (error) {
+      setDownloadError(
+        error instanceof Error ? error.message : "Could not download the report.",
+      );
+    }
+  }
+
   const regenerate = useMutation({
     mutationFn: regenerateInvestigationReport,
     onSuccess: (updatedReport) => {
@@ -69,6 +82,11 @@ export function HistoryTable() {
           Completed investigations are saved as SRE incident reports.
         </p>
 
+        {downloadError ? (
+          <p role="alert" className="mt-4 text-sm text-rose-300">
+            {downloadError}
+          </p>
+        ) : null}
         <div className="mt-5 overflow-x-auto">
           <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
           <thead>
@@ -146,33 +164,33 @@ export function HistoryTable() {
                 </td>
                 <td className="py-3">
                   <div className="flex gap-2">
-                    <a
-                      href={reportUrl(item.pdf_url)}
-                      target="_blank"
-                      rel="noreferrer"
+                    {/* Buttons, not links: an <a href> cannot send the
+                        Authorization header these routes require, so every
+                        one of these was a 401 that saved an error body. */}
+                    <button
+                      type="button"
+                      onClick={() => void save(item.pdf_url, "investigation.pdf")}
                       className="font-medium text-cyan-300 underline underline-offset-4"
                     >
                       PDF
-                    </a>
+                    </button>
                     {item.json_url ? (
-                      <a
-                        href={reportUrl(item.json_url)}
-                        target="_blank"
-                        rel="noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => void save(item.json_url!, "investigation.json")}
                         className="font-medium text-violet-300 underline underline-offset-4"
                       >
                         JSON
-                      </a>
+                      </button>
                     ) : null}
                     {item.markdown_url ? (
-                      <a
-                        href={reportUrl(item.markdown_url)}
-                        target="_blank"
-                        rel="noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => void save(item.markdown_url!, "investigation.md")}
                         className="font-medium text-amber-300 underline underline-offset-4"
                       >
                         MD
-                      </a>
+                      </button>
                     ) : null}
                   </div>
                 </td>

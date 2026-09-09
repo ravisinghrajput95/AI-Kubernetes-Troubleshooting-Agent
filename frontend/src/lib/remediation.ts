@@ -14,18 +14,11 @@
  * never observed, or a NetworkPolicy selector, and says so in a caveat rather
  * than guessing. These builders must not become cleverer than that.
  */
+import { saveBlob } from "./download";
 import type { Diagnosis, InvestigationData } from "../types/investigation";
 
 export function downloadText(filename: string, content: string, type = "text/plain") {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  saveBlob(filename, new Blob([content], { type }));
 }
 
 export function firstAffectedWorkload(investigation?: InvestigationData) {

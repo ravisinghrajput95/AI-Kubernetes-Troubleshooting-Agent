@@ -1,4 +1,6 @@
-import { apiBaseUrl, get, post } from "./http";
+import { ApiError, apiBaseUrl, get, post } from "./http";
+import { authHeaders } from "./auth";
+import { filenameFrom, saveBlob } from "../lib/download";
 
 import type { HealthResponse } from "../types/health";
 import type {
@@ -144,6 +146,37 @@ export async function regenerateInvestigationReport(
 
 export function reportUrl(path: string): string {
   return `${apiBaseUrl}${path}`;
+}
+
+/**
+ * Fetch a rendered report and hand it to the user.
+ *
+ * **Not an `<a href>`, for the same reason the progress stream is not an
+ * `EventSource`:** a plain navigation cannot carry an `Authorization` header,
+ * and every report route is behind `require_principal`. The console linked all
+ * three formats directly, so clicking "PDF Report" in any deployment with
+ * authentication configured — which is all of them — was answered **401** and
+ * downloaded a JSON error body. Measured against a token deployment: pdf, json
+ * and markdown all 401 as a browser sends them, all 200 with the header.
+ *
+ * The filename comes from the server's own `Content-Disposition` so the
+ * platform stays the one thing that names a report.
+ */
+export async function downloadReport(path: string, fallbackName: string): Promise<void> {
+  const response = await fetch(reportUrl(path), { headers: authHeaders() });
+  if (!response.ok) {
+    throw new ApiError(
+      response.status === 404
+        ? "That report is no longer available. Reports are pruned on the retention schedule."
+        : "Could not download the report.",
+      "http",
+      response.status,
+    );
+  }
+  saveBlob(
+    filenameFrom(response.headers.get("Content-Disposition"), fallbackName),
+    await response.blob(),
+  );
 }
 
 /**
