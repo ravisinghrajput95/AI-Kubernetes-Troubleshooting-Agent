@@ -175,6 +175,12 @@ DEFAULT_HYPOTHESIS_RULES: tuple[HypothesisRule, ...] = (
                 SignalType.CONTAINER_OOM_EXIT,
                 SignalType.CONFIG_REFERENCE_MISSING,
                 SignalType.CONFIG_KEY_MISSING,
+                # "Fails on startup" is contradicted by a container that was
+                # killed: it was running. `EVENT_PROBE_FAILURE` stays
+                # *supporting* rather than refuting, because a genuinely broken
+                # application fails its probe too — the termination mode is what
+                # separates the two, not the probe event.
+                SignalType.CONTAINER_KILLED,
             }
         ),
         missing_evidence=(
@@ -494,6 +500,11 @@ DEFAULT_HYPOTHESIS_RULES: tuple[HypothesisRule, ...] = (
                 SignalType.POD_CRASH_LOOP,
                 SignalType.NETWORK_NO_ENDPOINTS,
                 SignalType.DEPLOYMENT_UNAVAILABLE,
+                # A container that was *killed* rather than exiting is what a
+                # failing liveness probe does to it. The application ran until
+                # something stopped it, which is this hypothesis and not the one
+                # about an application that cannot start.
+                SignalType.CONTAINER_KILLED,
             }
         ),
         missing_evidence=(
@@ -546,7 +557,22 @@ DEFAULT_HYPOTHESIS_RULES: tuple[HypothesisRule, ...] = (
         ),
         triggers=frozenset({SignalType.POD_BLOCKED_BY_STORAGE}),
         supporting=frozenset({SignalType.STORAGE_PVC_UNBOUND, SignalType.POD_PENDING}),
-        refuting=frozenset({SignalType.EVENT_SCHEDULING_FAILURE}),
+        # **`EVENT_SCHEDULING_FAILURE` was refuting here and is the fault's own
+        # symptom.** A pod that mounts an unbound claim is unschedulable, and
+        # the scheduler says so — `0/1 nodes are available: pod has unbound
+        # immediate PersistentVolumeClaims`. So the signal fired *because* the
+        # claim was blocking the pod, and argued against the hypothesis that
+        # said so. The intent was presumably "if it is Pending for resources,
+        # storage is not the cause", but the trigger already carries that: it
+        # comes from a graph edge between this pod and a claim that is not
+        # Bound, so a pod Pending for CPU with a bound claim never reaches here.
+        #
+        # Harmless while severity outranked refutation, because this hypothesis
+        # is CRITICAL and the alternatives were not. Ranking contradicted
+        # hypotheses last is what surfaced it: a live PVC-with-no-StorageClass
+        # fault went from `storage.claim_blocking_pod` to
+        # `scheduling.unschedulable` — the symptom in place of the cause.
+        refuting=frozenset(),
         missing_evidence=("k8s.storageclasses", "k8s.resource.events"),
         remediation_hint=("Bind or reprovision the claim. The workload needs no change."),
         base_confidence=70,
@@ -596,13 +622,52 @@ DEFAULT_HYPOTHESIS_RULES: tuple[HypothesisRule, ...] = (
 
 
 def rank(hypotheses: Sequence[Hypothesis]) -> tuple[Hypothesis, ...]:
-    """Order hypotheses by severity, then confidence, then breadth of support."""
+    """Contradicted last, then confidence, then severity, then breadth.
+
+    **Refutation outranks severity, and until this it could not.** A
+    hypothesis takes the severity of its most severe *triggering* signal, and
+    severity was the primary key — so `REFUTE_PENALTY` moved `confidence` and
+    nothing else whenever the refuted hypothesis had the scarier trigger. Since
+    a symptom is usually more severe than the marker of its cause, that is the
+    normal case rather than an edge one.
+
+    Measured against a live cluster: a container killed by a failing liveness
+    probe produced `workload.application_startup_failure` at **55** with
+    `container.killed` refuting it, ranked *above* `probe.failing` at **75**
+    with nothing against it — because a crash loop is CRITICAL and a probe
+    event is not. The platform had already decided the probe was the better
+    explanation and then reported the other one as the root cause.
+
+    Evidence that a hypothesis is wrong is a stronger statement about it than
+    how alarming its symptom looks, so it sorts first.
+
+    **And confidence now outranks severity, which is the larger change.** A
+    hypothesis takes the severity of its triggering signal, so severity
+    measures how alarming the *observation* is, not how well the *explanation*
+    is supported — and a symptom is nearly always more alarming than the marker
+    of its cause. Severity-first therefore prefers symptoms to causes
+    systematically, which is backwards for a list whose first entry is reported
+    as the root cause. With refutation fixed but severity still primary, the
+    liveness case moved from one wrong answer to another: `rollout.stalled`
+    (high, 70) over `probe.failing` (medium, 75).
+
+    Measured on both corpora before changing it. The 20 golden investigations
+    and 11 grounding cases hold at 100%, the whole suite passes, and on the
+    held-out faults it corrects the liveness case and moves a stalled rollout —
+    induced *with* a readiness probe — from the symptom to the probe. Severity
+    still decides ties, so nothing that was ranked on it alone moves.
+
+    The risk worth stating: both corpora are authored here. This changes what
+    every investigation reports as its root cause, and neither corpus can see a
+    real incident it gets wrong.
+    """
     return tuple(
         sorted(
             hypotheses,
             key=lambda item: (
-                item.severity.weight,
+                not item.refuting_signal_ids,
                 item.confidence,
+                item.severity.weight,
                 len(item.supporting_signal_ids),
                 item.id,
             ),

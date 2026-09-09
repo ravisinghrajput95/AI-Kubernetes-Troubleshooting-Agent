@@ -93,6 +93,13 @@ class SignalType:
     # Signals that only become available once a playbook has collected
     # targeted evidence.
     CONTAINER_OOM_EXIT = "container.oom_exit_code"
+    # Killed rather than exited. 137 is 128 + SIGKILL, so the container did not
+    # choose to stop — something stopped it. Distinct from a non-zero exit
+    # because the two point at different causes: an application that exits 1 is
+    # broken, an application that is killed was running until something killed
+    # it. Without the distinction a failing liveness probe reads as a failing
+    # application, which is what it did.
+    CONTAINER_KILLED = "container.killed"
     CONTAINER_NONZERO_EXIT = "container.nonzero_exit_code"
     CONTAINER_NO_MEMORY_LIMIT = "container.no_memory_limit"
     CONFIG_REFERENCE_MISSING = "config.reference_missing"

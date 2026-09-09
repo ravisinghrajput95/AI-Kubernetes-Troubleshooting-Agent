@@ -13,7 +13,13 @@ from app.analysis.models import Severity, Signal, SignalType
 from app.analysis.signal_rules import AnalysisInput
 from app.evidence.models import EvidenceKind, ResourceRef
 
-OOM_EXIT_CODE = 137
+# 137 is 128 + SIGKILL: the container was killed, and *why* is not in the code.
+# An OOM kill is one cause; a failed liveness probe is another, and so is a node
+# eviction or an operator's `kill -9`. Only `reason` distinguishes them — the
+# kubelet sets `OOMKilled` from the cgroup event — so this constant names the
+# signal rather than the diagnosis.
+SIGKILL_EXIT_CODE = 137
+OOM_TERMINATION_REASON = "OOMKilled"
 SIGTERM_EXIT_CODE = 143
 AGGRESSIVE_PROBE_DELAY_SECONDS = 5
 
@@ -51,13 +57,23 @@ class ContainerTerminationRule:
                 reason = last_state.get("reason", "")
                 name = container.get("name", "container")
 
-                if exit_code == OOM_EXIT_CODE or reason == "OOMKilled":
+                # **The reason, never the exit code.** This read
+                # `exit_code == 137 or reason == "OOMKilled"`, and 137 is
+                # 128 + SIGKILL — which a failed liveness probe also produces.
+                # Against a live cluster that made the platform report
+                # "terminated for exceeding its memory limit" for a container
+                # whose spec carried `resources: {}`: no limit to exceed, a
+                # `Container c failed liveness probe, will be restarted` event
+                # in the same investigation, and `probe.failing` ranked below
+                # the OOM it invented. Found by a held-out corpus of failures
+                # written before reading these rules.
+                if reason == OOM_TERMINATION_REASON:
                     signals.append(
                         Signal.create(
                             SignalType.CONTAINER_OOM_EXIT,
                             Severity.CRITICAL,
                             f"Container {name} last terminated with exit code "
-                            f"{exit_code} ({reason or 'OOMKilled'}), confirming an "
+                            f"{exit_code} ({reason}), confirming an "
                             f"out-of-memory kill.",
                             target,
                             evidence,
@@ -70,12 +86,30 @@ class ContainerTerminationRule:
                         )
                     )
                 elif isinstance(exit_code, int) and exit_code not in (0, SIGTERM_EXIT_CODE):
+                    # Killed and self-terminated point at different causes, so
+                    # they are different signals. An application that exits 1 is
+                    # broken; one that is killed was running until something
+                    # killed it, and the candidates are a liveness probe, a node
+                    # eviction, or an operator. Collapsing them is what let a
+                    # probe misconfiguration read as a failing application.
+                    killed = exit_code == SIGKILL_EXIT_CODE
                     signals.append(
                         Signal.create(
-                            SignalType.CONTAINER_NONZERO_EXIT,
+                            SignalType.CONTAINER_KILLED
+                            if killed
+                            else SignalType.CONTAINER_NONZERO_EXIT,
                             Severity.HIGH,
                             f"Container {name} last terminated with exit code "
-                            f"{exit_code} ({reason or 'Error'}).",
+                            f"{exit_code} ({reason or 'Error'})."
+                            + (
+                                " Exit 137 is SIGKILL — the container was killed "
+                                "rather than exiting. A failed liveness probe, a "
+                                "node eviction and an out-of-memory kill all look "
+                                "like this; only the termination reason separates "
+                                "them, and this one does not say OOMKilled."
+                                if exit_code == SIGKILL_EXIT_CODE
+                                else ""
+                            ),
                             target,
                             evidence,
                             {"container": name, "exit_code": exit_code, "reason": reason},

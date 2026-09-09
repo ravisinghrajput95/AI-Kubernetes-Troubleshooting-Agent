@@ -12,6 +12,52 @@ to. A change that fixed a defect names the defect.
 
 ### Fixed
 
+- **Three diagnostic defects, found by a corpus of failures written before
+  reading the rules.** The shipped corpus is 20 investigations authored by the
+  same person who wrote the signal and hypothesis rules, scoring 100% — a
+  number that cannot fail. A held-out set was written first, then induced in a
+  real cluster so the evidence came from the platform's own collectors: 14
+  faults, one namespace each. **10/14 exact on the first run.**
+
+  *A failed liveness probe was diagnosed as an out-of-memory kill.*
+  `deep_signal_rules.py` read `exit_code == 137 or reason == "OOMKilled"`, and
+  137 is 128 + SIGKILL — which a liveness kill also produces. The platform
+  reported "Container terminated for exceeding its memory limit" for a
+  container whose spec carried `resources: {}`, with `container.no_memory_limit`
+  and `event.probe_failure` firing in the same investigation. The OOM signal
+  now requires the termination *reason*; a bare SIGKILL gets its own signal,
+  because a container that was killed and one that exited are different
+  findings. The existing test was named `test_exit_code_137_confirms_an_oom_kill`
+  while its fixture always supplied the reason as well, so it passed either way.
+
+  *Contradicting evidence could not change any answer.* A hypothesis takes the
+  severity of its triggering signal and severity was the primary sort key, so
+  `REFUTE_PENALTY` moved `confidence` and nothing else whenever the refuted
+  hypothesis had the more severe trigger — the normal case, since a symptom is
+  more alarming than the marker of its cause. Refutation now sorts first.
+
+  *And severity outranking confidence preferred symptoms to causes.* With
+  refutation fixed the liveness case moved from one wrong answer to another:
+  `rollout.stalled` (high, 70) over `probe.failing` (medium, 75). Confidence
+  now outranks severity; severity still decides ties. **This changes what every
+  investigation reports as its root cause**, and it was measured on both
+  corpora before being made — 20/20 golden, 11/11 grounding, whole suite green.
+
+  Fixing the ranking then exposed a fourth, pre-existing: `storage.claim_blocking_pod`
+  listed `EVENT_SCHEDULING_FAILURE` as *refuting*, and a pod mounting an
+  unbound claim is unschedulable — the scheduler says `pod has unbound
+  immediate PersistentVolumeClaims`. The signal fired because the claim was
+  blocking the pod and argued against the hypothesis saying so. Inert while
+  severity dominated; visible the moment refutation mattered.
+
+  **12/14 after, from 10/14.** Four mutations added to `scripts/mutation_check.py`,
+  one of which survived its first run and needed the test strengthening.
+
+  Still open and not fixed: a ResourceQuota that blocks pod *creation* produces
+  no pod, so the pod-centric playbooks never collect `deep.quotas` and
+  `scheduling.quota_exhausted` never fires. That is a design question about
+  where the pipeline starts, not a rule to correct.
+
 - **The collection cache never said how much it was holding.**
   `CollectionCache.stats()` has carried bytes, entries and evictions since F18
   and no caller read them — not the investigation payload, which reports what

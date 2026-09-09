@@ -351,3 +351,112 @@ class TestTheNewPodStatusesReachHypotheses:
         result = ENGINE.analyze(self.pods("OOMKilled"))
 
         assert any(h.id == "workload.out_of_memory" for h in result.hypotheses)
+
+
+class TestRankingPrefersCausesToSymptoms:
+    """Found by a held-out corpus of failures written before reading the rules.
+
+    A hypothesis takes the severity of its *triggering* signal, so severity
+    says how alarming the observation is, not how well the explanation is
+    supported. A symptom is nearly always more alarming than the marker of its
+    cause, so ranking on severity first prefers symptoms — backwards for a list
+    whose first entry is reported as the root cause.
+
+    Live ground truth: a container killed by a failing liveness probe gave
+    `rollout.stalled` (high, 70) above `probe.failing` (medium, 75).
+    """
+
+    def _hypothesis(self, id_, severity, confidence, refuting=()):
+        from app.analysis.models import Hypothesis
+
+        return Hypothesis(
+            id=id_,
+            title=id_,
+            category="workload",
+            severity=severity,
+            confidence=confidence,
+            rationale="",
+            target=None,
+            supporting_signal_ids=(),
+            refuting_signal_ids=tuple(refuting),
+            missing_evidence=(),
+            remediation_hint="",
+        )
+
+    def test_a_better_supported_cause_outranks_a_more_alarming_symptom(self):
+        from app.analysis.hypothesis_rules import rank
+        from app.analysis.models import Severity
+
+        symptom = self._hypothesis("rollout.stalled", Severity.HIGH, 70)
+        cause = self._hypothesis("probe.failing", Severity.MEDIUM, 75)
+
+        assert next(h.id for h in rank([symptom, cause])) == "probe.failing"
+
+    def test_a_contradicted_hypothesis_ranks_last_however_severe(self):
+        """Refutation outranks everything: it is a statement that this is wrong.
+
+        `REFUTE_PENALTY` moved `confidence` and nothing else while severity was
+        the primary key, so contradicting evidence could not change which
+        hypothesis was reported — only the number printed beside it.
+        """
+        from app.analysis.hypothesis_rules import rank
+        from app.analysis.models import Severity
+
+        refuted = self._hypothesis("a.critical", Severity.CRITICAL, 90, refuting=("s1",))
+        clean = self._hypothesis("b.low", Severity.LOW, 30)
+
+        assert next(h.id for h in rank([refuted, clean])) == "b.low"
+
+    def test_severity_still_decides_a_tie(self):
+        """Nothing that was ranked on severity alone moves."""
+        from app.analysis.hypothesis_rules import rank
+        from app.analysis.models import Severity
+
+        low = self._hypothesis("a.low", Severity.LOW, 60)
+        high = self._hypothesis("b.high", Severity.CRITICAL, 60)
+
+        assert next(h.id for h in rank([low, high])) == "b.high"
+
+
+def test_a_scheduling_failure_does_not_refute_the_claim_that_causes_it():
+    """A pod mounting an unbound claim *is* unschedulable, and says so.
+
+    `storage.claim_blocking_pod` listed `EVENT_SCHEDULING_FAILURE` as refuting
+    evidence, but the scheduler's own message for this fault is `0/1 nodes are
+    available: pod has unbound immediate PersistentVolumeClaims` — so the
+    signal fired *because* the claim was blocking the pod, and argued against
+    the hypothesis that said so.
+
+    It was harmless while severity outranked refutation: this hypothesis is
+    CRITICAL and its rivals were not. Ranking contradicted hypotheses last is
+    what surfaced it — a live PVC-with-no-StorageClass fault went from
+    `storage.claim_blocking_pod` to `scheduling.unschedulable`, the symptom in
+    place of the cause. Held hermetically because the live corpus is not in CI.
+    """
+    from app.analysis.hypothesis_rules import DEFAULT_HYPOTHESIS_RULES
+    from app.analysis.models import Severity, Signal, SignalType
+    from app.evidence.models import ResourceRef
+
+    rule = next(r for r in DEFAULT_HYPOTHESIS_RULES if r.id == "storage.claim_blocking_pod")
+    target = ResourceRef(kind="Pod", name="web-0", namespace="prod")
+
+    signals = [
+        Signal.create(
+            SignalType.POD_BLOCKED_BY_STORAGE, Severity.CRITICAL, "blocked", target, ("e1",)
+        ),
+        Signal.create(
+            SignalType.EVENT_SCHEDULING_FAILURE,
+            Severity.HIGH,
+            "0/1 nodes are available: pod has unbound immediate PersistentVolumeClaims",
+            target,
+            ("e2",),
+        ),
+    ]
+
+    hypothesis = rule.evaluate(signals)
+
+    assert hypothesis is not None
+    assert not hypothesis.refuting_signal_ids, (
+        "the scheduler reporting an unbound claim is the fault's own symptom, "
+        "not evidence against the claim being the cause"
+    )

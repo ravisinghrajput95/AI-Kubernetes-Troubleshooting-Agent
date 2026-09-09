@@ -32,7 +32,15 @@ def investigation(deep_evidence, **sections):
     return base
 
 
-def test_exit_code_137_confirms_an_oom_kill():
+def test_an_oomkilled_reason_confirms_an_oom_kill():
+    """Renamed, because the old name asserted the defect it was hiding.
+
+    It read `test_exit_code_137_confirms_an_oom_kill` while its fixture always
+    supplied `reason: "OOMKilled"` as well — so it passed whether the rule
+    required the reason or accepted the code alone, and the `or` survived every
+    run. See `test_a_sigkill_without_an_oom_reason_is_not_an_oom_kill` below for
+    the case the name claimed to cover.
+    """
     result = ENGINE.analyze(
         investigation(
             deep(
@@ -55,6 +63,74 @@ def test_exit_code_137_confirms_an_oom_kill():
     assert signal.severity is Severity.CRITICAL
     assert "137" in signal.summary
     assert signal.evidence_ids == ("k8s.pod.spec:pod/prod/web-0",)
+
+
+def test_a_sigkill_without_an_oom_reason_is_not_an_oom_kill():
+    """137 is 128 + SIGKILL, and a failed liveness probe produces it too.
+
+    Ground truth from a live cluster: a container with a `tcpSocket` liveness
+    probe on a closed port reported `exitCode: 137, reason: Error`, an event
+    reading `Container c failed liveness probe, will be restarted`, and a spec
+    carrying `resources: {}`. The platform diagnosed "Container terminated for
+    exceeding its memory limit" — for a container with no limit to exceed —
+    and ranked it above `probe.failing`, which was in its own hypothesis list.
+
+    Only the termination reason separates an OOM from any other kill.
+    """
+    result = ENGINE.analyze(
+        investigation(
+            deep(
+                "k8s.pod.spec",
+                {
+                    "containers": [
+                        {
+                            "name": "web",
+                            "restart_count": 11,
+                            "limits": {},
+                            "last_state": {"reason": "Error", "exit_code": 137},
+                        }
+                    ]
+                },
+            )
+        )
+    )
+
+    assert not result.by_type(SignalType.CONTAINER_OOM_EXIT), (
+        "a SIGKILL with no OOMKilled reason was reported as an out-of-memory kill"
+    )
+
+    # It is still a kill worth reporting, under its own type: killed and
+    # self-terminated point at different causes, and the summary says what 137
+    # means rather than leaving a reader to assume what the rule assumed.
+    killed = result.by_type(SignalType.CONTAINER_KILLED)
+    assert killed, "the termination itself must still be a signal"
+    assert "SIGKILL" in killed[0].summary
+    assert not result.by_type(SignalType.CONTAINER_NONZERO_EXIT), (
+        "a kill is not the same finding as an application exiting non-zero"
+    )
+
+
+def test_the_out_of_memory_hypothesis_does_not_follow_a_bare_sigkill():
+    """The end of the chain, which is what an operator actually reads."""
+    result = ENGINE.analyze(
+        investigation(
+            deep(
+                "k8s.pod.spec",
+                {
+                    "containers": [
+                        {
+                            "name": "web",
+                            "restart_count": 11,
+                            "limits": {},
+                            "last_state": {"reason": "Error", "exit_code": 137},
+                        }
+                    ]
+                },
+            )
+        )
+    )
+
+    assert "workload.out_of_memory" not in [h.id for h in result.hypotheses]
 
 
 def test_oom_exit_code_promotes_the_out_of_memory_hypothesis():

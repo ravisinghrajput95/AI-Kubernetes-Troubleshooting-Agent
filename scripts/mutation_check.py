@@ -79,6 +79,55 @@ MUTATIONS = [
         tests="tests/test_differential_control.py",
     ),
     Mutation(
+        name="a-liveness-kill-is-not-an-oom",
+        why=(
+            "`exit_code == 137 or reason == 'OOMKilled'` — and 137 is "
+            "128 + SIGKILL, which a failed liveness probe also produces. "
+            "Against a live cluster the platform reported 'terminated for "
+            "exceeding its memory limit' for a container whose spec carried "
+            "`resources: {}`, with a probe-failure event in the same "
+            "investigation. The existing test was named "
+            "`test_exit_code_137_confirms_an_oom_kill` while its fixture "
+            "always supplied the reason too, so it passed either way."
+        ),
+        path="app/analysis/deep_signal_rules.py",
+        old="                if reason == OOM_TERMINATION_REASON:",
+        new="                if exit_code == SIGKILL_EXIT_CODE or reason == OOM_TERMINATION_REASON:",
+        tests="tests/test_deep_signals.py",
+    ),
+    Mutation(
+        name="refutation-outranks-severity",
+        why=(
+            "A hypothesis takes the severity of its triggering signal, and "
+            "severity was the primary sort key — so REFUTE_PENALTY moved "
+            "`confidence` and nothing else whenever the refuted hypothesis had "
+            "the more severe trigger, which is the normal case because a "
+            "symptom is more alarming than the marker of its cause. "
+            "Contradicting evidence could not change which hypothesis was "
+            "reported as the root cause, only the number beside it."
+        ),
+        path="app/analysis/hypothesis_rules.py",
+        old="                not item.refuting_signal_ids,\n                item.confidence,",
+        new="                item.confidence,",
+        tests="tests/test_analysis_engine.py",
+    ),
+    Mutation(
+        name="a-fault-symptom-does-not-refute-its-own-cause",
+        why=(
+            "`storage.claim_blocking_pod` listed EVENT_SCHEDULING_FAILURE as "
+            "refuting, but a pod mounting an unbound claim is unschedulable and "
+            "the scheduler says exactly that — so the signal fired because the "
+            "claim was blocking the pod and argued against the hypothesis "
+            "saying so. Inert while severity outranked refutation; a live "
+            "PVC-with-no-StorageClass fault then reported the symptom instead "
+            "of the cause."
+        ),
+        path="app/analysis/hypothesis_rules.py",
+        old="        refuting=frozenset(),",
+        new="        refuting=frozenset({SignalType.EVENT_SCHEDULING_FAILURE}),",
+        tests="tests/test_analysis_engine.py",
+    ),
+    Mutation(
         name="cache-size-recording-cannot-raise",
         why=(
             "`app/observability` has one rule — instrumentation that can fail "
