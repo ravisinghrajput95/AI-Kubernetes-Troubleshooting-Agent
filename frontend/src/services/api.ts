@@ -144,7 +144,16 @@ export async function regenerateInvestigationReport(
   return response.report;
 }
 
-export function reportUrl(path: string): string {
+/**
+ * Absolute URL for a report. **Not exported**, and that is the point.
+ *
+ * Its only purpose was to build an `href` for the browser to navigate to, and
+ * a navigation cannot carry the credential these routes require — which is how
+ * all three download links came to answer 401. Keeping it module-private means
+ * the next person cannot reach for it and reintroduce that, because
+ * `downloadReport` below is the only way out of here.
+ */
+function reportUrl(path: string): string {
   return `${apiBaseUrl}${path}`;
 }
 
