@@ -12,6 +12,21 @@ to. A change that fixed a defect names the defect.
 
 ### Fixed
 
+- **A published claim that impersonation costs ~10% of p50 is retracted.** It
+  came from one hour either side of the change — 0.41s without, 0.45s with. A
+  fourth hour in the *same* impersonating configuration returned **0.52s**, so
+  two runs differing in nothing disagree by 0.07s while the difference
+  attributed to the change was 0.04s. Run-to-run variance is larger than the
+  effect. Recorded in `docs/PERFORMANCE_ENVELOPE.md` rather than quietly
+  edited, because it is the error the throughput figure already made twice.
+
+  What three hours do support is that throughput is unchanged at 19.4/min and
+  p95 sits at 0.62–0.68s. The fourth hour was also the first undisturbed one,
+  giving the first trustworthy memory trend with impersonation on: +2.5 and
+  +0.6 MB/h, monotonic, 14.2 MB and 6.4 MB of total movement against a 64 MB
+  cache ceiling — **which an hour cannot distinguish from a slow leak**, and
+  the envelope now says so.
+
 - **The soak credited a worker with memory growth for ending 41 MB lower.** It
   publishes resident memory as start / peak / end plus a trend over the second
   half, and `docs/PERFORMANCE_ENVELOPE.md` quotes those trends as evidence of

@@ -329,17 +329,48 @@ run refuses to start without was protecting a path it did not take. Run again on
 |---|---|---|
 | investigations | 1,167, 100% usable | **1,166, 100% usable** |
 | longest quiet gap | 0.2m | 0.2m |
-| latency | p50 0.41s, p95 0.62s | **p50 0.45s**, p95 0.62s, max 2.57s |
+| latency | p50 0.41s, p95 0.62s | p50 0.45s, p95 0.62s, max 2.57s |
 | throughput | 19.4/min | 19.4/min |
 | certificate renewals | 3, 0 stream drops | 3, 0 stream drops, 98 after the last |
 | sweep cost | 9 ms | 11 ms |
 | cache | 77% reused | 77% reused |
 | SSE | 29,288 frames, 0 out of order | 28,931 frames, 0 out of order |
 
-**Impersonation costs about 10% of p50 and nothing measurable at p95.** Every
-read carries `Impersonate-User` and an extra authorization check at the API
-server; 0.41s → 0.45s is the price, throughput is unchanged, and the guarantee
-is now one a soak has actually held for an hour.
+**What impersonation costs is not measurable at this sample size, and the
+claim that first stood here was wrong.** It read "about 10% of p50", from
+0.41s without to 0.45s with. A fourth hour in the *same* impersonating
+configuration then returned **0.52s** — so two runs that differ in nothing
+disagree by 0.07s, while the difference attributed to the configuration was
+0.04s. Run-to-run variance is larger than the effect, and one run either side
+of a change cannot see past it. That is the same error the throughput figure
+made twice, and it is recorded rather than quietly edited.
+
+What three hours do support: **throughput is unchanged at 19.4/min** across all
+of them, p95 sits at 0.62–0.68s, and the guarantee is one a soak has now held
+for two full hours.
+
+#### A fourth hour — undisturbed, and the first trustworthy memory trend
+
+The third hour could not report memory because the host reclaimed pages at
+minute 15. Repeated on 2026-09-09 with the fixed harness, the run came back
+clean — `host_disturbances` found nothing, so the trend was published:
+
+| | |
+|---|---|
+| investigations | **1,162, 100% usable**, longest quiet gap 0.2m |
+| worker-1 | start 119.4 → peak 133.6 MB, low 119.4, end 133.6, **+2.5 MB/h** |
+| worker-2 | start 117.4 → peak 123.8 MB, low 117.4, end 123.8, **+0.6 MB/h** |
+| threads / files | 33 → 33, 100 → 96 · 29 → 31, 91 → 93 |
+| certificates | 3 renewals, 98 investigations after the last |
+| cache | 77% reused; 215 refresh runs served 0 from cache |
+
+**Both workers rose monotonically — low equals start, peak equals end — and an
+hour cannot tell that from a leak.** Total movement is 14.2 MB and 6.4 MB
+against a 64 MB cache ceiling, which is what a cache still filling looks like
+and also what a slow leak looks like; nothing here separates them. The
+distinguishing evidence would be a run long enough for the cache to reach its
+bound and start evicting, which is a longer soak than this harness has ever
+been given. Stated rather than resolved.
 
 **This run reports no memory trend, and that is the finding.** Both workers'
 resident memory fell together at minute 15 — worker-2 to **34.9 MB against a
