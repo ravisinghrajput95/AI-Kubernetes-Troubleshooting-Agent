@@ -90,32 +90,77 @@ monotonic ids, terminal event delivered**. That is the whole point of the id
 being the event sequence: a client that drops does not have to choose between
 replaying the timeline it already has and missing what it did not.
 
-**Register a listener per event name, not `onmessage`.** Every frame here is
-named, and a browser routes a named event only to
-`addEventListener("<name>", ...)`; `onmessage` fires solely for an unnamed
-event, which this endpoint never sends. The console got this wrong for its
-whole life — the stream opened, delivered nothing and fell back to polling —
-so the example below is the contract, not an illustration.
+**Do not use `EventSource`.** This endpoint is behind authentication like every
+other, and `EventSource` cannot send an `Authorization` header — there is no
+option for it in the API. So against any deployment with authentication
+configured, which since `AUTH_MODE` lost its default is all of them, an
+`EventSource` request arrives anonymous and is answered **401**. The console
+shipped exactly that and silently polled for its whole life; measured in Chrome
+against a token deployment, it received **zero events of every type** and an
+error. Read the stream with `fetch` instead, which can carry the credential:
 
 ```js
-const events = new EventSource(`/investigations/${id}/events`);
-events.addEventListener("progress", (e) => appendStep(JSON.parse(e.data)));
-events.addEventListener("completed", () => { events.close(); loadResult(id); });
+const response = await fetch(`${apiBaseUrl}/investigations/${id}/events`, {
+  headers: {
+    Accept: "text/event-stream",
+    Authorization: `Bearer ${token}`,
+    // Optional, and the reason a reconnect is cheap. `EventSource` sets this
+    // itself; with `fetch` you send it, from the last `id:` you saw.
+    ...(lastEventId ? { "Last-Event-ID": String(lastEventId) } : {}),
+  },
+});
+if (!response.ok) throw new Error(`stream refused: ${response.status}`);
+
+const reader = response.body.getReader();
+const decoder = new TextDecoder();
+let buffer = "";
+for (;;) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  buffer += decoder.decode(value, { stream: true });
+  // A frame ends at a blank line, and chunk boundaries are not frame
+  // boundaries — splitting on "\n" delivers half a JSON payload.
+  const blocks = buffer.split("\n\n");
+  buffer = blocks.pop();
+  for (const block of blocks) {
+    if (block.startsWith(":")) continue;              // ": keepalive"
+    const type = block.match(/^event: (.*)$/m)?.[1];
+    const data = block.match(/^data: (.*)$/m)?.[1];
+    if (type && data) handle(type, JSON.parse(data));
+  }
+}
 ```
+
+**Read the event name off the frame, never `onmessage`.** Every frame here is
+named, and a browser routes a named event only to
+`addEventListener("<name>", ...)`; `onmessage` fires solely for an unnamed
+event, which this endpoint never sends. That was the *first* reason the console
+received nothing, fixed before the 401 was found underneath it — two independent
+faults on one path, each sufficient to break it, and the polling fallback hid
+both. `frontend/src/services/eventStream.ts` is the working implementation.
 
 ## Deployment constraints
 
-Job state is held **in the process**:
+Which of these applies is decided once at startup, by whether `DATABASE_URL`
+and `REDIS_URL` are set. Setting exactly one is refused.
+
+**Neither set — the single-process default.** Job state is held in the process:
 
 - Jobs do not survive a restart. Completed investigations do, via their reports.
 - Multiple uvicorn workers will not share jobs; a request routed to another
-  worker sees a 404 until the report is persisted. **Run a single worker**, or
-  replace the store.
+  worker sees a 404 until the report is persisted. **Run a single worker.**
+- The store keeps at most 100 jobs, evicting the oldest terminal ones; running
+  jobs are never evicted.
 
-`InvestigationJobStore` is the seam: implement `create/get/list/publish/
-subscribe` against Redis or a database and nothing above it changes. The store
-keeps at most 100 jobs, evicting the oldest terminal ones; running jobs are
-never evicted.
+**Both set — the distributed deployment.** Jobs are Postgres rows and Redis
+carries the queue, the cancel channel and the event fan-out, so jobs survive a
+restart, any worker can answer for any job, and nothing is evicted. This is the
+supported way to run more than one worker, and it is what the throughput
+numbers in `docs/PERFORMANCE_ENVELOPE.md` are measured on.
+
+`JobStore` (`backend/app/jobs/base.py`) is the seam both satisfy — no API
+handler knows which it has. `InvestigationJobStore` is a retained alias for the
+in-memory one.
 
 Back-pressure is one-directional by design: a subscriber that stops reading
 loses events rather than blocking the investigation that produces them.

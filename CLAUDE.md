@@ -1643,6 +1643,36 @@ standing warning about stale "this is dead" notes.
 
 `/connect` (`ConnectClusterPage`) is the onboarding flow: name a cluster, mint an enrolment, copy the manifest, watch for the agent to check in. `AgentDot` renders agent reachability in three states — online, degraded, silent — and never in colour alone.
 
+**The SSE path has now been dead twice, for two independent reasons, and the
+fallback hid both.** The second is F29: `EventSource` cannot send an
+`Authorization` header — there is no option for it — and every endpoint is
+behind `require_principal`, so against any deployment with authentication
+configured the stream request arrived anonymous and was answered **401**. Since
+`AUTH_MODE` lost its default that is *every* deployment, so the console has
+never streamed anywhere real; it opened the stream, was refused, and polled.
+Measured in Chrome against a token deployment: **zero events of every type and
+an error**, the identical signature to the dispatch defect below — which is why
+fixing that one did not reveal this one, and why the earlier fix can only have
+been verified with authentication switched off. Fixed by reading the stream
+with `fetch` (`src/services/eventStream.ts`), which can carry the credential;
+after, **queued 1, started 1, progress 25, completed 1** over 28 monotonic
+frames, and the console's own request logged 200 where the two "before"
+measurements are the only 401s in the log. A token in the query string was
+rejected as the alternative: `API_TOKENS` are long-lived and a URL lands in
+access logs and history, and a short-lived stream ticket would be a second
+credential type to mint, store in two backends and expire. **The cost is
+parsing SSE ourselves** — a frame ends at a blank line and chunk boundaries are
+not frame boundaries, so the buffer must outlive a chunk — and 0.5 KB gzipped.
+`docs/INVESTIGATION_API.md` recommended `EventSource` the whole time, which is
+the advice that walks a consumer straight into the 401; it now shows the
+`fetch` form. **What could not see it**: the hook's tests used a fake that
+called `onmessage` directly, so no request was ever made and no header could be
+missing; and the required CI check streams with an `Authorization` header,
+which is a header no browser could send — curl proving the server streams says
+nothing about whether the client can reach it. The tests now assert the request
+carries the credential, that no `EventSource` is constructed, and that a 401
+falls back to polling, each mutation-verified.
+
 **The SSE path never once worked in a browser, and the fallback hid it
 completely.** `investigate.py` writes `id: N\nevent: <type>\ndata: {...}` on
 every frame, and per the HTML spec `onmessage` fires *only* for the default,

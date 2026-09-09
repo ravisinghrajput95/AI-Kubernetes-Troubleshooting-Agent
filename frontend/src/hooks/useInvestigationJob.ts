@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { authHeaders } from "../services/auth";
+import { readEventStream } from "../services/eventStream";
 import {
   cancelInvestigationJob,
   eventStreamUrl,
@@ -68,10 +70,16 @@ export interface InvestigationJobHandle {
 /**
  * Drives one investigation job.
  *
- * Progress arrives over SSE where possible. EventSource is frequently blocked
- * by corporate proxies and cannot carry custom headers, so the hook falls back
- * to polling the job endpoint rather than leaving an operator watching a stalled
- * screen. Both paths converge on the same terminal fetch for the full result.
+ * Progress arrives over SSE, read with `fetch` rather than `EventSource` —
+ * see `services/eventStream.ts`, which exists because EventSource cannot send
+ * the `Authorization` header every endpoint here requires, so the stream 401'd
+ * in every authenticated deployment and this hook silently polled instead.
+ *
+ * The fallback remains for the reason it was written: corporate proxies block
+ * or buffer streams, and a stalled screen during an incident is worse than a
+ * slower one. Both paths converge on the same terminal fetch for the full
+ * result, and `transport` is surfaced in the UI because a degraded path that
+ * nothing reports is a path nobody notices is degraded.
  */
 export function useInvestigationJob(): InvestigationJobHandle {
   const [phase, setPhase] = useState<JobPhase>("idle");
@@ -83,15 +91,15 @@ export function useInvestigationJob(): InvestigationJobHandle {
   const [historyItem, setHistoryItem] = useState<InvestigationHistoryItem>();
   const [error, setError] = useState("");
 
-  const sourceRef = useRef<EventSource | null>(null);
+  const streamRef = useRef<AbortController | null>(null);
   const pollRef = useRef<number | null>(null);
   const receivedRef = useRef(false);
   const settledRef = useRef(false);
   const mountedRef = useRef(true);
 
   const teardown = useCallback(() => {
-    sourceRef.current?.close();
-    sourceRef.current = null;
+    streamRef.current?.abort();
+    streamRef.current = null;
     if (pollRef.current !== null) {
       window.clearInterval(pollRef.current);
       pollRef.current = null;
@@ -184,76 +192,85 @@ export function useInvestigationJob(): InvestigationJobHandle {
 
   const stream = useCallback(
     (id: string) => {
-      if (typeof window === "undefined" || typeof window.EventSource !== "function") {
+      // `fetch` streaming, not `EventSource`. EventSource cannot send an
+      // `Authorization` header and there is no way to give it one, so against
+      // any deployment with authentication configured — since `AUTH_MODE` lost
+      // its default, every deployment — the stream request arrived anonymous
+      // and the platform answered 401. Measured in Chrome against a token
+      // deployment before this change: `{}` events of every type and an error,
+      // the identical signature to the dispatch defect fixed in 99b9d27.
+      if (typeof window === "undefined" || typeof fetch !== "function") {
         poll(id);
         return;
       }
 
-      const source = new EventSource(eventStreamUrl(id));
-      sourceRef.current = source;
+      const controller = new AbortController();
+      streamRef.current = controller;
       setTransport("stream");
 
-      // **The server names every event, and a browser routes named events only
-      // to matching listeners.** `investigate.py` emits
-      // `id: N\nevent: <type>\ndata: {...}` on every frame, and per the HTML
-      // spec `onmessage` fires solely for the *default* type — an event with no
-      // `event:` field. So `onmessage` alone never fired: the stream opened,
-      // delivered nothing, errored ~400ms later, and `onerror` fell back to
-      // polling. Every investigation the console has ever displayed was polled,
-      // and the only symptom was the "polling" tag appearing on a healthy run.
-      //
-      // `docs/INVESTIGATION_API.md` had it right the whole time and shows
-      // `events.addEventListener("progress", ...)`; the console just never did
-      // it. The unit tests could not see it because `FakeEventSource.emit()`
-      // calls `onmessage` directly, modelling a wire the browser does not
-      // produce — the same "proves the logic but not the wire" gap that
-      // `http.integration.test.ts` exists to cover for `fetch`.
-      //
-      // `onmessage` is kept for an unnamed event, which the server does not
-      // currently send.
-      const onEvent = (event: MessageEvent<string>) => {
-        receivedRef.current = true;
-        let payload: JobEvent;
+      const consume = async () => {
         try {
-          payload = JSON.parse(event.data) as JobEvent;
+          for await (const frame of readEventStream(eventStreamUrl(id), {
+            headers: authHeaders(),
+            signal: controller.signal,
+          })) {
+            // The server names every frame. A browser routes named events only
+            // to matching listeners, which is why `onmessage` alone never
+            // fired; reading the name off the frame keeps that impossible to
+            // get wrong, and an unrecognised name is ignored rather than
+            // parsed as a job event.
+            if (!STREAM_EVENT_TYPES.includes(frame.type as never)) {
+              continue;
+            }
+            receivedRef.current = true;
+
+            let payload: JobEvent;
+            try {
+              payload = JSON.parse(frame.data) as JobEvent;
+            } catch {
+              continue;
+            }
+
+            if (!mountedRef.current) {
+              return;
+            }
+
+            setTimeline((current) => [...current, payload]);
+
+            if (payload.type === "started") {
+              setPhase("running");
+            } else if (payload.type === "completed") {
+              void settle(id, "succeeded");
+              return;
+            } else if (payload.type === "failed") {
+              setError(payload.message);
+              void settle(id, "failed");
+              return;
+            } else if (payload.type === "cancelled") {
+              void settle(id, "cancelled");
+              return;
+            }
+          }
+
+          // The stream ended without a terminal frame: the job may have
+          // finished between frames, or a proxy dropped a connection it
+          // considered idle. Polling converges either way.
+          if (!settledRef.current && mountedRef.current) {
+            poll(id);
+          }
         } catch {
-          return;
-        }
-
-        if (!mountedRef.current) {
-          return;
-        }
-
-        setTimeline((current) => [...current, payload]);
-
-        if (payload.type === "started") {
-          setPhase("running");
-        } else if (payload.type === "completed") {
-          void settle(id, "succeeded");
-        } else if (payload.type === "failed") {
-          setError(payload.message);
-          void settle(id, "failed");
-        } else if (payload.type === "cancelled") {
-          void settle(id, "cancelled");
+          // A 401, a blocked stream, a proxy that buffers to death. The
+          // fallback is what keeps an operator from watching a stalled screen
+          // during an incident — and it is also what hid this transport being
+          // dead, twice, which is why `transport` is surfaced in the UI.
+          if (!settledRef.current && mountedRef.current) {
+            streamRef.current = null;
+            poll(id);
+          }
         }
       };
 
-      source.onmessage = onEvent;
-      for (const name of STREAM_EVENT_TYPES) {
-        source.addEventListener(name, onEvent as EventListener);
-      }
-
-      source.onerror = () => {
-        // The server closes the stream once the job ends; that surfaces here as
-        // an error too, so only treat it as a failure if nothing was settled.
-        if (settledRef.current) {
-          source.close();
-          return;
-        }
-        source.close();
-        sourceRef.current = null;
-        poll(id);
-      };
+      void consume();
     },
     [poll, settle],
   );
