@@ -233,8 +233,13 @@ hand-written — which is what caught the defects hand-written ones could not.
 
 **A required CI job now stands the platform up** on kind with ingress-nginx,
 metrics-server, a prometheus-operator Prometheus and out-of-band Postgres and
-Redis **and a real Go agent enrolled over mTLS**, installs the chart, and makes
-45 assertions against the live deployment
+Redis **and a real Go agent enrolled over mTLS**, installs the chart, makes
+45 assertions against the live deployment, and **drives the console in a real
+browser** — sign in, start an investigation, assert progress arrives over the
+stream rather than the polling fallback, download the PDF and check it begins
+`%PDF`. That last leg is new, and it exists because F29 and F30 both shipped
+through the gap where it wasn't: everything else here speaks HTTP to the
+platform with an `Authorization` header, which is a header no browser can send
 (`scripts/integration_verify.sh`, `docs/INTEGRATION_VERIFICATION.md`). That
 closes the gap every tier from §16 to §21 was actually found through: nothing in
 CI had ever *run* the system against a real dependency, so a defect that needs a

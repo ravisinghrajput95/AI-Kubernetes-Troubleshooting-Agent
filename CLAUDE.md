@@ -1732,6 +1732,43 @@ Two properties are load-bearing and must not regress:
 - **Never display evidence the backend did not report.** `ConfidenceEvidence` previously fell back to a hardcoded `["Events", "Pod Logs", …]`; panels now render an empty state instead. In a product whose premise is that nothing is asserted without evidence, placeholder content is a correctness bug.
 - **Progress is real.** The old `progressSteps` array advanced on a 900ms timer with no relationship to backend work. Every row in `LiveTimeline` is an event the backend actually emitted.
 
+**Nothing drove the console until F29 and F30 forced it, and
+`scripts/console_journey.mjs` is that gap closed.** `console_check.mjs` loads
+each route and checks overflow and console errors; it never signs in, never
+starts an investigation and never downloads anything — so the two most visible
+things this product does were both broken in every authenticated deployment
+while every route passed. The journey is the product used: **sign in → start an
+investigation → watch it stream → download the PDF**, asserting on requests the
+browser chose to make and bytes it actually received (stream answered 200, the
+fallback's own requests counted, the timeline on screen, the report response,
+and the first five bytes of the file on disk). It runs last in
+`integration_verify.sh`, against the **built bundle** rather than `npm run dev`
+— React's StrictMode double-renders in development, so the same investigation
+gives 15-17 progress rows there and 8-10 on the bundle, and a threshold
+calibrated on the dev server is calibrated against something nobody deploys.
+Reached by `kubectl port-forward`, because a browser cannot set a `Host` header
+and nginx is already under test in the SSE check.
+
+Three things it had to be taught, each by being wrong first. **A snapshot is
+not a count**: the poll tally was computed before the run and read after it, so
+the assertion that catches F29's fallback could never fire — found by watching
+the mutant report `poll 0 req` while polling plainly carried the whole
+investigation. **Headless Chrome opens no popup for `target="_blank"`**, so the
+shipped shape of F30 produced no request, no target event and no file; the
+check now inspects the control *before* clicking, because a report reached by
+navigation cannot carry the credential and the mechanism is the defect. And
+**the first file in the download directory is not necessarily a report** —
+Chrome writes its own `downloads.html` there, first bytes `Cr24`, which was
+duly reported as a corrupt PDF. A required job that cries wolf gets skipped
+exactly like a flaky one.
+
+**Its vacuity guards matter more than its assertions**, and the evidence one
+proved that: with the caller's `ClusterRoleBinding` removed the run reported
+signing in, a 200 stream, eleven progress rows and a valid 18 KB PDF — every
+assertion green, measuring nothing at all. A run that saw no stream request is
+refused too, because "the console did not poll" is satisfied perfectly by a
+console that did nothing.
+
 **The 256 tests cannot see layout, and four defects lived in that blind spot.**
 jsdom has no layout engine and no paint, so a test that queries by role passes
 against a console that scrolls sideways. `scripts/console_check.mjs` drives

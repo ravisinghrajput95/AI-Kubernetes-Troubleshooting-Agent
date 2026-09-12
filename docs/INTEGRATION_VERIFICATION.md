@@ -32,6 +32,8 @@ against a real dependency, so the class had no way to fail a build.
 scripts/integration_verify.sh          # create, install, assert, destroy
 scripts/integration_verify.sh --keep   # leave the cluster up
 scripts/verify_deployment.py           # the assertions, against a live deployment
+scripts/console_journey.mjs            # the console, driven in a real browser
+scripts/serve_static.mjs               # serves the built bundle for that journey
 deploy/verify/                         # the environment: kind, deps, Prometheus, values
 ```
 
@@ -338,6 +340,80 @@ times with a green suite; it is not one to detect optionally.
 
 The cost is roughly 12 minutes of wall clock, in parallel with jobs that
 already take five, so the critical path grows by about seven minutes.
+
+## The console journey, and the two defects that shipped without it
+
+Everything else in this job speaks HTTP to the platform. Nothing drove the
+**console**, and that gap is not theoretical — it is exactly where F29 and F30
+shipped:
+
+- `EventSource` cannot send an `Authorization` header. Every endpoint is behind
+  `require_principal`, so the console's progress stream was answered **401** in
+  every deployment with authentication configured — which, since `AUTH_MODE`
+  lost its default, is all of them. It fell back to polling and the only symptom
+  was a tag nobody reads.
+- `<a href>` cannot send one either, so all three report downloads were answered
+  401 and the browser saved the JSON error body **under the name of a report**.
+
+Both were live for the console's whole existence, with 1,600 backend tests, 276
+frontend tests, 45 mutation pairs and this job all green.
+
+**The reason this job could not see them is worth stating precisely, because it
+looks like coverage.** The SSE check here streams with an `Authorization`
+header — and that is a header no browser can send. Proving the *server* streams
+says nothing about whether the *client* can reach it. On the other side, the
+hook's own unit tests used a double that called `onmessage` directly, so no
+request was ever made and no header could be missing. Both halves were tested;
+the seam between them was not.
+
+`scripts/console_journey.mjs` is the product, used: **sign in → start an
+investigation → watch it stream → download the PDF.** Every assertion is about
+a request the browser chose to make or a byte it actually received — the stream
+request answered 200, the fallback's own requests counted, the timeline on
+screen, the report response, and the first five bytes of the file on disk.
+
+It is served from the **built bundle**, not `npm run dev`, because that is what
+ships and because it measures differently: React's StrictMode double-renders in
+development, so the same investigation yields 15-17 progress rows there and 8-10
+on the bundle. A threshold calibrated on the dev server is calibrated against
+something nobody deploys.
+
+It is reached by `kubectl port-forward` rather than through the ingress, on
+purpose. A browser cannot set a `Host` header, so the ingress would need a hosts
+entry to be reachable at all — and nginx is already under test in the SSE check.
+What is under test here is the console against the API.
+
+**Mutation-tested against both defects as they actually shipped.** With the
+stream's credential removed: three findings — the stream refused 401, four
+progress rows against a floor of six, and polling carrying the run. With the PDF
+control reverted to an `<a href>` at the API: one finding naming the URL and the
+mechanism. Restored, the journey passes clean.
+
+That second mutation took two attempts, and the first one is the lesson.
+Headless Chrome opens **no popup** for a `target="_blank"` click, so the shipped
+shape of F30 produced no request, no target event and no file — the run could
+only report that nothing arrived, which is indistinguishable from a broken
+download directory. The check now looks at the control *before* clicking it: a
+report reached by navigation cannot carry the credential, so an anchor pointed
+at the API is named directly. The mechanism is the defect.
+
+**Three vacuity guards, and the middle one is the sharp one.** A journey that
+never cleared the sign-in gate makes every assertion below it vacuously true —
+and that is the default state of a fresh headless profile. "The console did not
+poll" is satisfied perfectly by a console that did nothing, so a run that saw no
+stream request at all is *refused* rather than passed. And an investigation that
+collected no usable evidence is refused however well the console rendered it:
+with the caller's `ClusterRoleBinding` removed, the run still reported signing
+in, a 200 stream, eleven progress rows and a valid 18 KB PDF — every assertion
+green, measuring nothing. Only the evidence guard caught it.
+
+**One false positive was found and fixed before this shipped**, which is the
+failure mode this harness exists to prevent rather than commit. The download
+check took the first file in the directory, and Chrome writes its own things
+there — a mutated run produced a `downloads.html` whose first bytes are `Cr24`,
+the CRX magic, reported as "the downloaded report is not a PDF". It now selects
+only files the platform would have named. A required job that cries wolf gets
+skipped exactly like a flaky one.
 
 ## What belongs here, and what does not
 

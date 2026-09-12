@@ -358,6 +358,106 @@ PY
   rm -rf "$bin_dir"
 }
 
+# The console, driven the way a person drives it: sign in, start an
+# investigation, watch it stream, download the PDF.
+#
+# `verify_deployment.py` proves the *server* streams — with an `Authorization`
+# header, which is a header no browser can send. That gap is not hypothetical:
+# it is exactly how F29 and F30 shipped, with the console's progress stream and
+# all three report downloads answered 401 in every authenticated deployment
+# while 1,600 backend tests, 276 frontend tests and this job were all green.
+#
+# Served from the built bundle rather than the dev server, because that is what
+# ships — and it measures differently: React's StrictMode double-renders in
+# dev, so a threshold calibrated there is calibrated on the wrong thing.
+#
+# Reached by port-forward rather than through the ingress on purpose. A browser
+# cannot set a Host header, so the ingress would need a hosts entry to be
+# reachable at all; and nginx is already under test in the SSE check above.
+# What is under test here is the console against the API.
+run_console_journey() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo "the console journey needs node." >&2
+    return 1
+  fi
+
+  local chrome=""
+  for candidate in \
+    "${CHROME_BIN:-}" \
+    google-chrome-stable google-chrome chromium-browser chromium \
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
+    [ -n "$candidate" ] || continue
+    if command -v "$candidate" >/dev/null 2>&1 || [ -x "$candidate" ]; then
+      chrome="$candidate"
+      break
+    fi
+  done
+  if [ -z "$chrome" ]; then
+    # Named and refused rather than skipped. A journey that silently does not
+    # run is the shape this whole file exists to reject: it exits 0 and reads
+    # exactly like a console that works.
+    echo "the console journey needs Chrome; set CHROME_BIN." >&2
+    return 1
+  fi
+
+  local work
+  work="$(mktemp -d)"
+
+  # Torn down whatever happens, including the port-forward, which otherwise
+  # outlives the script and holds the port for the next run.
+  local pids=()
+  # shellcheck disable=SC2317
+  journey_cleanup() {
+    for pid in "${pids[@]:-}"; do kill "$pid" >/dev/null 2>&1 || true; done
+    # Chrome keeps writing its profile for a moment after SIGTERM, so removing
+    # the directory immediately fails with "Directory not empty" — and under
+    # `set -e` a non-zero status from the last command in a RETURN trap is a
+    # failed step. Measured: without the wait it errors on roughly every run.
+    wait "${pids[@]:-}" 2>/dev/null || true
+    rm -rf "$work" || true
+  }
+  trap journey_cleanup RETURN
+
+  step "  port-forwarding the platform for the browser"
+  k -n "$NAMESPACE" port-forward "svc/$RELEASE" 8000:80 >"$work/forward.log" 2>&1 &
+  pids+=($!)
+  local ready=""
+  for _ in $(seq 1 30); do
+    if curl -sf -o /dev/null "http://127.0.0.1:8000/health"; then ready=1; break; fi
+    sleep 1
+  done
+  if [ -z "$ready" ]; then
+    echo "the platform never became reachable on the forwarded port." >&2
+    cat "$work/forward.log" >&2 || true
+    return 1
+  fi
+
+  step "  building and serving the console bundle"
+  (
+    cd "$REPO_ROOT/frontend"
+    npm ci --no-audit --no-fund >"$work/npm.log" 2>&1 || npm install >"$work/npm.log" 2>&1
+    react_PUBLIC_API_BASE_URL="http://127.0.0.1:8000" npm run build >>"$work/npm.log" 2>&1
+  ) || { echo "the console did not build:" >&2; tail -30 "$work/npm.log" >&2; return 1; }
+
+  node "$REPO_ROOT/scripts/serve_static.mjs" "$REPO_ROOT/frontend/dist" 3000 \
+    >"$work/serve.log" 2>&1 &
+  pids+=($!)
+
+  step "  launching headless Chrome"
+  "$chrome" --headless=new --disable-gpu --no-sandbox \
+    --remote-debugging-port=9222 --user-data-dir="$work/chrome" \
+    about:blank >"$work/chrome.log" 2>&1 &
+  pids+=($!)
+  sleep 4
+
+  step "  driving the console"
+  CONSOLE_URL="http://localhost:3000" \
+  API_URL="http://127.0.0.1:8000" \
+  CONSOLE_TOKEN="$API_TOKEN" \
+  CONSOLE_CLUSTER="${CONSOLE_CLUSTER:-}" \
+    node "$REPO_ROOT/scripts/console_journey.mjs"
+}
+
 step "verifying the deployment"
 python3 "$REPO_ROOT/scripts/verify_deployment.py" \
   --context "$KCTX" \
@@ -372,6 +472,12 @@ python3 "$REPO_ROOT/scripts/verify_deployment.py" \
 
 step "differential agent suite (a real Go agent against this cluster)"
 run_differential_suite
+
+# Last, for the reason the differential suite is second-to-last: the older
+# assertions are the established ones and a newer check must not be able to
+# stop them reporting.
+step "console journey (a real browser, signing in and downloading a report)"
+run_console_journey
 
 # The happy path ends here, and nothing else sets this. See `cleanup`.
 COMPLETED=1

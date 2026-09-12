@@ -262,6 +262,20 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
 
+      # For the console journey, which builds the bundle and drives it in a real
+      # browser. `verify_deployment.py` proves the *server* streams — using an
+      # `Authorization` header, which is a header no browser can send. F29 and
+      # F30 both shipped through precisely that gap.
+      #
+      # Chrome is preinstalled on ubuntu-latest images, and the journey names
+      # and refuses rather than skipping if it is ever absent, so this job goes
+      # red instead of quietly not checking the console.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Install backend dependencies
         working-directory: backend
         run: |
