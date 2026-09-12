@@ -658,6 +658,33 @@ slots. Run the arms bracketed and with `--reset` — each investigation writes
 ~50 rows to `investigation_events`, so an uncontrolled A/B measures the second
 arm against a bigger table, which cost one complete comparison here.
 
+**The ceiling underneath F28 is the progress events, and it is named rather
+than moved.** `loop_bench.py --no-progress` is the arm that says so: 10.2-10.8/s
+as shipped against **24.2-25.0/s** with progress suppressed, bracketed — 2.4x,
+and the worker then sits at **102% of one core**, a single saturated Python
+thread, which is the GIL floor the envelope has always described. An
+investigation emits ~48 events, each a committed row plus a Redis publish
+(2,304 of 2,688 store calls). Per publish: **`set_config` 37%**, commit 35%,
+insert 28%, pool checkout 0.5%.
+
+**Do not try to remove the `set_config` round trip.** `SET LOCAL` per
+transaction is what stops a pooled connection carrying one tenant's setting
+into the next request, and the RLS policy fails *closed* without it — an insert
+with no tenant set is rejected, not mis-filed. Pipelining it with the insert
+was measured at **12%**, with a slightly worse p50. Batching events into fewer
+transactions would save both the commits and the `set_config`s and would break
+incremental SSE delivery, which `verify_deployment.py` asserts and the live
+timeline is made of. `synchronous_commit = off` moves it 29% but is global and
+is the operator's call, and doing it per transaction costs a round trip larger
+than the commit it saves.
+
+**And one inference here was wrong, which is why the method is recorded too.**
+Stack sampling showed psycopg's client-side frames dominating the GIL's queue,
+and the conclusion drawn was "Python compute, therefore unmovable". CPU against
+wall clock on a single thread says the opposite: a publish is 1.671 ms wall and
+**0.319 ms CPU**, so 81% of it is waiting. A sampler counts threads, not work,
+and cannot tell a thread parked in `recv` from one doing something.
+
 **The rule: throughput that does not rise with `JOB_MAX_CONCURRENT` is not the
 platform's.** `fleet_bench.py` now refuses to print "platform-bound" from a
 single run and says so. Do not move §12's scalability score to 9 on the

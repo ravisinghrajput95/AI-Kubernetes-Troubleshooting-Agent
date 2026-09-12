@@ -139,6 +139,65 @@ with the loop no longer the binding constraint and CPU now measured at 144–169
 of one core rather than a machine sitting idle. **Add workers, not slots**
 remains the operational advice.
 
+**Attempt 5 — the ceiling underneath that one, named.** F28 left throughput
+flat against `JOB_MAX_CONCURRENT` at ~10/s with the worker at ~148% of one
+core on a 15-core machine, so something else bound it and nothing said what.
+It is the **progress events**:
+
+```bash
+python scripts/loop_bench.py --investigations 48 --slots 8 --reset
+python scripts/loop_bench.py --investigations 48 --slots 8 --reset --no-progress
+```
+
+| | throughput | CPU | store calls |
+|---|---|---|---|
+| as shipped | 10.2 / 10.8 /s | 148% of one core | 2,688 |
+| progress events suppressed | 24.2 / 25.0 /s | **102%** of one core | 384 |
+
+**2.4x**, bracketed and repeated. An investigation emits ~48 progress events,
+each a committed Postgres row plus a Redis publish — 2,304 of the 2,688 store
+calls in that run. With them gone the worker sits at 102% of one core, which
+is a single Python thread saturated: the floor underneath is the GIL, exactly
+as the envelope has always said, and *add workers, not slots* is unchanged.
+
+**Where a publish goes**, timed in pieces over 200 samples (1.33 ms total):
+
+| piece | share | |
+|---|---|---|
+| `set_config` | **37%** | a whole round trip carrying no data |
+| commit | 35% | |
+| insert | 28% | |
+| connection checkout | 0.5% | the pool is not the problem |
+
+The publish path itself parallelises to about **1,400/s** across threads (705/s
+on one, 1,519/s on eight, 1,276/s on sixteen), which at 48 events each caps a
+worker near 28 investigations/s before anything else runs.
+
+**It is not movable without trading a guarantee this platform has already
+made**, and each candidate was measured rather than argued away:
+
+- **The `set_config` round trip is structural.** `SET LOCAL` per transaction is
+  what stops a pooled connection carrying one tenant's setting into the next
+  request, and the RLS policy fails closed without it — an insert with no
+  tenant set is *rejected*, not mis-filed. Pipelining it with the insert, so
+  both go in one round trip, saves **12%** and makes p50 slightly worse.
+- **Batching events into fewer transactions** would collapse both the commits
+  and the `set_config`s, and would break incremental SSE delivery — which
+  `verify_deployment.py` asserts, and which the console's live timeline is made
+  of.
+- **`synchronous_commit = off` moves it 29%**, and is an operator's knob rather
+  than ours: it is global, so it would also de-durabilise job claims and
+  results, and setting it per transaction costs a round trip (~0.5 ms) larger
+  than the commit it saves (~0.46 ms). Self-defeating at this granularity.
+
+**One inference here was wrong and the measurement corrected it**, which is why
+it is recorded. Stack sampling showed the GIL's queue dominated by psycopg's
+client-side frames, and the conclusion drawn was that the cost was Python
+compute and therefore unmovable by batching. Timing CPU against wall clock on a
+single thread says otherwise: a publish is 1.671 ms wall and **0.319 ms CPU**,
+so 81% of it is waiting. A sampler counts threads, not work — and it counts a
+thread parked in `recv` the same way whichever it is doing.
+
 **Two arms measured against different amounts of data are not comparable**, and
 this cost a complete A/B before it was noticed. Each investigation writes ~50
 rows to `investigation_events`; a few runs leave tens of thousands behind, and

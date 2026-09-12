@@ -175,6 +175,18 @@ async def measure(args, attribution: Attribution) -> dict:
 
     store = attribution.instrument(PostgresRedisJobStore(database, RedisBus(args.redis_url)))
 
+    if args.no_progress:
+        # The comparison arm. Not a mode the platform has — a live timeline is
+        # the point of the async API — but the only way to say what the events
+        # cost rather than guess.
+        from app.jobs import runner as runner_module
+
+        class Silent(runner_module.JobProgressReporter):
+            async def report(self, message, **data):
+                return None
+
+        runner_module.JobProgressReporter = Silent
+
     fake = build_fake_cluster(args.pods, args.log_lines)
     investigation_service.select_provider = lambda *a, **k: LocalKubectlProvider(
         context="loop-bench", executor=fake
@@ -233,6 +245,7 @@ async def measure(args, attribution: Attribution) -> dict:
         "store_calls_total": attribution.total,
         "events_rows_before": events_before,
         "slots": args.slots,
+        "progress_events": not args.no_progress,
     }
 
 
@@ -270,7 +283,8 @@ def render(report: dict, attribution: Attribution) -> None:
     print("=" * 72)
     print(
         f"  {report['investigations']} investigations in {report['elapsed_seconds']:.2f}s"
-        f"  ->  {report['throughput_per_second']:.1f}/s   (slots={report['slots']})"
+        f"  ->  {report['throughput_per_second']:.1f}/s   (slots={report['slots']}"
+        f"{'' if report['progress_events'] else ', progress events suppressed'})"
     )
     print("=" * 72)
     blocked = report["loop_blocked_seconds"]
@@ -315,6 +329,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--slots", type=int, default=8)
     parser.add_argument("--pods", type=int, default=60)
     parser.add_argument("--log-lines", type=int, default=40)
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help=(
+            "suppress progress events, to measure what they cost. Each is a "
+            "committed Postgres row plus a Redis publish and there are ~50 per "
+            "investigation; this arm is what showed they are the second ceiling."
+        ),
+    )
     parser.add_argument(
         "--reset",
         action="store_true",
