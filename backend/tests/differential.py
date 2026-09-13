@@ -215,3 +215,45 @@ def compare(subject: Any, other: Any, control: Any, other_control: Any = None) -
             )
 
     return Comparison(divergences=divergences, churned=churned, stable=stable)
+
+
+# How many brackets to collect before a refusal is believed. Three, because the
+# CI kind cluster's churn is the platform's own Deployment settling after
+# install — seconds, not minutes — and a bracket takes a few seconds itself.
+SETTLE_ATTEMPTS = 3
+
+
+async def compare_until_settled(collect, attempts: int = SETTLE_ATTEMPTS) -> tuple[Comparison, int]:
+    """Collect and compare until the cluster holds still long enough to compare.
+
+    `collect` is an async callable returning the four bracketed projections.
+
+    **A refusal is inconclusive, and a divergence is not.** `refusal()` says
+    the cluster moved too much for this comparison to establish anything, which
+    is a statement about *when* it was taken — so taking it again later is the
+    honest response. Failing a required job on it made the refusal guard a
+    flake of its own: small projections churned past half on the CI cluster
+    while the platform's three replicas settled, and the job went red on
+    `k8s.deployments` (2 of 3 moved) in one run and `pod log fan-out` (3 of 3)
+    in another, on commits that touched nothing near either.
+    `test_a_mostly_stable_comparison_is_not_refused` had warned that refusing
+    on normal churn "would replace the flake with a different flake", and it
+    did, in a way that threshold alone could not prevent: at three values, two
+    moving is most of them.
+
+    Two properties keep this from becoming the exclusion that swallows the
+    suite:
+
+    - **A divergence returns immediately and is never retried.** A real
+      divergence is directional and repeats; collecting again until it happens
+      not to appear would be retrying a defect away.
+    - **It still refuses.** If every attempt is refused, the last refusal is
+      returned and the caller fails on it — a cluster that never holds still
+      has still not been compared.
+    """
+    comparison = Comparison()
+    for attempt in range(1, attempts + 1):
+        comparison = compare(*(await collect()))
+        if comparison.divergences or comparison.refusal() is None:
+            return comparison, attempt
+    return comparison, attempts

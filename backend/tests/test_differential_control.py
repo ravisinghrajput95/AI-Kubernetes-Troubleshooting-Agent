@@ -18,7 +18,7 @@ from typing import ClassVar
 
 import pytest
 
-from tests.differential import Comparison, compare, leaves, unstable
+from tests.differential import Comparison, compare, compare_until_settled, leaves, unstable
 
 
 class TestFlattening:
@@ -232,3 +232,69 @@ class TestItRefusesRatherThanProvingNothing:
         control = {"real": 1, "moving": 2 if noisy else 1}
         result = compare(subject, other, control)
         assert any("real" in line for line in result.divergences)
+
+
+class TestARefusalIsCollectedAgain:
+    """A refusal is inconclusive; a divergence is not. The retry must know which.
+
+    The integration job went red on the refusal guard twice in three runs, on
+    `k8s.deployments` and `pod log fan-out`, on commits that touched neither —
+    the platform's own replicas settling after install moved most of a
+    three-value projection. Collecting again is the honest response to "the
+    cluster moved too much just then". It must not become a way to retry a real
+    divergence out of existence, and it must not pass a cluster that never
+    holds still.
+    """
+
+    @staticmethod
+    def collector(*rounds):
+        calls = []
+
+        async def collect():
+            calls.append(len(calls) + 1)
+            return rounds[min(len(calls), len(rounds)) - 1]
+
+        return collect, calls
+
+    CHURNING = ({"a": 1, "b": 1}, {"a": 2, "b": 2}, {"a": 2, "b": 2}, {"a": 2, "b": 2})
+    SETTLED = ({"a": 1, "b": 1}, {"a": 1, "b": 1}, {"a": 1, "b": 1}, {"a": 1, "b": 1})
+    DIVERGENT = ({"a": 1, "b": 1}, {"a": 9, "b": 1}, {"a": 1, "b": 1}, {"a": 9, "b": 1})
+
+    async def test_a_refused_comparison_is_collected_again_until_it_settles(self):
+        collect, calls = self.collector(self.CHURNING, self.SETTLED)
+        comparison, attempts = await compare_until_settled(collect)
+
+        assert comparison.refusal() is None
+        assert not comparison.divergences
+        assert (attempts, len(calls)) == (2, 2)
+
+    async def test_a_cluster_that_never_settles_is_still_refused(self):
+        """The floor. Without it, retrying is just a slower way to skip."""
+        collect, calls = self.collector(self.CHURNING)
+        comparison, attempts = await compare_until_settled(collect, attempts=3)
+
+        assert comparison.refusal() is not None
+        assert (attempts, len(calls)) == (3, 3)
+
+    async def test_a_divergence_is_never_collected_again(self):
+        """A real divergence is directional and repeats; retrying it is hiding it."""
+        collect, calls = self.collector(self.DIVERGENT, self.SETTLED)
+        comparison, _ = await compare_until_settled(collect)
+
+        assert any("a" in line for line in comparison.divergences)
+        assert len(calls) == 1, "a divergence was collected again, which could retry it away"
+
+    async def test_a_divergence_found_after_a_refusal_is_reported(self):
+        collect, _ = self.collector(self.CHURNING, self.DIVERGENT)
+        comparison, attempts = await compare_until_settled(collect)
+
+        assert comparison.divergences
+        assert attempts == 2
+
+    async def test_a_quiet_cluster_is_collected_once(self):
+        """The control: settling must not cost a clean run anything."""
+        collect, calls = self.collector(self.SETTLED)
+        comparison, attempts = await compare_until_settled(collect)
+
+        assert comparison.refusal() is None and not comparison.divergences
+        assert (attempts, len(calls)) == (1, 1)

@@ -413,14 +413,28 @@ class TestEveryCollectorAgrees:
         other_control = await self.collect(local_provider())
         return subject, other, control, other_control
 
-    def assert_agrees(self, label, projections):
-        """Hold the agent's projection against the kubeconfig's, minus churn."""
-        subject, other, control, other_control = projections
-        comparison = differential.compare(subject, other, control, other_control)
+    async def assert_agrees(self, session, label, project):
+        """Hold the agent's projection against the kubeconfig's, minus churn.
 
-        refusal = comparison.refusal()
-        assert refusal is None, f"{label}: this comparison proved nothing — {refusal}"
+        `project` maps one collected store to the value being compared. It is
+        a function rather than precomputed projections because a refused
+        comparison is collected *again* — see `compare_until_settled` for why a
+        refusal is retried and a divergence never is.
+
+        Divergences are checked before the refusal, so a run that happened to
+        find a real defect while the cluster churned reports the defect.
+        """
+
+        async def collect():
+            stores = await self.collect_bracketed(session)
+            return tuple(project(store) for store in stores)
+
+        comparison, attempts = await differential.compare_until_settled(collect)
         assert not comparison.divergences, f"{label}: {comparison.report()}"
+        refusal = comparison.refusal()
+        assert refusal is None, (
+            f"{label}: this comparison proved nothing across {attempts} collection(s) — {refusal}"
+        )
         return comparison
 
     # Values that change between *every* two reads of a running cluster, or
@@ -458,9 +472,10 @@ class TestEveryCollectorAgrees:
         # failure mode a differential test exists to catch. Keyed by evidence
         # id, because a pod that appeared between two reads shifts a positional
         # list and reads as every entry after it degrading.
-        self.assert_agrees(
+        await self.assert_agrees(
+            connected_agent,
             "evidence usability",
-            tuple({record.id: record.usable for record in store} for store in stores),
+            lambda store: {record.id: record.usable for record in store},
         )
 
     @pytest.mark.parametrize(
@@ -480,11 +495,10 @@ class TestEveryCollectorAgrees:
             payload = store.data(kind, {}) or {}
             return {key: value for key, value in payload.items() if key not in self.VOLATILE}
 
-        self.assert_agrees(kind, tuple(compared(store) for store in stores))
+        await self.assert_agrees(connected_agent, kind, compared)
 
     async def test_the_pod_inventory_is_identical(self, connected_agent):
         """The most consequential payload: what the analysis layer reasons over."""
-        stores = await self.collect_bracketed(connected_agent)
 
         def by_name(store):
             payload = store.data("k8s.pods", {}) or {}
@@ -492,10 +506,9 @@ class TestEveryCollectorAgrees:
                 f"{pod['namespace']}/{pod['name']}": pod for pod in payload.get("pod_inventory", [])
             }
 
-        self.assert_agrees("pod inventory", tuple(by_name(store) for store in stores))
+        await self.assert_agrees(connected_agent, "pod inventory", by_name)
 
     async def test_problematic_pods_match(self, connected_agent):
-        stores = await self.collect_bracketed(connected_agent)
 
         def flagged(store):
             payload = store.data("k8s.pods", {}) or {}
@@ -504,11 +517,10 @@ class TestEveryCollectorAgrees:
                 for pod in payload.get("problematic_pods", [])
             }
 
-        self.assert_agrees("problematic pods", tuple(flagged(store) for store in stores))
+        await self.assert_agrees(connected_agent, "problematic pods", flagged)
 
     async def test_pod_logs_are_collected_through_both(self, connected_agent):
         """`LogsCollector` fans out over pods, so it is the odd one out."""
-        stores = await self.collect_bracketed(connected_agent)
 
         def fanned_out(store):
             payload = store.data("k8s.pods.logs", {}) or {}
@@ -517,7 +529,7 @@ class TestEveryCollectorAgrees:
                 "read": {entry["name"]: True for entry in payload.get("logs", [])},
             }
 
-        self.assert_agrees("pod log fan-out", tuple(fanned_out(store) for store in stores))
+        await self.assert_agrees(connected_agent, "pod log fan-out", fanned_out)
 
     async def test_metrics_agree_or_are_absent_on_both(self, connected_agent):
         """The only collector where the two sources genuinely differ.

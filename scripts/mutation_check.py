@@ -62,6 +62,34 @@ class Mutation:
 
 MUTATIONS = [
     Mutation(
+        name="settling-retries-a-divergence-away",
+        why=(
+            "The integration job's differential refusal guard went red twice in "
+            "three runs on churn alone, so a refused comparison is now collected "
+            "again. That retry is only safe if it keys on the refusal: retrying "
+            "on anything short of a clean comparison would re-collect a real "
+            "divergence until the cluster happened not to show it — a directional, "
+            "repeating defect retried out of existence by the fix for a flake."
+        ),
+        path="tests/differential.py",
+        old="        if comparison.divergences or comparison.refusal() is None:",
+        new="        if not comparison.divergences and comparison.refusal() is None:",
+        tests="tests/test_differential_control.py",
+    ),
+    Mutation(
+        name="settling-passes-a-cluster-that-never-settles",
+        why=(
+            "The other half of the retry. Returning a fresh, empty Comparison "
+            "when every attempt was refused would turn 'the cluster never held "
+            "still' into 'nothing differed' — the exclusion-with-no-floor that "
+            "Comparison.refusal() exists to prevent, reintroduced one level up."
+        ),
+        path="tests/differential.py",
+        old="    return comparison, attempts\n",
+        new="    return Comparison(), attempts  # mutation: a refused run passes\n",
+        tests="tests/test_differential_control.py",
+    ),
+    Mutation(
         name="progress-reporting-blocks-the-event-loop",
         why=(
             "F28: a progress event is a committed Postgres row plus a Redis "
