@@ -448,13 +448,40 @@ run_console_journey() {
   node "$REPO_ROOT/scripts/serve_static.mjs" "$REPO_ROOT/frontend/dist" 3000 \
     >"$work/serve.log" 2>&1 &
   pids+=($!)
+  # Same race as Chrome's port below: the journey navigates here immediately,
+  # and a server not yet listening reads to it as a sign-in gate that never
+  # cleared — a refusal blaming the credential for a harness that asked early.
+  local console_ready=""
+  for _ in $(seq 1 40); do
+    if curl -sf -o /dev/null "http://127.0.0.1:3000/"; then console_ready=1; break; fi
+    sleep 0.5
+  done
+  if [ -z "$console_ready" ]; then
+    echo "the console bundle was never served on :3000:" >&2
+    tail -20 "$work/serve.log" >&2 || true
+    return 1
+  fi
 
   step "  launching headless Chrome"
   "$chrome" --headless=new --disable-gpu --no-sandbox \
     --remote-debugging-port=9222 --user-data-dir="$work/chrome" \
     about:blank >"$work/chrome.log" 2>&1 &
   pids+=($!)
-  sleep 4
+  # **Wait for the debugging port, never a fixed sleep.** This was `sleep 4`.
+  # It passed the journey's first CI run and failed the second — "Could not
+  # reach Chrome's debugging port" — on a runner where Chrome took longer to
+  # start, which turned the required job into a coin toss decided by a guess.
+  # The journey refused correctly; the harness had asked too early.
+  local chrome_ready=""
+  for _ in $(seq 1 60); do
+    if curl -sf -o /dev/null "http://127.0.0.1:9222/json/version"; then chrome_ready=1; break; fi
+    sleep 0.5
+  done
+  if [ -z "$chrome_ready" ]; then
+    echo "Chrome never opened its debugging port within 30s:" >&2
+    tail -20 "$work/chrome.log" >&2 || true
+    return 1
+  fi
 
   step "  driving the console"
   CONSOLE_URL="http://localhost:3000" \
