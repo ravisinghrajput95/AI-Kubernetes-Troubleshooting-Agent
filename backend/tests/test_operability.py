@@ -568,7 +568,7 @@ class TestCorrelationId:
         seen = []
         runner = InvestigationJobRunner(InMemoryJobStore())
 
-        async def fake_run(job_id, request, principal, already_running):
+        async def fake_run(job_id, request, principal, already_running, lease_worker=""):
             seen.append(correlation_id())
 
         runner._run_execute = fake_run

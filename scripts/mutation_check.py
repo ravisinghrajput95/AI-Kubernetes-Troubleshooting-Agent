@@ -62,6 +62,21 @@ class Mutation:
 
 MUTATIONS = [
     Mutation(
+        name="lease-renewed-under-a-different-identity",
+        why=(
+            "The claim recorded worker_identity() (WORKER_ID, else hostname:pid) "
+            "and the watchdog renewed with settings.worker_id, which nothing in "
+            "the repository sets. The renewal matched no row, so every distributed "
+            "investigation that outlived JOB_LEASE_SECONDS was reaped as a dead "
+            "worker while still running — reproduced live against a frozen agent, "
+            "reaped at 71s half a second before the run completed."
+        ),
+        path="app/jobs/runner.py",
+        old="                        lease_worker,\n",
+        new="                        settings.worker_id,  # mutation: as shipped\n",
+        tests="tests/test_lease_renewal.py",
+    ),
+    Mutation(
         name="settling-retries-a-divergence-away",
         why=(
             "The integration job's differential refusal guard went red twice in "

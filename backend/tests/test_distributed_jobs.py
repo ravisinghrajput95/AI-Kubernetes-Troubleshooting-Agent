@@ -496,3 +496,49 @@ class TestAListingDoesNotReadResults:
             f"the summary query differs from the full one by {full - summary}; "
             f"it should differ by `result` alone."
         )
+
+
+class TestALongInvestigationKeepsItsLease:
+    """Against real Postgres: a job that outlives its lease is not reaped.
+
+    The store-level lease tests call `renew_lease` with the matching worker id,
+    so they pass whatever identity the runner actually sends. This one lets the
+    consumer claim and the runner renew, and asks the reaper — the only
+    component whose opinion decided the defect.
+    """
+
+    async def test_a_job_running_past_its_lease_is_not_reaped(
+        self, backend, worker_a, worker_b, monkeypatch
+    ):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "job_lease_seconds", 2)
+        monkeypatch.setattr(settings, "job_cancel_poll_seconds", 0.25)
+        monkeypatch.setattr(settings, "worker_id", "")  # what every deployment has
+
+        async def outlives_the_lease(*args, **kwargs):
+            await asyncio.sleep(5)
+            return {"investigation": {"health": {"status": "ok"}}, "diagnosis": {}}
+
+        monkeypatch.setattr("app.jobs.runner.run_investigation", outlives_the_lease)
+        monkeypatch.setattr("app.jobs.runner.collection_failure", lambda investigation: None)
+
+        runner_b = InvestigationJobRunner(worker_b)
+        consumer_b = JobConsumer(worker_b, runner_b, backend.bus, worker_id="host-b:1234")
+
+        job = worker_a.create({})
+        await consumer_b._claim_and_run(job.id)
+
+        reaped = []
+        for _ in range(30):
+            await asyncio.sleep(0.25)
+            reaped += worker_a.reap_expired(WORKER_LOST)
+            if worker_a.get(job.id).status.terminal:
+                break
+        for _ in range(40):
+            if runner_b.busy == 0:
+                break
+            await asyncio.sleep(0.25)
+
+        assert job.id not in reaped, "a live worker's investigation was reaped as a dead one"
+        assert worker_a.get(job.id).status is JobStatus.SUCCEEDED

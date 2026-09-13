@@ -190,9 +190,17 @@ class InvestigationJobRunner:
         request: InvestigationRequest | None,
         principal: Principal | None = None,
         already_running: bool = False,
+        lease_worker: str = "",
     ) -> asyncio.Task:
-        """Run this job in this process. Requires the event loop thread."""
-        task = asyncio.create_task(self._execute(job_id, request, principal, already_running))
+        """Run this job in this process. Requires the event loop thread.
+
+        `lease_worker` is the identity that claimed the job, and the watchdog
+        renews the lease under exactly that identity — see `_watch` for why it
+        is handed over rather than looked up.
+        """
+        task = asyncio.create_task(
+            self._execute(job_id, request, principal, already_running, lease_worker)
+        )
         self._tasks[job_id] = task
         metrics.running(len(self._tasks))
         task.add_done_callback(lambda finished: self._finished(job_id, finished))
@@ -294,6 +302,7 @@ class InvestigationJobRunner:
         request: InvestigationRequest | None,
         principal: Principal | None = None,
         already_running: bool = False,
+        lease_worker: str = "",
     ) -> None:
         # Belt and braces with `submit`'s `bind`, and the only thing covering
         # the distributed path: a job claimed from the queue runs on a worker
@@ -303,7 +312,7 @@ class InvestigationJobRunner:
         # multi-worker deployment — which is the deployment where interleaved
         # logs make it matter most.
         with correlation_scope(job_id):
-            await self._run_execute(job_id, request, principal, already_running)
+            await self._run_execute(job_id, request, principal, already_running, lease_worker)
 
     async def _run_execute(
         self,
@@ -311,9 +320,10 @@ class InvestigationJobRunner:
         request: InvestigationRequest | None,
         principal: Principal | None = None,
         already_running: bool = False,
+        lease_worker: str = "",
     ) -> None:
         reporter = JobProgressReporter(self.store, job_id)
-        watchdog = self._start_watchdog(job_id)
+        watchdog = self._start_watchdog(job_id, lease_worker)
         # Timed here rather than from the stored row: this is the process that
         # actually ran it, and the row's timestamps are the database's clock on
         # a worker that may not be this one.
@@ -388,7 +398,7 @@ class InvestigationJobRunner:
         # follow a link to an investigation that had not been written yet.
         announce(job_id, "succeeded", result.get("investigation"), result.get("diagnosis"))
 
-    def _start_watchdog(self, job_id: str) -> asyncio.Task | None:
+    def _start_watchdog(self, job_id: str, lease_worker: str = "") -> asyncio.Task | None:
         """Poll for a cancellation whose message never arrived, and hold the lease.
 
         Only meaningful for the distributed store. The Redis control message
@@ -398,9 +408,31 @@ class InvestigationJobRunner:
         """
         if not self.store.distributed:
             return None
-        return asyncio.create_task(self._watch(job_id))
+        return asyncio.create_task(self._watch(job_id, lease_worker))
 
-    async def _watch(self, job_id: str) -> None:
+    async def _watch(self, job_id: str, lease_worker: str = "") -> None:
+        """Poll for a lost cancel, and keep the lease held while the job runs.
+
+        **The lease is renewed under the identity that claimed it, handed in by
+        the claimer.** This used to pass `settings.worker_id`, while the claim
+        recorded `worker_identity()` — `WORKER_ID` if set, otherwise
+        `hostname:pid`. `WORKER_ID` is set by nothing: not the Helm chart, not
+        compose. So the renewal's `WHERE lease_worker = ''` matched no row, no
+        lease was ever renewed, and **every distributed investigation that ran
+        past `JOB_LEASE_SECONDS` was reaped as a dead worker** while the worker
+        was alive and still running it. Reproduced against an agent frozen with
+        SIGSTOP: every collector hit its 60s budget exactly as designed, and at
+        71s the reaper failed the job with "Investigation worker stopped before
+        the run finished" — half a second before the investigation completed
+        and saved its report to a job already marked failed.
+
+        Nothing short ever showed it: an investigation is normally about a
+        second, and the chaos scenario that verifies reaping kills the worker,
+        so a renewal that never happens looks identical to one that works. The
+        store's `renew_lease` was tested with correct ids called directly, and
+        the runner's tests stub it as a no-op — both halves covered, the
+        argument between them not.
+        """
         interval = max(0.25, settings.job_cancel_poll_seconds)
         lease = max(interval, settings.job_lease_seconds / 3)
         since_renewal = 0.0
@@ -419,7 +451,7 @@ class InvestigationJobRunner:
                     await asyncio.to_thread(
                         self.store.renew_lease,
                         job_id,
-                        settings.worker_id,
+                        lease_worker,
                         settings.job_lease_seconds,
                     )
             except asyncio.CancelledError:

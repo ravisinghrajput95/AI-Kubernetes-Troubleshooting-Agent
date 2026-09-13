@@ -142,6 +142,9 @@ class JobConsumer:
                 request,
                 principal,
                 already_running=True,
+                # The identity this claim was made under, so the watchdog renews
+                # the lease it actually holds. See `InvestigationJobRunner._watch`.
+                lease_worker=self._worker,
             )
 
     async def _settle_unclaimable(self, job_id: str) -> None:
