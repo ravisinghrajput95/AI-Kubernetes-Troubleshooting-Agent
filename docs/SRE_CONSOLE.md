@@ -14,15 +14,18 @@ gate, and nothing else. Everything it used to hold lives in a dedicated module.
 | `src/routes/` | One page per address, including `InvestigationPage` and `ReportsPage` |
 | `src/hooks/useInvestigationJob.ts` | Job submission, SSE, polling fallback, cancellation |
 | `src/lib/analysis.ts` | Grouping, filtering, ordering, formatting — no React |
-| `src/lib/remediation.ts` | The YAML, PR description and apply plan the remediation panel offers |
 | `src/services/http.ts` | JSON transport over `fetch` |
 | `src/components/` | Presentational panels |
 
-Pure logic is kept out of components so it can be tested without rendering, and
-that is not a style preference: `buildRemediationYaml` writes a manifest a
-person is invited to apply to a production cluster, and while it lived in
-`App.tsx` reaching it from a test meant rendering a panel, clicking a tab and
-reading a `<pre>` — so it had no tests at all. It has fifteen now.
+Pure logic is kept out of components so it can be tested without rendering.
+**That is necessary and not sufficient**, and the remediation builders are the
+proof: moved out of `App.tsx` they gained fifteen tests, every one confirming
+correct YAML for the workload they were handed, while the workload came from the
+first problematic pod in the namespace rather than from the diagnosis. They are
+deleted (F31); remediation is rendered from the plan `app/remediation/` builds
+for the selected hypothesis, by `RemediationPlanPanel`. Test the *choice of
+input* as well as the function, or the tests describe a correct answer to the
+wrong question.
 
 ## Bundle
 

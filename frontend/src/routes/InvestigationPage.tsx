@@ -5,7 +5,7 @@ import { Link, useParams, useSearchParams } from "react-router";
 import { ArtifactsPanel } from "../components/report/ArtifactsPanel";
 import { EvidenceInspector } from "../components/report/EvidenceInspector";
 import { LiveTimeline } from "../components/LiveTimeline";
-import { RemediationPanel } from "../components/RemediationPanel";
+import { RemediationPlanPanel } from "../components/RemediationPlanPanel";
 import { ReportDocument } from "../components/report/ReportDocument";
 import { SeverityDot } from "../components/report/SeverityDot";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
@@ -154,9 +154,20 @@ export function InvestigationPage() {
             </div>
           ) : null}
 
+          {/*
+            The backend's plan, not one the browser composes. This mounted
+            `RemediationPanel`, which built its own YAML and "Apply Fix"
+            commands for `firstAffectedWorkload` — the first problematic
+            workload in the namespace, whatever the diagnosis said. Against the
+            audit fixture the diagnosis named Service payments/checkout-svc and
+            that panel offered a patch for Deployment payments/archiver and put
+            `kubectl edit deployment archiver` on the clipboard. The plan below
+            is keyed on the selected hypothesis in `app/remediation/` and names
+            the resource it is about.
+          */}
           {terminal && diagnosis ? (
             <div className="mt-8">
-              <RemediationPanel diagnosis={diagnosis} investigation={investigation} />
+              <RemediationPlanPanel diagnosis={diagnosis} />
             </div>
           ) : null}
 

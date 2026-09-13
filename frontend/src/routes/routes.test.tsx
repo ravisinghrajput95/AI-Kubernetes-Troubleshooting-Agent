@@ -277,3 +277,108 @@ describe("the headline must not contradict the body", () => {
     expect(screen.queryByText(/investigation progress/i)).not.toBeInTheDocument();
   });
 });
+
+/**
+ * The remediation an operator is shown must be the one the diagnosis is about.
+ *
+ * The page mounted a panel that composed its own patch and "Apply Fix"
+ * commands for `firstAffectedWorkload` — the first problematic workload in the
+ * namespace. Reproduced against `docs/qa/audit-faults.yaml`: the diagnosis named
+ * Service payments/checkout-svc, and on the same page that panel offered a
+ * Deployment patch for payments/archiver (the PVC-blocked pod, unrelated) and
+ * copied `kubectl edit deployment archiver -n payments` to the clipboard.
+ *
+ * The fixture below is that investigation's shape: a plan targeting the
+ * Service, and a different workload first in the problematic list.
+ */
+describe("the remediation shown is the one the diagnosis is about", () => {
+  const plan = {
+    id: "align-service-selector",
+    hypothesis_id: "network.service_without_endpoints",
+    title: "Align Service payments/checkout-svc with its pods",
+    summary: "The selector matches no ready pods.",
+    target: { kind: "Service", name: "checkout-svc", namespace: "payments" },
+    risk: {
+      level: "Medium",
+      change_kind: "service",
+      restart_required: false,
+      estimated_downtime: "None if the selector is corrected",
+      blast_radius: "All clients of service payments/checkout-svc",
+      reversible: true,
+      notes: [],
+    },
+    requires_approval: true,
+    preconditions: [],
+    remediation: [{ description: "Correct the selector", command: "", manual: true }],
+    verification: [],
+    rollback: [],
+    required_permissions: [],
+    patches: [],
+    signal_ids: [],
+    evidence_ids: [],
+    caveats: [],
+  };
+
+  async function renderInvestigation(remediation: unknown) {
+    vi.spyOn(api, "getInvestigationJob").mockResolvedValue({
+      id: "job-remediation",
+      status: "succeeded",
+      investigation: {
+        context: "kind-audit",
+        pods: {
+          // First in the list, and not what the diagnosis is about.
+          problematic_pods: [
+            { name: "archiver-6795b9bc5d-mkrs8", namespace: "payments", status: "Pending" },
+            { name: "checkout-5b5fd56dbf-rb9ps", namespace: "payments", status: "CrashLoopBackOff" },
+          ],
+        },
+      },
+      diagnosis: {
+        root_cause: "Service has no ready endpoints (service/payments/checkout-svc).",
+        remediation,
+      },
+    } as unknown as Awaited<ReturnType<typeof api.getInvestigationJob>>);
+    vi.spyOn(api, "getInvestigationReport").mockResolvedValue({ report: undefined } as never);
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/investigations/job-remediation"]}>
+          <Routes>
+            <Route path="/investigations/:id" element={<InvestigationPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("names the resource the plan targets", async () => {
+    await renderInvestigation(plan);
+    expect(await screen.findByText("Service/payments/checkout-svc")).toBeInTheDocument();
+  });
+
+  it("never offers a change to a workload the diagnosis did not name", async () => {
+    const { container } = await renderInvestigation(plan);
+    // Waits on something both panels leave alone, then for the terminal
+    // render. Waiting on the plan's target made this test fail on its first
+    // line against the defect, so the assertions naming the wrong workload
+    // never ran — a guard that fails for the wrong reason is not guarding.
+    await screen.findByRole("heading", { name: "kind-audit" });
+    await screen.findAllByText(/remediation|fix/i);
+
+    // Asserted on the page's text, not on a component: whatever is mounted, an
+    // operator must not be handed the unrelated workload as something to fix.
+    const text = container.textContent ?? "";
+    expect(text).not.toMatch(/deployment archiver/i);
+    expect(text).not.toMatch(/name: archiver/);
+    expect(screen.queryByRole("button", { name: /apply fix/i })).toBeNull();
+  });
+
+  it("says there is no plan rather than composing one", async () => {
+    await renderInvestigation(null);
+    expect(
+      await screen.findByText("No remediation plan was produced for this investigation."),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/archiver/i);
+  });
+});

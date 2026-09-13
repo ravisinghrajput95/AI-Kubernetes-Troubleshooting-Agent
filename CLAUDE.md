@@ -1655,13 +1655,31 @@ What it corrected beyond size is a **backwards dependency** — `ReportsPage` an
 `App.tsx`, so two routes reached into the shell that mounts them. Both now live
 in `src/routes/`.
 
-The remediation builders went to `src/lib/remediation.ts` and **gained their
-first tests in the move, which is the argument for it**: `buildRemediationYaml`
-writes a manifest a person is invited to apply to a production cluster, and
-reaching it used to mean rendering a panel, clicking a tab and reading a
-`<pre>`. Eight mutations against it, including the two that had already shipped
-— `diagnosis?.root_cause.toLowerCase()` guarding the diagnosis and not the
-field, and a Pod handed the Deployment manifest's `spec.template` nesting.
+**The remediation builders are gone, and their tests are why the defect was
+invisible (F31).** They moved to `src/lib/remediation.ts` in that split and
+gained fifteen tests and eight mutation pairs — every one proving they built
+*correct YAML for the workload they were given*. None asked whether that was
+the workload the diagnosis was about. It was not: the target came from
+`firstAffectedWorkload`, the first problematic workload in the namespace.
+Against `docs/qa/audit-faults.yaml` the diagnosis named Service
+`payments/checkout-svc`, and the same page offered a Deployment patch for
+`payments/archiver` — the unrelated PVC-blocked pod — while "Apply Fix" copied
+`kubectl edit deployment archiver -n payments` to the clipboard. **A thoroughly
+tested component fed the wrong input is a thoroughly tested wrong answer.**
+
+The console now mounts `RemediationPlanPanel`, which renders the plan
+`app/remediation/` keys on the selected hypothesis: the resource it names,
+caveats, required RBAC checks and the backend's own patches labelled "never run
+by this platform". It had existed since the reasoning-layer milestone and was
+**unmounted in `38f895b`**, the change that turned the page into a report
+document — which kept the legacy panel instead. That panel also coloured every
+risk level but `Medium` as safe, so the two `High` plans the platform emits
+(marking a StorageClass default, opening ingress through a default-deny
+NetworkPolicy) showed green; and its step 2 was a hardcoded "restart or roll out
+the affected deployment", which `_rollable()` exists to refuse for bare pods.
+`routes.test.tsx` asserts the page never offers the unrelated workload,
+mutation-verified to fail on `name: archiver` itself rather than on setup; an
+unrecognised risk level now renders neutral, not as `Low`.
 
 Two components left entirely: `MultiClusterPanel` and `investigationEvidence`
 were referenced nowhere in `src/`, superseded by `FleetPage` and

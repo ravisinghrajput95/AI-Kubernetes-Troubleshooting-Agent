@@ -9,6 +9,16 @@ import type {
   RemediationStep,
 } from "../types/investigation";
 
+/**
+ * Risk colour by level. **An unrecognised level is neutral, never `Low`.**
+ * It fell back to `Low` — green — so any level the backend adds, or a casing
+ * change, would have rendered as the safest one. The legacy panel this replaced
+ * made the same mistake in a worse shape: everything but `Medium` was "good",
+ * so the two `High` plans the platform emits (a default StorageClass change and
+ * opening ingress through a default-deny NetworkPolicy) showed as green.
+ */
+const UNKNOWN_RISK_TONE = "border-slate-700 bg-slate-900 text-slate-300";
+
 const RISK_TONE: Record<string, string> = {
   Low: "border-lime-800 bg-lime-950/40 text-lime-300",
   Medium: "border-amber-800 bg-amber-950/40 text-amber-300",
@@ -137,7 +147,7 @@ export function RemediationPlanPanel({ diagnosis }: { diagnosis?: Diagnosis }) {
         <div className="flex flex-wrap items-center gap-2">
           <Tag
             label={`${plan.risk.level} risk`}
-            className={RISK_TONE[plan.risk.level] ?? RISK_TONE.Low}
+            className={RISK_TONE[plan.risk.level] ?? UNKNOWN_RISK_TONE}
           />
           {plan.requires_approval ? (
             <Tag
