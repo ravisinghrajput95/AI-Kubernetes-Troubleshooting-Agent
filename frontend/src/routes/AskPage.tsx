@@ -92,6 +92,20 @@ export function AskPage() {
     () => new Set(corpus.map((entry) => entry.cluster).filter(Boolean)),
     [corpus],
   );
+  // **Coverage is a count over the fleet, so it may only count the fleet.** The
+  // headline divided every cluster in history by the clusters that exist now,
+  // and history outlives clusters: one investigated and then decommissioned
+  // read "across 2 of 1 cluster" — measured on a live console, on the page
+  // whose own promise is that every claim is a count of runs you can open.
+  // Clusters on record but no longer present are real and worth saying, so
+  // they are said separately. And only when the fleet actually loaded: if it
+  // failed, every cluster would look departed, which is the same false claim
+  // pointing the other way.
+  const fleetNames = useMemo(() => new Set(fleet.map((cluster) => cluster.name)), [fleet]);
+  const coveredInFleet = [...covered].filter((name) => fleetNames.has(name)).length;
+  const departed = contexts.isSuccess
+    ? [...covered].filter((name) => !fleetNames.has(name))
+    : [];
   const uncovered = fleet.filter((cluster) => !covered.has(cluster.name));
 
   const findings = useMemo(() => recurringFindings(corpus), [corpus]);
@@ -110,9 +124,13 @@ export function AskPage() {
       <p className="mt-1 max-w-measure text-sm leading-6 text-ink-2">
         Answers come from {corpus.length} stored{" "}
         {corpus.length === 1 ? "investigation" : "investigations"} across{" "}
-        {covered.size} of {fleet.length}{" "}
-        {fleet.length === 1 ? "cluster" : "clusters"}. No cluster is queried, and
-        nothing here is generated — every claim is a count of runs you can open.
+        {coveredInFleet} of {fleet.length}{" "}
+        {fleet.length === 1 ? "cluster" : "clusters"}
+        {departed.length > 0
+          ? `, and ${departed.length} ${departed.length === 1 ? "cluster" : "clusters"} no longer in the fleet`
+          : ""}
+        . No cluster is queried, and nothing here is generated — every claim is a
+        count of runs you can open.
       </p>
 
       {/* Coverage is stated, not implied. A pattern absent from this page may

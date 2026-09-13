@@ -125,3 +125,48 @@ describe("nothing on record", () => {
     expect(screen.getByText(/is an incident,\s*not a pattern/i)).toBeInTheDocument();
   });
 });
+
+describe("coverage counts the fleet it claims to count", () => {
+  /**
+   * The headline divided every cluster in history by the clusters that exist
+   * now. History outlives clusters, so a live console with one connected cluster
+   * and runs on record from a decommissioned one read "across 2 of 1 cluster".
+   */
+  const fleetOf = (...names: string[]) =>
+    vi.spyOn(api, "getKubernetesContexts").mockResolvedValue({
+      items: names.map((name) => ({ name, cluster: name, current: false })),
+      current_context: names[0] ?? "",
+      error: "",
+    } as never);
+
+  const headline = async () =>
+    (await screen.findByText(/stored investigations across/i)).textContent ?? "";
+
+  it("never counts more covered clusters than the fleet has", async () => {
+    fleetOf("prod-eu-west"); // staging-1 is on record and no longer present
+    renderAsk();
+    await screen.findByText(/2 stored investigations/i);
+    const text = await vi.waitFor(async () => {
+      const value = await headline();
+      if (!/no longer in the fleet/.test(value)) throw new Error("fleet not loaded yet");
+      return value;
+    });
+
+    const [, covered, of] = text.match(/across\s+(\d+)\s+of\s+(\d+)/) ?? [];
+    expect(Number(covered)).toBeLessThanOrEqual(Number(of));
+    expect(text).toMatch(/1 of 1 cluster/);
+  });
+
+  it("says what is on record but no longer present, rather than dropping it", async () => {
+    fleetOf("prod-eu-west");
+    renderAsk();
+    expect(await screen.findByText(/1 cluster no longer in the fleet/)).toBeInTheDocument();
+  });
+
+  it("does not call every cluster departed when the fleet failed to load", async () => {
+    vi.spyOn(api, "getKubernetesContexts").mockRejectedValue(new Error("offline"));
+    renderAsk();
+    await screen.findByText(/2 stored investigations/i);
+    expect(screen.queryByText(/no longer in the fleet/)).toBeNull();
+  });
+});
