@@ -489,6 +489,24 @@ run_console_journey() {
   CONSOLE_TOKEN="$API_TOKEN" \
   CONSOLE_CLUSTER="${CONSOLE_CLUSTER:-}" \
     node "$REPO_ROOT/scripts/console_journey.mjs"
+
+  # Onboarding through the console, then an agent that hangs. The two flows that
+  # found a lease never renewed — every distributed investigation longer than
+  # its lease reaped as a dead worker — and a hung agent that read healthy until
+  # it vanished. Neither is reachable by a run that finishes in a second or an
+  # agent that shuts down cleanly, which is everything else in this job.
+  #
+  # The admin token, because enrolling a cluster needs `admin` and the CI caller
+  # is an `operator`. Last in the job: it deletes and re-creates the agent
+  # namespace, and the revocation check above has already retired that agent.
+  step "  onboarding a cluster through the console, then hanging its agent"
+  CONSOLE_URL="http://localhost:3000" \
+  API_URL="http://127.0.0.1:8000" \
+  CONSOLE_TOKEN="$ADMIN_TOKEN" \
+  AGENT_IMAGE="$AGENT_IMAGE" \
+  KUBECTL="kubectl --context $KCTX" \
+  NODE_CONTAINER="${CLUSTER_NAME}-control-plane" \
+    node "$REPO_ROOT/scripts/agent_journey.mjs"
 }
 
 step "verifying the deployment"
