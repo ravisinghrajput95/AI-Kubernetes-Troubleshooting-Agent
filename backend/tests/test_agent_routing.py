@@ -232,6 +232,22 @@ class TestAffinityDecays:
             "A dead worker would keep attracting the jobs it can never run."
         )
 
+    def test_a_silent_agent_is_visible_before_its_record_lapses(self):
+        """The rest of the chain in `app/gateway/timing.py`.
+
+        Staleness and the presence TTL were both 45 seconds, so a record expired
+        at the instant it would have read silent and the console's red state was
+        unreachable on a multi-worker deployment. Stale must fall strictly
+        between the heartbeat and the TTL.
+
+        Mutation: set `AGENT_STALE_SECONDS` back to 45.
+        """
+        from app.gateway.timing import AGENT_HEARTBEAT_SECONDS, AGENT_STALE_SECONDS
+
+        assert AGENT_HEARTBEAT_SECONDS < AGENT_STALE_SECONDS < PRESENCE_TTL_SECONDS, (
+            "an agent that stopped answering would disappear before it was ever shown as silent"
+        )
+
     def test_a_re_offer_goes_to_the_shared_queue_never_a_worker_queue(self):
         """Otherwise a dead worker's queue is where investigations go to die."""
         import inspect

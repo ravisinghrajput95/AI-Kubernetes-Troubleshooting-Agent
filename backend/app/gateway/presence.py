@@ -33,23 +33,14 @@ conditional UPDATE, so nothing here can make two workers run one investigation.
 """
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
 
-# Long enough to survive a missed heartbeat, short enough that a dead worker's
-# agents disappear before anyone acts on them. Three heartbeats.
-#
-# **It must stay below `UNCLAIMED_GRACE_SECONDS`** (`app/jobs/consumer.py`), and
-# that inequality is what makes routing recovery terminate rather than loop.
-# A job routed to a worker that dies sits on that worker's queue until the
-# reaper re-offers it after the grace period; if presence outlived the grace,
-# the re-offer would route it straight back to the same dead worker, forever.
-# Because the record lapses first, the re-offer goes to the shared queue and
-# whoever picks it up either holds the stream or refuses honestly.
-# `tests/test_agent_routing.py` asserts the ordering rather than trusting this
-# comment.
-PRESENCE_TTL_SECONDS = 45
+# Defined with the other agent timings, whose order is asserted as one chain —
+# see `app/gateway/timing.py`. Re-exported for existing importers.
+from app.gateway.timing import AGENT_STALE_SECONDS, PRESENCE_TTL_SECONDS
 
 
 class AgentPresence:
@@ -146,13 +137,14 @@ class AgentPresence:
             return []
 
         records = []
+        now = datetime.now(UTC)
         for value in raw:
             try:
                 record = json.loads(value)
             except (TypeError, ValueError):
                 continue
             record["local"] = record.get("worker") == self._worker
-            records.append(record)
+            records.append(_as_of(record, now))
         return sorted(records, key=lambda item: item.get("cluster_id", ""))
 
 
@@ -172,3 +164,30 @@ def get_agent_presence() -> AgentPresence | None:
     dependency to the getting-started path.
     """
     return _presence
+
+
+def _as_of(record: dict[str, Any], now: datetime) -> dict[str, Any]:
+    """A presence record's liveness, evaluated when it is read.
+
+    `announce` stores `session.describe()`, which computes `online` and
+    `seconds_since_seen` at the moment of *writing* — so between heartbeats, and
+    for as long as the key survived, the record went on saying "online, seen 0s
+    ago" whatever the agent was doing. Against an agent frozen with SIGSTOP that
+    was 43 seconds of a hung agent reported healthy, on the endpoint the console
+    reads to decide whether to show it red.
+
+    `last_seen` is stored with the record and is the only one of the three that
+    was true when written, so the other two are derived from it here. A record
+    without one is returned unchanged rather than guessed at.
+    """
+    raw = record.get("last_seen")
+    if not raw:
+        return record
+    try:
+        seen = datetime.fromisoformat(str(raw))
+    except ValueError:
+        return record
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=UTC)
+    since = max(0.0, (now - seen).total_seconds())
+    return {**record, "seconds_since_seen": round(since, 1), "online": since <= AGENT_STALE_SECONDS}

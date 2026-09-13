@@ -116,11 +116,17 @@ platform drops streams; agents redial. No re-enrolment, provided you did not
 change the CA. Watch them come back:
 
 ```bash
-curl -sH "Authorization: Bearer $TOKEN" http://platform/agents | jq '[.[] | select(.online)] | length'
+curl -sH "Authorization: Bearer $TOKEN" http://platform/agents | jq '[.items[] | select(.online)] | length'
 ```
 
-Expect full recovery within `AGENT_STALE_SECONDS` (45) plus the agents' own
-backoff.
+(This read `.[]`, which iterates the response *object* rather than its `items`
+and errors on the first string value — the runbook's own verification step did
+not run.)
+
+An agent reads online again as soon as it has redialled and answered one
+heartbeat. Records left by the pods you replaced read **silent** after
+`AGENT_STALE_SECONDS` (30) and disappear after `PRESENCE_TTL_SECONDS` (45), so
+expect the count to settle within 45 seconds plus the agents' own backoff.
 
 **Redis is not upgraded state.** Every message has a committed Postgres row
 behind it, so flushing Redis during an upgrade costs latency and nothing else.

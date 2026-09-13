@@ -62,6 +62,31 @@ class Mutation:
 
 MUTATIONS = [
     Mutation(
+        name="presence-liveness-frozen-at-write-time",
+        why=(
+            "GET /agents on a multi-worker deployment returned the presence record "
+            "as written at the last heartbeat, so online and seconds_since_seen were "
+            "frozen: an agent frozen with SIGSTOP read 'online, seen 0s ago' for 43 "
+            "seconds and the console's red 'Agent silent' state never appeared."
+        ),
+        path="app/gateway/presence.py",
+        old="            records.append(_as_of(record, now))\n",
+        new="            records.append(record)  # mutation: liveness as written\n",
+        tests="tests/test_agent_presence.py",
+    ),
+    Mutation(
+        name="stale-threshold-equal-to-presence-ttl",
+        why=(
+            "AGENT_STALE_SECONDS and PRESENCE_TTL_SECONDS were both 45, so a record "
+            "expired at the instant it would have read silent. Stale must sit strictly "
+            "between the heartbeat and the TTL."
+        ),
+        path="app/gateway/timing.py",
+        old="AGENT_STALE_SECONDS = 30.0\n",
+        new="AGENT_STALE_SECONDS = 45.0  # mutation: as shipped\n",
+        tests="tests/test_agent_routing.py",
+    ),
+    Mutation(
         name="lease-renewed-under-a-different-identity",
         why=(
             "The claim recorded worker_identity() (WORKER_ID, else hostname:pid) "

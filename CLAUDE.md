@@ -1620,7 +1620,18 @@ Sections with nothing behind them are **omitted, not padded** — same rule as t
 
 **On more than one replica, the console reads a shared index, not its own registry** (`app/gateway/presence.py`). `AgentRegistry` is per-process by necessity, so `GET /agents` used to answer from whichever pod the load balancer picked — thirty clusters behind three replicas showed about ten, and a different ten next refresh. Each gateway now announces its agents into Redis with a 45s TTL, refreshed by the heartbeat, and the API returns the union. Expiry rather than deregistration, because a killed worker cannot deregister and phantom agents are worse than a few seconds of staleness. Every record carries `worker` and `local`. **M8a made presence routing as well as visibility**: the submit path asks `holder()` who owns the stream and queues the work there, so an agent held by another replica *is* investigated through that replica. What the record still cannot do is let *this* worker collect through someone else's socket, which is why `select_provider` refuses rather than falling back.
 
-**"Online" is heartbeat-derived, not socket-derived.** An idle stream and a half-open one look identical from the platform's side, so the gateway pings every 15s and the agent's `AgentHealth` reply refreshes `last_seen`; `AGENT_STALE_SECONDS` (45) decides staleness. Do not replace this with "the stream is open".
+**"Online" is heartbeat-derived, not socket-derived.** An idle stream and a half-open one look identical from the platform's side, so the gateway pings every 15s and the agent's `AgentHealth` reply refreshes `last_seen`; `AGENT_STALE_SECONDS` (30) decides staleness. Do not replace this with "the stream is open".
+
+**Liveness is evaluated when a presence record is read, and the timings are one
+ordered chain** (`app/gateway/timing.py`): heartbeat 15 < stale 30 < presence
+TTL 45 < unclaimed grace 60. `announce` stores `session.describe()`, which
+computed `online` and `seconds_since_seen` at write time, and stale and TTL were
+both 45 — so on a multi-worker deployment a hung agent read "online, seen 0s
+ago" until its record expired at the very moment it would have read silent, and
+the console's red "Agent silent" state was unreachable. Measured against an agent
+frozen with SIGSTOP: 43 seconds of healthy, then gone. `fleet()` now derives both
+from the stored `last_seen`, and the same run shows "Agent silent for 30s…43s"
+before the record lapses. `tests/test_agent_routing.py` asserts the whole chain.
 
 ### Report retention
 

@@ -305,7 +305,7 @@ class AgentGatewayService(agent_pb2_grpc.AgentGatewayServicer):
         default can be hours. The agent answers with `AgentHealth`, and that
         reply is what `last_seen` records.
         """
-        from app.gateway.session import AGENT_HEARTBEAT_SECONDS
+        from app.gateway.timing import AGENT_HEARTBEAT_SECONDS
 
         while True:
             await asyncio.sleep(AGENT_HEARTBEAT_SECONDS)

@@ -173,7 +173,7 @@ exactly what the cardinality rule forbids. Take it from `agentctl list` or from
 `agent_certificates`, and record it as a recording rule or a static target.
 
 "Online" is **heartbeat-derived, not socket-derived**: the gateway pings every
-15 s and `AGENT_STALE_SECONDS` (45) decides staleness. An idle stream and a
+15 s and `AGENT_STALE_SECONDS` (30, two missed heartbeats) decides staleness. An idle stream and a
 half-open one look identical from the platform's side, so do not replace this
 with "the stream is open".
 

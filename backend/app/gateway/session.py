@@ -27,11 +27,10 @@ from app.wire.gen.agent.v1 import agent_pb2, collection_pb2, evidence_pb2
 # against an agent that accepted work and went silent.
 DEFAULT_COLLECTION_TIMEOUT = 60.0
 
-# How often the platform pings a connected agent, and how long silence may last
-# before the console stops calling it online. The gap between the two is
-# deliberate: one missed heartbeat is a slow network, three is a problem.
-AGENT_HEARTBEAT_SECONDS = 15.0
-AGENT_STALE_SECONDS = 45.0
+# Heartbeat and staleness live in `app/gateway/timing.py` with the presence TTL,
+# because the order between the three is the design and it broke when they were
+# kept apart.
+from app.gateway.timing import AGENT_STALE_SECONDS  # noqa: E402
 
 
 @dataclass

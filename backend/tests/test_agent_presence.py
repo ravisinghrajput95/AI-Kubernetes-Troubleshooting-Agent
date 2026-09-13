@@ -201,3 +201,55 @@ def test_the_record_survives_a_json_round_trip(bus):
 
     raw = next(iter(bus.values.values()))
     assert json.loads(raw)["cluster_id"] == "prod-eu"
+
+
+class TestLivenessIsEvaluatedWhenRead:
+    """A presence record must not go on saying "online, seen 0s ago".
+
+    `announce` stores `session.describe()`, which computed `online` and
+    `seconds_since_seen` when it was *written*. Measured against an agent frozen
+    with SIGSTOP on the distributed deployment: `/agents` reported `online=True,
+    seconds_since_seen=0.0` on every sample for 43 seconds, then the agent
+    vanished — the console's red "Agent silent" state never appeared.
+    """
+
+    @staticmethod
+    def record(bus, seconds_ago: float, **extra) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        seen = datetime.now(UTC) - timedelta(seconds=seconds_ago)
+        # The shape `session.describe()` writes: liveness frozen at write time.
+        value = {
+            "cluster_id": "onboard-1",
+            "tenant": "default",
+            "online": True,
+            "seconds_since_seen": 0.0,
+            "last_seen": seen.isoformat(),
+            "worker": "worker-a",
+            **extra,
+        }
+        bus.values["test:agents:default:onboard-1"] = json.dumps(value)
+
+    def test_an_agent_silent_past_the_threshold_reads_silent(self, bus):
+        from app.gateway.timing import AGENT_STALE_SECONDS
+
+        self.record(bus, seconds_ago=AGENT_STALE_SECONDS + 5)
+        [agent] = AgentPresence(bus, worker_id="worker-b").fleet("default")
+
+        assert agent["online"] is False
+        assert agent["seconds_since_seen"] >= AGENT_STALE_SECONDS + 4
+
+    def test_a_recently_heard_agent_still_reads_online(self, bus):
+        """The control: evaluating at read time must not make a healthy agent red."""
+        self.record(bus, seconds_ago=3)
+        [agent] = AgentPresence(bus, worker_id="worker-b").fleet("default")
+
+        assert agent["online"] is True
+        assert 2 <= agent["seconds_since_seen"] < 10
+
+    def test_a_record_without_last_seen_is_left_alone(self, bus):
+        bus.values["test:agents:default:legacy"] = json.dumps(
+            {"cluster_id": "legacy", "tenant": "default", "online": True}
+        )
+        [agent] = AgentPresence(bus, worker_id="w").fleet("default")
+        assert agent["online"] is True
