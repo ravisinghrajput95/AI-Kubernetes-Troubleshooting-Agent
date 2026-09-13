@@ -114,3 +114,51 @@ def access_failure(
         f"read access to this cluster. Grant get/list on pods, events, deployments, "
         f"nodes and services."
     )
+
+
+# What fraction of the attempted reads must have timed out before a run with no
+# usable evidence is blamed on an agent that stopped answering.
+TIMEOUT_SHARE = 0.6
+
+
+def agent_unanswered(
+    coverage: dict[str, Any],
+    through_agent: bool,
+    cluster_id: str = "",
+) -> str | None:
+    """A message when a cluster reached through its agent answered nothing.
+
+    The locked door's sibling. Freezing an agent with SIGSTOP — its stream stays
+    open, nothing replies — produced an investigation whose ten reads all
+    recorded `timeout` and whose explanation was the generic one: "Verify
+    kubeconfig, cluster access, and kubectl permissions." A cluster reached
+    through an agent involves no kubeconfig at all, so that sentence sends an
+    operator to check configuration that is not in the path — the same wrong
+    instruction M8a's refusal already rewrites for an agent held elsewhere.
+
+    Same three conditions as `access_failure`, for the same reasons: nothing
+    usable, enough timeouts to diagnose from, and timeouts dominating the
+    failures. And one more that is the point: the reads went through an agent.
+    A kubeconfig path that timed out is a slow API server, and the generic
+    message is at least not wrong there.
+    """
+    if not through_agent:
+        return None
+    counts = coverage.get("by_status") or {}
+    timeouts = int(counts.get("timeout", 0))
+    if timeouts < MINIMUM_REFUSALS:
+        return None
+    attempted = sum(count for status, count in counts.items() if status != "not_applicable")
+    if not attempted or int(coverage.get("usable", 0)) > 0:
+        return None
+    if timeouts / attempted < TIMEOUT_SHARE:
+        return None
+
+    who = f"'{cluster_id}'" if cluster_id else "this cluster"
+    return (
+        f"No read came back from the agent for {who}: {timeouts} of {attempted} reads "
+        f"timed out. The agent is connected but not answering, so this is not a "
+        f"kubeconfig or permissions problem — check the k8s-ops-agent pod in that "
+        f"cluster, which may be hung, starved of CPU, or unable to reach its own "
+        f"API server."
+    )

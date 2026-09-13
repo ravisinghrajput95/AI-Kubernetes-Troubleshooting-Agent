@@ -16,7 +16,7 @@ from app.collectors.kubernetes import build_default_collectors
 from app.core.config import settings
 from app.evidence.models import EvidenceKind
 from app.evidence.store import EvidenceStore
-from app.kubernetes.access import access_failure
+from app.kubernetes.access import access_failure, agent_unanswered
 from app.kubernetes.errors import friendly_error
 from app.observability import metrics
 from app.playbooks.kubernetes import DEFAULT_PLAYBOOKS
@@ -390,8 +390,19 @@ class InvestigationService:
             and self.principal is not None
             and not self.principal.anonymous,
         )
+        # The agent-path sibling: every read timed out through an agent, which
+        # the generic message would blame on a kubeconfig that is not involved.
+        # Not `_cluster_access()`, which also records a metric and this view is
+        # rebuilt once per playbook round.
+        unanswered = agent_unanswered(
+            store.coverage(),
+            through_agent=type(underlying(self.provider)).__name__ == "RemoteAgentProvider",
+            cluster_id=getattr(self.provider, "cluster_id", "") or "",
+        )
         if refusal:
             health = {"status": "error", "message": refusal}
+        elif unanswered:
+            health = {"status": "error", "message": unanswered}
         overview = self._cluster_overview(store, pods, events, deployments, network, metrics)
         severity = self._severity_summary(
             pods, events, deployments, network, nodes, storage, workloads

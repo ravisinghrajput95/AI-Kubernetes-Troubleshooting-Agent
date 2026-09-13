@@ -19,7 +19,7 @@ platform team for nothing, and is worse than the generic message it replaces.
 
 import pytest
 
-from app.kubernetes.access import FORBIDDEN_SHARE, access_failure
+from app.kubernetes.access import FORBIDDEN_SHARE, access_failure, agent_unanswered
 
 
 def coverage(**counts: int) -> dict:
@@ -194,3 +194,34 @@ class TestItReachesTheInvestigation:
         investigation = await service.run()
 
         assert "No cluster read succeeded" not in investigation["health"]["message"]
+
+
+class TestAnAgentThatStoppedAnswering:
+    """The measured case: an agent frozen with SIGSTOP, stream open, no replies.
+
+    Ten reads recorded `timeout` and one `not_applicable`, and the operator was
+    told to "Verify kubeconfig, cluster access, and kubectl permissions" for a
+    cluster no kubeconfig reaches.
+    """
+
+    FROZEN = staticmethod(lambda: coverage(timeout=10, not_applicable=1))
+
+    def test_the_measured_run_names_the_agent_not_a_kubeconfig(self):
+        message = agent_unanswered(self.FROZEN(), through_agent=True, cluster_id="onboard-1")
+        assert message is not None
+        assert "'onboard-1'" in message and "10 of 10 reads timed out" in message
+        assert "not a kubeconfig" in message
+
+    def test_the_same_timeouts_through_a_kubeconfig_say_nothing(self):
+        """The control: a slow API server read locally is not an agent problem."""
+        assert agent_unanswered(self.FROZEN(), through_agent=False) is None
+
+    def test_one_good_read_is_a_partial_view_not_a_dead_agent(self):
+        assert agent_unanswered(coverage(timeout=10, ok=1), through_agent=True) is None
+
+    def test_too_few_timeouts_to_diagnose(self):
+        assert agent_unanswered(coverage(timeout=2), through_agent=True) is None
+
+    def test_a_refused_agent_is_not_called_unresponsive(self):
+        """An agent answering 403s is answering; that is the locked door's case."""
+        assert agent_unanswered(coverage(forbidden=10, timeout=1), through_agent=True) is None
