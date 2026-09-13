@@ -419,7 +419,13 @@ run_console_journey() {
   trap journey_cleanup RETURN
 
   step "  port-forwarding the platform for the browser"
-  k -n "$NAMESPACE" port-forward "svc/$RELEASE" 8000:80 >"$work/forward.log" 2>&1 &
+  # By the port's *name*, never its number. This said `8000:80` and failed the
+  # required job on its first CI run with "Service k8s-agent does not have a
+  # service port 80" — the chart serves on `service.port` (8000). It passed
+  # locally only because the local rehearsal stubbed `k` out, which replaced
+  # precisely the line that was wrong. The template names the port `http`, so
+  # asking for that survives any value an operator sets.
+  k -n "$NAMESPACE" port-forward "svc/$RELEASE" 8000:http >"$work/forward.log" 2>&1 &
   pids+=($!)
   local ready=""
   for _ in $(seq 1 30); do
