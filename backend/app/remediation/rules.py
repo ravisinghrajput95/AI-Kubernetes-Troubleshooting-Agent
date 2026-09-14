@@ -91,9 +91,20 @@ def _rollout_verification(target: ResourceRef) -> tuple[RemediationStep, ...]:
     )
 
 
-def _rollout_undo(target: ResourceRef) -> tuple[RemediationStep, ...]:
+def _rollout_undo(target: ResourceRef, owner_known: bool = True) -> tuple[RemediationStep, ...]:
     flag = f" -n {target.namespace}" if target.namespace else ""
     kind = target.kind.lower()
+
+    if not _rollable(target) and not owner_known:
+        return (
+            RemediationStep(
+                f"Who owns {kind} {target.name} was not collected. If a controller "
+                f"manages it, roll that controller back instead; if nothing does, "
+                f"restore the previous definition from source control and re-apply it.",
+                None,
+                manual=True,
+            ),
+        )
 
     if not _rollable(target):
         return (
@@ -118,9 +129,19 @@ def _rollout_undo(target: ResourceRef) -> tuple[RemediationStep, ...]:
     )
 
 
-def _restart_step(target: ResourceRef) -> RemediationStep:
+def _restart_step(target: ResourceRef, owner_known: bool = True) -> RemediationStep:
     """Restart the workload so it picks up new configuration."""
     flag = f" -n {target.namespace}" if target.namespace else ""
+
+    if not _rollable(target) and not owner_known:
+        return RemediationStep(
+            f"Restart whatever owns {target.kind.lower()} {target.name} so it picks up "
+            f"the new configuration. Its owner was not collected: if a controller "
+            f"manages it, restart the controller; if nothing does, recreate the "
+            f"{target.kind.lower()} from its manifest.",
+            None,
+            manual=True,
+        )
 
     if not _rollable(target):
         return RemediationStep(
@@ -137,9 +158,25 @@ def _restart_step(target: ResourceRef) -> RemediationStep:
     )
 
 
-def _unmanaged_caveat(target: ResourceRef) -> tuple[str, ...]:
+def _unmanaged_caveat(target: ResourceRef, owner_known: bool = True) -> tuple[str, ...]:
+    """Say a resource has no controller only when that was observed.
+
+    The target falls back to the pod whenever its spec was not collected — a
+    playbook's target cap, a refused read — and this used to read that
+    fallback as "no controller owns pod/x". The QA cluster's `notifier` pod was
+    reported unmanaged while its ReplicaSet was one `get pod` away, which sends
+    an operator to recreate a pod by hand that its Deployment would replace.
+    """
     if _rollable(target):
         return ()
+    if not owner_known:
+        flag = f" -n {target.namespace}" if target.namespace else ""
+        return (
+            f"Ownership of {target.kind.lower()}/{target.name} was not collected, so "
+            f"whether a controller manages it is unknown. Check with `kubectl get "
+            f"{target.kind.lower()} {target.name}{flag} -o jsonpath="
+            f"'{{.metadata.ownerReferences}}'` and change the owner if it has one.",
+        )
     return (
         f"No controller owns {target.kind.lower()}/{target.name}, so this change "
         f"cannot be rolled out or undone automatically. Prefer changing the workload "
@@ -230,7 +267,7 @@ class OutOfMemoryRule:
                 ),
             ),
             verification=_rollout_verification(workload),
-            rollback=_rollout_undo(workload),
+            rollback=_rollout_undo(workload, context.ownership_known()),
             required_permissions=_workload_permissions(workload),
             patches=(
                 patches.kubectl_patch(workload, patch_body, f"Raise the memory limit for {name}."),
@@ -244,7 +281,9 @@ class OutOfMemoryRule:
             ),
             signal_ids=context.hypothesis.supporting_signal_ids,
             evidence_ids=context.evidence_ids(),
-            caveats=caveats + _derived_caveats(context) + _unmanaged_caveat(context.workload_ref()),
+            caveats=caveats
+            + _derived_caveats(context)
+            + _unmanaged_caveat(context.workload_ref(), context.ownership_known()),
         )
 
 
@@ -380,7 +419,7 @@ class MissingConfigurationRule:
                     f"--from-literal=<key>=<value> --dry-run=client -o yaml | "
                     f"kubectl apply -f -",
                 ),
-                _restart_step(context.workload_ref()),
+                _restart_step(context.workload_ref(), context.ownership_known()),
             ),
             verification=(
                 RemediationStep(
@@ -389,7 +428,7 @@ class MissingConfigurationRule:
                 ),
                 *_rollout_verification(context.workload_ref()),
             ),
-            rollback=_rollout_undo(context.workload_ref()),
+            rollback=_rollout_undo(context.workload_ref(), context.ownership_known()),
             required_permissions=(
                 Permission(("get", "create", "patch"), (f"{kind.lower()}s",), context.namespace),
                 *_workload_permissions(context.workload_ref()),
@@ -400,7 +439,7 @@ class MissingConfigurationRule:
             caveats=secret_note
             + unidentified_note
             + _derived_caveats(context)
-            + _unmanaged_caveat(context.workload_ref()),
+            + _unmanaged_caveat(context.workload_ref(), context.ownership_known()),
         )
 
 
@@ -489,7 +528,7 @@ class ImagePullRule:
             ),
             remediation=(step,),
             verification=_rollout_verification(workload),
-            rollback=_rollout_undo(workload),
+            rollback=_rollout_undo(workload, context.ownership_known()),
             required_permissions=(
                 Permission(("get", "create"), ("secrets",), context.namespace),
                 *_workload_permissions(workload),
@@ -497,7 +536,8 @@ class ImagePullRule:
             patches=generated,
             signal_ids=context.hypothesis.supporting_signal_ids,
             evidence_ids=context.evidence_ids(),
-            caveats=_derived_caveats(context) + _unmanaged_caveat(context.workload_ref()),
+            caveats=_derived_caveats(context)
+            + _unmanaged_caveat(context.workload_ref(), context.ownership_known()),
         )
 
 
@@ -886,7 +926,8 @@ class RolloutStalledRule:
             required_permissions=_workload_permissions(workload, ("get", "patch", "update")),
             signal_ids=context.hypothesis.supporting_signal_ids,
             evidence_ids=context.evidence_ids(),
-            caveats=_derived_caveats(context) + _unmanaged_caveat(context.workload_ref()),
+            caveats=_derived_caveats(context)
+            + _unmanaged_caveat(context.workload_ref(), context.ownership_known()),
         )
 
 
@@ -954,7 +995,7 @@ class ProbeRule:
                 ),
             ),
             verification=_rollout_verification(workload),
-            rollback=_rollout_undo(workload),
+            rollback=_rollout_undo(workload, context.ownership_known()),
             required_permissions=_workload_permissions(workload),
             patches=(
                 patches.kubectl_patch(workload, change, "Add a startup probe."),
@@ -962,7 +1003,8 @@ class ProbeRule:
             ),
             signal_ids=context.hypothesis.supporting_signal_ids,
             evidence_ids=context.evidence_ids(),
-            caveats=_derived_caveats(context) + _unmanaged_caveat(context.workload_ref()),
+            caveats=_derived_caveats(context)
+            + _unmanaged_caveat(context.workload_ref(), context.ownership_known()),
         )
 
 

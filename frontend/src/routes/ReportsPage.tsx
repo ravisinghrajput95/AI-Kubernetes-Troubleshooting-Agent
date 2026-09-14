@@ -9,6 +9,7 @@ import {
   regenerateInvestigationReport,
 } from "../services/api";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
+import { formatTimestamp } from "../lib/analysis";
 
 /**
  * Saved investigation reports.
@@ -124,7 +125,7 @@ export function HistoryTable() {
                   {item.incident_id ?? item.id.slice(0, 8)}
                 </td>
                 <td className="py-3 pr-4 text-slate-400">
-                  {new Date(item.timestamp).toLocaleString()}
+                  {formatTimestamp(item.timestamp)}
                 </td>
                 <td className="max-w-md py-3 pr-4 font-medium text-slate-100">
                   {item.root_cause}

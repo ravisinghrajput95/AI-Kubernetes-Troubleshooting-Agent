@@ -240,9 +240,8 @@ function ConnectedAgents() {
     <section className="mt-8">
       <h2 className="text-h2">Connected agents</h2>
       <p className="mt-1 max-w-measure text-sm text-ink-2">
-        Agents attached to the worker that answered this request. A fleet spread
-        across several workers shows only its own until requests are routed by
-        stream ownership.
+        Every agent connected to this platform, whichever worker holds its
+        stream.
       </p>
       <ul className="mt-3 grid gap-2">
         {items.map((agent) => (
@@ -261,6 +260,7 @@ function ConnectedAgents() {
               {agent.identity_source === "certificate"
                 ? " · identity verified by certificate"
                 : " · identity declared, not verified"}
+              {agent.worker ? ` · stream held by ${agent.worker}` : ""}
             </p>
           </li>
         ))}

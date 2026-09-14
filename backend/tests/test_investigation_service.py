@@ -191,7 +191,9 @@ class FakeKubectl(KubectlExecutor):
             return KubectlResult(command, True, output, "", 0)
 
         if verb == "describe" and resource == "secret":
-            return KubectlResult(command, False, "", f'secrets "{named}" not found', 1)
+            return KubectlResult(
+                command, False, "", f'Error from server (NotFound): secrets "{named}" not found', 1
+            )
 
         payload: dict = {"items": []}
         if resource == "pod" and named:

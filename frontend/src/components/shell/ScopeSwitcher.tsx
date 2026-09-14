@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useMatch, useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronsUpDown } from "lucide-react";
 
@@ -13,7 +14,14 @@ import { useScope } from "../../hooks/useScope";
  * rather than navigating, so the operator keeps their place.
  */
 export function ScopeSwitcher() {
-  const { cluster, setCluster } = useScope();
+  const { cluster: scoped, setCluster } = useScope();
+  const navigate = useNavigate();
+  // A cluster's own page is scoped by its path, not by `?cluster=`. The
+  // switcher read only the query string and adopted the kubeconfig's current
+  // context when it was absent, so `/clusters/sweep-agent` showed
+  // `kind-k8s-agent-dev` in the header above a page about `sweep-agent`.
+  const onClusterPage = useMatch("/clusters/:context");
+  const cluster = onClusterPage?.params.context ?? scoped;
   const { data, isLoading } = useQuery({
     queryKey: ["kubernetes-contexts"],
     queryFn: getKubernetesContexts,
@@ -32,6 +40,17 @@ export function ScopeSwitcher() {
       setCluster(data.current_context);
     }
   }, [cluster, data?.current_context, setCluster]);
+
+  function choose(name: string) {
+    if (onClusterPage) {
+      // On a cluster's page, choosing another cluster means that cluster's
+      // page. Setting `?cluster=` here left the page on the old one while the
+      // header named the new one.
+      navigate(`/clusters/${encodeURIComponent(name)}`);
+    } else {
+      setCluster(name);
+    }
+  }
 
   useEffect(() => {
     if (!open) {
@@ -90,7 +109,7 @@ export function ScopeSwitcher() {
                 role="option"
                 aria-selected={context.name === cluster}
                 onClick={() => {
-                  setCluster(context.name);
+                  choose(context.name);
                   setOpen(false);
                   buttonRef.current?.focus();
                 }}

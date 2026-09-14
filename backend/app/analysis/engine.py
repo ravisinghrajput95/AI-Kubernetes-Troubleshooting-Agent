@@ -1,4 +1,5 @@
-from collections.abc import Sequence
+import re
+from collections.abc import Callable, Sequence
 
 from loguru import logger
 
@@ -8,6 +9,7 @@ from app.analysis.hypothesis_rules import DEFAULT_HYPOTHESIS_RULES, HypothesisRu
 from app.analysis.models import AnalysisResult, Signal
 from app.analysis.observability_signal_rules import OBSERVABILITY_SIGNAL_RULES
 from app.analysis.signal_rules import DEFAULT_SIGNAL_RULES, AnalysisInput, SignalRule
+from app.evidence.models import ResourceRef
 
 
 class AnalysisEngine:
@@ -37,14 +39,44 @@ class AnalysisEngine:
     def analyze(self, investigation: dict) -> AnalysisResult:
         data = AnalysisInput(investigation=investigation)
         signals = self._extract_signals(data)
-        hypotheses = self._build_hypotheses(signals)
+        scope = investigation.get("scope") or {}
+        in_scope = _scope_predicate(scope)
+
+        if in_scope is None:
+            hypotheses = self._build_hypotheses(signals)
+            scoped: tuple = ()
+        else:
+            # Asked about one resource, answer about it first.
+            #
+            # A resource scope narrows the pod and deployment reads, and
+            # everything else — events, networking, the namespace's other pods
+            # — is still read namespace-wide, so a rule's target was simply its
+            # most severe triggering signal anywhere. "Investigate deployment
+            # checkout" on the QA cluster returned "Pod references
+            # configuration that does not exist (pod/payments/notifier-…)",
+            # with checkout crash-looping on the same page. Hypotheses built
+            # from the resource's own signals lead; the rest follow as the
+            # other candidates they are, never duplicating a rule.
+            scoped = self._build_hypotheses([item for item in signals if in_scope(item.target)])
+            taken = {item.id for item in scoped}
+            others = [item for item in self._build_hypotheses(signals) if item.id not in taken]
+            hypotheses = (*scoped, *others)
 
         logger.info(
             "Analysis derived {signals} signal(s) and {hypotheses} hypothesis(es)",
             signals=len(signals),
             hypotheses=len(hypotheses),
         )
-        return AnalysisResult(signals=signals, hypotheses=hypotheses)
+        return AnalysisResult(
+            signals=signals,
+            hypotheses=tuple(hypotheses),
+            scoped_resource=(
+                f"{scope.get('resource_kind')}/{scope.get('resource_name')}"
+                if in_scope is not None
+                else None
+            ),
+            scoped_hypotheses=len(scoped),
+        )
 
     def _extract_signals(self, data: AnalysisInput) -> tuple[Signal, ...]:
         """Run every signal rule, isolating failures to the rule that caused them."""
@@ -77,3 +109,26 @@ class AnalysisEngine:
                 hypotheses.append(hypothesis)
 
         return rank(hypotheses)
+
+
+def _scope_predicate(scope: dict) -> Callable[[ResourceRef], bool] | None:
+    """Whether a signal's target is the resource an investigation named.
+
+    A deployment's pods are recognised by name — `<deployment>-<hash>-<id>` —
+    because that is what baseline evidence has; ownership is only known for
+    pods a playbook read. The same derivation remediation already flags as a
+    caveat, used here only to *order*, never to discard.
+    """
+    kind = str(scope.get("resource_kind") or "").lower()
+    name = str(scope.get("resource_name") or "")
+    if not name or kind not in {"pod", "deployment"}:
+        return None
+
+    if kind == "pod":
+        return lambda target: target.kind == "Pod" and target.name == name
+
+    pods = re.compile(rf"^{re.escape(name)}-[a-z0-9]{{1,10}}-[a-z0-9]{{5}}$")
+    return lambda target: (
+        (target.kind == "Deployment" and target.name == name)
+        or (target.kind == "Pod" and bool(pods.match(target.name)))
+    )

@@ -1,3 +1,4 @@
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
@@ -692,9 +693,16 @@ class InvestigationService:
                 if not container.get("has_limits"):
                     missing_limits.append(container_ref)
 
+        # Labels name the check, never its outcome. They read "No Privileged
+        # Containers" and "High CVEs Found" whatever the status, so a cluster
+        # with a privileged container listed a warning titled "No Privileged
+        # Containers", and one with no vulnerability scanner at all listed
+        # "High CVEs Found". `id` is what code matches on; the label is for
+        # people and can be reworded without breaking a rule.
         findings.append(
             {
-                "label": "No Privileged Containers",
+                "id": "privileged_containers",
+                "label": "Privileged containers",
                 "status": "pass" if not privileged else "warning",
                 "detail": "No privileged containers detected."
                 if not privileged
@@ -703,7 +711,8 @@ class InvestigationService:
         )
         findings.append(
             {
-                "label": "Latest Tag Used",
+                "id": "image_tags",
+                "label": "Image tags",
                 "status": "warning" if latest_tags else "pass",
                 "detail": "Images are pinned to explicit tags."
                 if not latest_tags
@@ -712,7 +721,8 @@ class InvestigationService:
         )
         findings.append(
             {
-                "label": "Missing Resource Limits",
+                "id": "resource_limits",
+                "label": "Resource limits",
                 "status": "warning" if missing_limits else "pass",
                 "detail": "All inspected containers define resource limits."
                 if not missing_limits
@@ -721,9 +731,10 @@ class InvestigationService:
         )
         findings.append(
             {
-                "label": "High CVEs Found",
+                "id": "image_vulnerabilities",
+                "label": "Image vulnerabilities",
                 "status": "unknown",
-                "detail": "Image vulnerability scan is not configured in this local evidence collection.",
+                "detail": "Not checked: no image vulnerability scanner is configured.",
             }
         )
 
@@ -769,10 +780,16 @@ class InvestigationService:
         workloads: dict[str, Any],
     ) -> dict[str, Any]:
         problematic_pods = pods.get("problematic_pods", [])
-        namespaces = {
+        # The namespace carrying the most affected workloads, ties broken by
+        # name. This was `next(iter(set))`, and a set of strings iterates in
+        # hash order, which Python randomises per process — so with faults in
+        # two namespaces the report's "primary namespace" depended on which
+        # worker rendered it.
+        affected = Counter(
             item.get("namespace", "unknown")
             for item in [*problematic_pods, *deployments.get("unhealthy_deployments", [])]
-        }
+        )
+        primary = min(affected, key=lambda name: (-affected[name], name)) if affected else "none"
         workload_count = (
             len(problematic_pods)
             + len(deployments.get("unhealthy_deployments", []))
@@ -808,7 +825,7 @@ class InvestigationService:
             "severity": severity,
             "impact": impact,
             "affected_workloads": workload_count,
-            "affected_namespace": next(iter(namespaces), "none"),
+            "affected_namespace": primary,
         }
 
     def _collector_errors(self, *sections: dict[str, Any]) -> list[str]:

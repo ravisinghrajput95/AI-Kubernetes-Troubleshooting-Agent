@@ -107,34 +107,43 @@ describe("grounding", () => {
 
 describe("trend", () => {
   const occurrence = (at: string) => ({ investigationId: at, cluster: "prod", at });
+  const days = (...list: number[]) =>
+    list.map((day) => occurrence(`2026-07-${String(day).padStart(2, "0")}T00:00:00Z`));
 
   it("refuses to call two data points a trend", () => {
     // Confident overclaim from thin evidence is exactly what this product
     // exists not to do.
-    expect(trendOf([occurrence("2026-07-01T00:00:00Z")])).toBe("unknown");
-    expect(
-      trendOf([occurrence("2026-07-01T00:00:00Z"), occurrence("2026-07-02T00:00:00Z")]),
-    ).toBe("unknown");
+    expect(trendOf(days(1), days(1, 2, 3, 4))).toBe("unknown");
+    expect(trendOf(days(1, 2), days(1, 2, 3, 4))).toBe("unknown");
   });
 
-  it("sees a finding concentrated in its recent half as rising", () => {
-    expect(
-      trendOf([
-        occurrence("2026-07-01T00:00:00Z"),
-        occurrence("2026-07-09T00:00:00Z"),
-        occurrence("2026-07-10T00:00:00Z"),
-      ]),
-    ).toBe("rising");
+  it("does not read a finding present in every run as falling", () => {
+    // The live corpus: three runs in the first minute and one five minutes
+    // later, the finding in all four. Judged by when occurrences fell, that
+    // was "happening less often"; judged by share of runs it is constant.
+    const runs = [
+      occurrence("2026-09-14T17:47:00Z"),
+      occurrence("2026-09-14T17:47:30Z"),
+      occurrence("2026-09-14T17:48:00Z"),
+      occurrence("2026-09-14T17:53:00Z"),
+    ];
+    expect(trendOf(runs, runs)).not.toBe("falling");
+    const everyRun = days(1, 2, 3, 9, 10);
+    expect(trendOf(everyRun, everyRun)).toBe("steady");
   });
 
-  it("sees the reverse as falling", () => {
-    expect(
-      trendOf([
-        occurrence("2026-07-01T00:00:00Z"),
-        occurrence("2026-07-02T00:00:00Z"),
-        occurrence("2026-07-10T00:00:00Z"),
-      ]),
-    ).toBe("falling");
+  it("sees a finding appearing in a growing share of runs as rising", () => {
+    const runs = days(1, 2, 3, 4, 7, 8, 9, 10);
+    expect(trendOf(days(1, 7, 8, 9, 10), runs)).toBe("rising");
+  });
+
+  it("sees a shrinking share as falling", () => {
+    const runs = days(1, 2, 3, 4, 7, 8, 9, 10);
+    expect(trendOf(days(1, 2, 3, 4, 10), runs)).toBe("falling");
+  });
+
+  it("will not compare a half with a single run in it", () => {
+    expect(trendOf(days(1, 2, 3), days(1, 2, 3, 10))).toBe("unknown");
   });
 
   it("says so plainly when there is not enough history", () => {

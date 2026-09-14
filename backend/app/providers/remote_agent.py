@@ -348,6 +348,14 @@ class RemoteAgentProvider:
             data=data if isinstance(data, dict | list) else None,
             text=text,
             equivalent_command=command,
+            # The agent emits EMPTY for exactly one case: a 404 on a named read
+            # (`statusFor` in agent/internal/collectors). That is the object not
+            # existing, and the kubeconfig path says the same with `NotFound`.
+            not_found=(
+                record.status == evidence_pb2.EVIDENCE_STATUS_EMPTY
+                and request is not None
+                and bool(request.name)
+            ),
         )
 
 

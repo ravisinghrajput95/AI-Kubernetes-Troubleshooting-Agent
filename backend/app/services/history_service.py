@@ -56,7 +56,7 @@ class InvestigationHistoryService:
         investigation_id = investigation_id or str(uuid4())
         timestamp = datetime.now(UTC).isoformat()
         incident_id = self._renderer.incident_id(timestamp, investigation_id)
-        namespace = self._namespace(investigation)
+        namespace = self._namespace(investigation, diagnosis)
         confidence = int(diagnosis.get("confidence", 0))
         root_cause = diagnosis.get("root_cause", "Unknown root cause")
 
@@ -192,7 +192,7 @@ class InvestigationHistoryService:
 
         timestamp = str(report.get("timestamp") or datetime.now(UTC).isoformat())
         status = str(report.get("status") or "success")
-        namespace = str(report.get("namespace") or self._namespace(investigation))
+        namespace = str(report.get("namespace") or self._namespace(investigation, diagnosis))
         incident_id = str(
             report.get("incident_id") or self._renderer.incident_id(timestamp, investigation_id)
         )
@@ -249,17 +249,30 @@ class InvestigationHistoryService:
         }
         self._store.upsert_index(item)
 
-    def _namespace(self, investigation: dict[str, Any]) -> str:
-        pods = investigation.get("pods", {}).get("problematic_pods", [])
-        if pods:
-            return pods[0].get("namespace", "unknown")
+    def _namespace(self, investigation: dict[str, Any], diagnosis: dict[str, Any]) -> str:
+        """The namespace this report is about.
 
-        deployments = investigation.get("deployments", {}).get("unhealthy_deployments", [])
-        if deployments:
-            return deployments[0].get("namespace", "unknown")
+        It was the first problematic pod's, whatever the investigation was
+        asked about or concluded — so an all-namespaces investigation of
+        `payments/checkout-svc` was filed under `local-path-storage`, because a
+        provisioner in that namespace had restarted twice and sorted first.
+        That value is the report's Namespace field and the Reports table's
+        column, so the incident was listed under a namespace it had nothing to
+        do with.
+        """
+        scope = investigation.get("scope") or {}
+        if scope.get("namespace") and scope["namespace"] != "all":
+            return str(scope["namespace"])
 
-        network = investigation.get("network", {}).get("findings", [])
-        if network:
-            return network[0].get("namespace", "unknown")
+        selected = diagnosis.get("selected_hypothesis")
+        for hypothesis in diagnosis.get("hypotheses") or []:
+            if hypothesis.get("id") == selected:
+                namespace = (hypothesis.get("target") or {}).get("namespace")
+                if namespace:
+                    return str(namespace)
+
+        affected = (investigation.get("severity") or {}).get("affected_namespace")
+        if affected and affected != "none":
+            return str(affected)
 
         return "unknown"

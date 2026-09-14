@@ -4,6 +4,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 
 import { SeverityDot } from "../components/report/SeverityDot";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
+import { formatTimestamp } from "../lib/analysis";
 import {
   recurredOnOneCluster,
   recurringFindings,
@@ -279,7 +280,7 @@ function FindingList({
                       >
                         <span className="text-ink-2">{occurrence.cluster || "unattributed"}</span>
                         <span className="font-mono text-sm text-ink-3">
-                          {occurrence.at.slice(0, 16).replace("T", " ")}
+                          {formatTimestamp(occurrence.at)}
                         </span>
                       </Link>
                     </li>

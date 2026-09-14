@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   clusterOverview,
   evidenceIdForKind,
+  securityUnchecked,
   securityWarnings,
   topConsumers,
 } from "./cluster";
@@ -147,6 +148,43 @@ describe("security", () => {
     const warnings = securityWarnings(INVESTIGATION);
     expect(warnings).toHaveLength(1);
     expect(warnings[0].label).toBe("Containers as root");
+  });
+
+  it("does not list a check that never ran as a warning", () => {
+    // An unconfigured vulnerability scanner was listed under "Security
+    // warnings" as "High CVEs Found", and counted in the Warnings figure.
+    const investigation = {
+      ...INVESTIGATION,
+      security: {
+        findings: [
+          ...(INVESTIGATION.security?.findings ?? []),
+          {
+            label: "Image vulnerabilities",
+            status: "unknown",
+            detail: "Not checked: no image vulnerability scanner is configured.",
+          },
+        ],
+      },
+    } as Investigation;
+
+    expect(securityWarnings(investigation).map((w) => w.label)).toEqual(["Containers as root"]);
+    const security = clusterOverview(investigation).find((g) => g.title === "Security");
+    expect(security?.figures.find((f) => f.label === "Warnings")?.value).toBe("1");
+    expect(securityUnchecked(investigation).map((w) => w.label)).toEqual([
+      "Image vulnerabilities",
+    ]);
+  });
+});
+
+describe("coverage gaps", () => {
+  it("does not count a backend nobody configured as a gap", () => {
+    // Live: "Completeness 100%" beside "Gaps 11", all eleven Prometheus or
+    // Loki reads recorded not_applicable because neither was set.
+    const coverage = clusterOverview({
+      ...INVESTIGATION,
+      evidence_coverage: { total: 61, usable: 50, completeness: 100, not_applicable: 11 },
+    } as Investigation).find((g) => g.title === "Coverage");
+    expect(coverage?.figures.map((f) => f.label)).not.toContain("Gaps");
   });
 });
 

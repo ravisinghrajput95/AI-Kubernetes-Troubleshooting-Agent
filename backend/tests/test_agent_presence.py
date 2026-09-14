@@ -253,3 +253,26 @@ class TestLivenessIsEvaluatedWhenRead:
         )
         [agent] = AgentPresence(bus, worker_id="w").fleet("default")
         assert agent["online"] is True
+
+
+def test_the_api_says_it_answers_for_the_fleet_and_does(bus, monkeypatch):
+    """`GET /agents` said `"scope": "worker"` — "a fleet spread across workers
+    shows only this worker's agents" — for six milestones after presence made
+    it answer for the fleet, and `/connect` repeated it to operators above a
+    list that included an agent held by another worker. The label and the
+    contents are asserted together, so one cannot change without the other."""
+    from app.api.agents import list_agents
+    from app.core.config import settings
+    from app.gateway.presence import set_agent_presence
+
+    monkeypatch.setattr(settings, "agent_gateway_port", 5551)
+    AgentPresence(bus, "worker-a").announce(FakeSession("prod-eu"))
+    set_agent_presence(AgentPresence(bus, "worker-b"))
+    try:
+        answer = list_agents(principal=None)
+    finally:
+        set_agent_presence(None)
+
+    held_elsewhere = [item for item in answer["items"] if item["worker"] == "worker-a"]
+    assert held_elsewhere and held_elsewhere[0]["local"] is False
+    assert answer["scope"] == "fleet"

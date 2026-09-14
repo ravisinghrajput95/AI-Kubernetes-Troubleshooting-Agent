@@ -6,7 +6,7 @@ import {
   evidenceIndex,
   isCommandLine,
   isGap,
-  MODEL_AUTHORED_SECTIONS,
+  sectionProvenance,
   severityTone,
   type IncidentComposition,
   type ReportSection,
@@ -59,7 +59,7 @@ export function ReportDocument({
             ) : section.title === "Confidence Assessment" ? (
               <Confidence section={section} diagnosis={diagnosis} />
             ) : (
-              <GenericSection section={section} />
+              <GenericSection section={section} diagnosis={diagnosis} />
             )}
           </div>
         </section>
@@ -248,11 +248,17 @@ function Confidence({
  * Every other section, rendered from the composition as-is.
  *
  * A new section in the composer arrives here for free. Prose a model wrote is
- * labelled — `fix`, `prevention` and `next_steps` are the only fields the
- * backend does not compute deterministically, and commands never are.
+ * labelled by `sectionProvenance`, which asks whether a model answered at all.
  */
-function GenericSection({ section }: { section: ReportSection }) {
-  const modelAuthored = MODEL_AUTHORED_SECTIONS.has(section.title);
+function GenericSection({
+  section,
+  diagnosis,
+}: {
+  section: ReportSection;
+  diagnosis?: Diagnosis;
+}) {
+  const provenance = sectionProvenance(section.title, diagnosis);
+  const modelAuthored = provenance === "model";
 
   return (
     <div
@@ -296,6 +302,10 @@ function GenericSection({ section }: { section: ReportSection }) {
       {modelAuthored ? (
         <p className="mt-4 font-mono text-sm text-ai">
           ◆ Model-authored · not evidence-derived
+        </p>
+      ) : provenance === "general" ? (
+        <p className="mt-4 font-mono text-sm text-ink-3">
+          General guidance for this kind of fault · not derived from this cluster
         </p>
       ) : null}
     </div>

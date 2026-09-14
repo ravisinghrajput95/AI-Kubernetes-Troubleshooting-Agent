@@ -221,6 +221,11 @@ class AnalysisResult:
 
     signals: tuple[Signal, ...] = ()
     hypotheses: tuple[Hypothesis, ...] = ()
+    # The resource the investigation was asked about, as "kind/name", when it
+    # named one; and how many of the hypotheses are about it. They lead the
+    # ranking, so `scoped_hypotheses == 0` means nothing matched the request.
+    scoped_resource: str | None = None
+    scoped_hypotheses: int = 0
 
     @property
     def signal_ids(self) -> frozenset[str]:

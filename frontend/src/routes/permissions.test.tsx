@@ -78,7 +78,7 @@ beforeEach(() => {
     items: [],
     gateway_enabled: true,
     trust_domain: "k8s-agent.local",
-    scope: "worker",
+    scope: "fleet",
   });
 });
 

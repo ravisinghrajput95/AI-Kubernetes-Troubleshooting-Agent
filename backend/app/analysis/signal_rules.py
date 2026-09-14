@@ -434,7 +434,14 @@ class ResourceLimitsRule:
     def extract(self, data: AnalysisInput) -> Sequence[Signal]:
         findings = data.section("security").get("findings", [])
         limits = next(
-            (item for item in findings if item.get("label") == "Missing Resource Limits"),
+            (
+                item
+                for item in findings
+                # The id since the labels stopped asserting outcomes; the old
+                # label still arrives from reports stored before that.
+                if item.get("id") == "resource_limits"
+                or item.get("label") == "Missing Resource Limits"
+            ),
             None,
         )
         if limits is None or limits.get("status") != "warning":

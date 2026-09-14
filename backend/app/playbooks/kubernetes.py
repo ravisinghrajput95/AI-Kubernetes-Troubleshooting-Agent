@@ -75,6 +75,38 @@ class CrashLoopPlaybook(BasePlaybook):
         return collectors
 
 
+class ConfigurationPlaybook(BasePlaybook):
+    """Which ConfigMap or Secret is this pod waiting for?
+
+    `CreateContainerConfigError` is the kubelet refusing to start a container
+    whose configuration reference does not resolve — the canonical
+    missing-ConfigMap fault — and no playbook triggered on it. The reference
+    resolver ran only under CrashLoop, and a pod in this state never loops: it
+    never starts. So `workload.missing_configuration` was always selected from
+    the baseline signal alone, and its plan said "no collected evidence names
+    which one" while the pod's own events carried the name. Its spec was never
+    read either, so the plan also asserted that no controller owned a pod whose
+    ReplicaSet was one `get pod` away. Found by reading a live investigation of
+    the QA cluster, where the answer was `notifier-config-does-not-exist`.
+    """
+
+    id = "configuration"
+    title = "Missing configuration deep investigation"
+    triggers = frozenset({SignalType.POD_CONFIG_ERROR})
+
+    def plan(self, context: PlaybookContext) -> Sequence[Collector]:
+        collectors: list[Collector] = []
+        for target in self.targets(context, kinds=POD_KINDS):
+            collectors.extend(
+                [
+                    PodSpecCollector(target),
+                    ResourceEventsCollector(target),
+                    ConfigReferenceCollector(target),
+                ]
+            )
+        return collectors
+
+
 class PendingPlaybook(BasePlaybook):
     """Why can this pod not be placed on a node?
 
@@ -240,6 +272,7 @@ class StoragePlaybook(BasePlaybook):
 
 DEFAULT_PLAYBOOKS = (
     CrashLoopPlaybook(),
+    ConfigurationPlaybook(),
     PendingPlaybook(),
     ImagePullPlaybook(),
     NetworkPlaybook(),

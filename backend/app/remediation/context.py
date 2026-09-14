@@ -92,6 +92,15 @@ class RemediationContext:
     def evidence_ids(self) -> tuple[str, ...]:
         return tuple(self.analysis.evidence_ids_for(self.hypothesis.supporting_signal_ids))
 
+    def ownership_known(self) -> bool:
+        """Whether `workload_ref()` reflects observed ownership.
+
+        Only a pod can be mistaken: `workload_ref()` falls back to the
+        hypothesis target when no pod spec was collected, and a pod with no
+        spec is a pod whose owner nobody looked at, not an unmanaged one.
+        """
+        return self.target.kind != "Pod" or self.pod_spec() is not None
+
     def workload_derived(self) -> bool:
         """True when the workload name was inferred rather than read directly."""
         spec = self.pod_spec() or {}

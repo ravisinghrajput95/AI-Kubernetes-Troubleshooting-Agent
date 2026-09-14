@@ -302,13 +302,14 @@ class IncidentReportComposer:
             body.extend(f"  - {gap}" for gap in gaps[:8])
 
         rounds = investigation.get("playbook_rounds") or []
+        selected = diagnosis.get("selected_hypothesis")
         for entry in rounds:
             playbooks = ", ".join(entry.get("playbooks", []))
-            body.append(
+            added = (
                 f"Deep investigation ({playbooks}) added "
-                f"{entry.get('evidence_added', 0)} evidence record(s); the initial "
-                f"pass alone would not have reached this conclusion."
+                f"{entry.get('evidence_added', 0)} evidence record(s)"
             )
+            body.append(f"{added}; {self._what_the_round_changed(entry, selected)}")
 
         caveats = (diagnosis.get("remediation") or {}).get("caveats") or []
         if caveats:
@@ -316,6 +317,28 @@ class IncidentReportComposer:
             body.extend(f"  - {caveat}" for caveat in caveats)
 
         return ReportSection(title="Lessons Learned", body=tuple(body))
+
+    @staticmethod
+    def _what_the_round_changed(entry: dict[str, Any], selected: str | None) -> str:
+        """Whether the deep round was needed for this conclusion, as recorded.
+
+        This sentence was unconditional — "the initial pass alone would not
+        have reached this conclusion" — and so was false whenever the baseline
+        had already selected the same cause, which on the QA cluster was every
+        investigation. Reports stored before the round recorded its starting
+        point cannot say either way, and say that instead of guessing.
+        """
+        before = entry.get("hypotheses_before")
+        if before is None or not selected:
+            return "whether the initial pass alone would have reached this conclusion was not recorded."
+        if before and before[0] == selected:
+            return (
+                "the initial pass had already reached this conclusion, and the "
+                "round added supporting detail."
+            )
+        if selected in before:
+            return "the initial pass had considered this cause, and the round's evidence ranked it first."
+        return "the initial pass alone would not have reached this conclusion."
 
     def _preventive_actions(self, diagnosis: dict[str, Any]) -> ReportSection:
         body = []

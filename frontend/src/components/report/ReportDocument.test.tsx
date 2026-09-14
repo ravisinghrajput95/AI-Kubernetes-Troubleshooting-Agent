@@ -197,16 +197,50 @@ describe("confidence", () => {
 });
 
 describe("provenance", () => {
+  const MODEL = { ...DIAGNOSIS, ai_generated: true } as Diagnosis;
+  const DETERMINISTIC = { ...DIAGNOSIS, ai_generated: false } as Diagnosis;
+
   it("labels prose a model wrote", () => {
-    // F1 in PRODUCTION_READINESS: fix, prevention and next_steps are still
-    // model-authored, and the UI has to say so.
-    renderDocument();
+    // F1 in PRODUCTION_READINESS: when a model answered, prevention and
+    // next_steps are its prose, and the UI has to say so.
+    renderDocument({ diagnosis: MODEL });
     expect(screen.getByText(/model-authored/i)).toBeInTheDocument();
   });
 
   it("does not label sections the backend computed", () => {
     renderDocument({
+      diagnosis: MODEL,
       composition: { ...COMPOSITION, sections: [COMPOSITION.sections[0]] },
+    });
+    expect(screen.queryByText(/model-authored/i)).not.toBeInTheDocument();
+  });
+
+  it("never says a model wrote a report no model was asked for", () => {
+    // Every report from a deployment with no model key carried the badge,
+    // under a summary reading "Diagnosis source: Deterministic analysis".
+    renderDocument({
+      diagnosis: DETERMINISTIC,
+      composition: {
+        ...COMPOSITION,
+        sections: [
+          ...COMPOSITION.sections,
+          section("Resolution", { body: ["Raise the memory limit."] }),
+          section("Lessons Learned", { body: ["Prometheus is not configured."] }),
+        ],
+      },
+    });
+    expect(screen.queryByText(/model-authored/i)).not.toBeInTheDocument();
+    // Prevention is still not this cluster's evidence, and says so plainly.
+    expect(screen.getByText(/general guidance for this kind of fault/i)).toBeInTheDocument();
+  });
+
+  it("does not label a remediation plan as model prose even when a model answered", () => {
+    renderDocument({
+      diagnosis: { ...MODEL, remediation: { id: "plan" } } as unknown as Diagnosis,
+      composition: {
+        ...COMPOSITION,
+        sections: [COMPOSITION.sections[0], section("Resolution", { body: ["Raise the limit."] })],
+      },
     });
     expect(screen.queryByText(/model-authored/i)).not.toBeInTheDocument();
   });

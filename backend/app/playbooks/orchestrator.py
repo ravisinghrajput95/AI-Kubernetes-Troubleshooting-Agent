@@ -37,6 +37,11 @@ class PlaybookRound:
     playbooks: list[str] = field(default_factory=list)
     collectors: list[str] = field(default_factory=list)
     evidence_added: int = 0
+    # Hypothesis ids, ranked, as the analysis stood before this round ran.
+    # The report used to say the deep round was necessary for every
+    # conclusion it followed — including ones the baseline had already
+    # selected — because nothing recorded what the baseline had concluded.
+    hypotheses_before: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -44,6 +49,7 @@ class PlaybookRound:
             "playbooks": self.playbooks,
             "collectors": self.collectors,
             "evidence_added": self.evidence_added,
+            "hypotheses_before": self.hypotheses_before,
         }
 
 
@@ -115,6 +121,7 @@ class InvestigationOrchestrator:
                     playbooks=selected,
                     collectors=[collector.id for collector in planned],
                     evidence_added=len(context.store) - before,
+                    hypotheses_before=[item.id for item in analysis.hypotheses],
                 )
             )
 

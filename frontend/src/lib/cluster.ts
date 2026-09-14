@@ -194,7 +194,7 @@ export function clusterOverview(investigation?: Investigation): OverviewGroup[] 
   if (securityFindings.length > 0) {
     // Same predicate the list below uses. These read from one investigation
     // and must not report different numbers of the same thing.
-    const warnings = securityFindings.filter((item) => item.status !== "pass").length;
+    const warnings = securityFindings.filter((item) => item.status === "warning").length;
     groups.push({
       title: "Security",
       figures: [
@@ -212,7 +212,12 @@ export function clusterOverview(investigation?: Investigation): OverviewGroup[] 
   }
 
   if (coverage?.total) {
-    const gaps = coverage.total - coverage.usable;
+    // A gap is a read that was expected to answer and did not. A backend that
+    // is not configured was never expected to — the backend already leaves it
+    // out of completeness — so it is not counted here either. It was, and the
+    // overview read "Completeness 100%" beside "Gaps 11", every one of them
+    // Prometheus or Loki being unset.
+    const gaps = coverage.total - coverage.usable - (coverage.not_applicable ?? 0);
     groups.push({
       title: "Coverage",
       figures: [
@@ -247,11 +252,28 @@ export function topConsumers(investigation?: Investigation): Consumer[] {
   return (investigation?.metrics?.top_pods ?? []).slice(0, 8);
 }
 
-/** Security checks that did not pass, which are the only ones worth listing. */
+/**
+ * Security checks that found something, which are the only ones listed as
+ * warnings.
+ *
+ * `!== "pass"` put checks that never ran in this list: an unconfigured
+ * vulnerability scanner appeared under "Security warnings" as "High CVEs
+ * Found". A check that did not run is `unknown`, and `securityUnchecked` says
+ * so in those words.
+ */
 export function securityWarnings(
   investigation?: Investigation,
 ): Array<{ label: string; detail: string }> {
   return (investigation?.security?.findings ?? [])
-    .filter((finding) => finding.status !== "pass")
+    .filter((finding) => finding.status === "warning")
+    .map((finding) => ({ label: finding.label, detail: finding.detail }));
+}
+
+/** Checks the investigation could not perform. */
+export function securityUnchecked(
+  investigation?: Investigation,
+): Array<{ label: string; detail: string }> {
+  return (investigation?.security?.findings ?? [])
+    .filter((finding) => finding.status !== "warning" && finding.status !== "pass")
     .map((finding) => ({ label: finding.label, detail: finding.detail }));
 }

@@ -523,8 +523,8 @@ MUTATIONS = [
             "failure, so this is the normal path and not an edge case."
         ),
         path="app/providers/cache.py",
-        old="if not self.enabled or not result.success:",
-        new="if not self.enabled:",
+        old="if not self.enabled or not result.success or result.not_found:",
+        new="if not self.enabled or result.not_found:",
         tests="tests/test_collection_cache.py",
     ),
     Mutation(
@@ -900,6 +900,168 @@ MUTATIONS = [
         new="",
         tests="tests/test_agent_routing.py",
     ),
+    Mutation(
+        name="guidance-for-the-leader-not-the-selection",
+        why=(
+            "The plan, commands, prevention and follow-up were built for the "
+            "deterministic leader even when a grounded model selected another "
+            "hypothesis, so a root cause about one resource shipped with a "
+            "remediation plan for a different one."
+        ),
+        path="app/ai/root_cause_analyzer.py",
+        old="        top = hypothesis or analysis.top_hypothesis\n",
+        new="        top = analysis.top_hypothesis  # mutation: ignore the selection\n",
+        tests="tests/test_fix_recommendation.py",
+    ),
+    Mutation(
+        name="no-playbook-for-create-container-config-error",
+        why=(
+            "No playbook triggered on CreateContainerConfigError, so the "
+            "reference resolver never ran for the canonical missing-ConfigMap "
+            "fault: the plan said no evidence named the object while the pod's "
+            "events did, and called a ReplicaSet-owned pod unmanaged."
+        ),
+        path="app/playbooks/kubernetes.py",
+        old="    ConfigurationPlaybook(),\n",
+        new="",
+        tests="tests/test_configuration_investigation.py",
+    ),
+    Mutation(
+        name="failed-reference-read-reported-absent",
+        why=(
+            "A refused or unsupported ConfigMap/Secret read was recorded as the "
+            "object not existing. Live, a Secret that existed became the root "
+            "cause of every run on both providers — Forbidden under the shipped "
+            "read-only RBAC, unsupported through the agent."
+        ),
+        path="app/analysis/deep_signal_rules.py",
+        old=(
+            '                if reference.get("exists") is None:\n'
+            "                    continue\n"
+            '                if reference.get("exists") is False:\n'
+        ),
+        new='                if not reference.get("exists"):\n',
+        tests="tests/test_configuration_investigation.py",
+    ),
+    Mutation(
+        name="agent-named-404-not-recognised-as-absent",
+        why=(
+            "The resolver recognised absence by kubectl's stderr wording; an "
+            "agent reports a named 404 as EMPTY with no text, so through an "
+            "agent a missing ConfigMap could not be named."
+        ),
+        path="app/providers/remote_agent.py",
+        old="                record.status == evidence_pb2.EVIDENCE_STATUS_EMPTY\n",
+        new="                False  # mutation: named EMPTY is not absence\n",
+        tests="tests/test_not_found_parity.py",
+    ),
+    Mutation(
+        name="uncollected-owner-reported-as-no-owner",
+        why=(
+            "With no pod spec collected, remediation read its fallback-to-pod "
+            "target as an observed bare pod and said 'No controller owns' a "
+            "pod whose ReplicaSet was one read away."
+        ),
+        path="app/remediation/context.py",
+        old='        return self.target.kind != "Pod" or self.pod_spec() is not None\n',
+        new="        return True  # mutation: ownership always known\n",
+        tests="tests/test_remediation.py",
+    ),
+    Mutation(
+        name="deep-round-always-claimed-necessary",
+        why=(
+            "Every report with a playbook round said 'the initial pass alone "
+            "would not have reached this conclusion', including those whose "
+            "baseline had already selected the same cause."
+        ),
+        path="app/reports/composer.py",
+        old="        if before is None or not selected:\n",
+        new=(
+            "        if True:  # mutation: unconditional claim\n"
+            '            return "the initial pass alone would not have reached this conclusion."\n'
+            "        if before is None or not selected:\n"
+        ),
+        tests="tests/test_configuration_investigation.py",
+    ),
+    Mutation(
+        name="report-namespace-of-the-first-pod",
+        why=(
+            "The report and Reports table filed an investigation under the "
+            "first problematic pod's namespace — local-path-storage for a "
+            "diagnosis of payments/checkout-svc."
+        ),
+        path="app/services/history_service.py",
+        old="    def _namespace(self, investigation: dict[str, Any], diagnosis: dict[str, Any]) -> str:\n",
+        new=(
+            "    def _namespace(self, investigation: dict[str, Any], diagnosis: dict[str, Any]) -> str:\n"
+            '        return investigation["pods"]["problematic_pods"][0]["namespace"]  # mutation\n'
+        ),
+        tests="tests/test_report_namespace.py",
+    ),
+    Mutation(
+        name="primary-namespace-in-hash-order",
+        why=(
+            "'Primary namespace affected' was next(iter(set)), which Python "
+            "orders by a per-process random hash: three seeds, two answers."
+        ),
+        path="app/services/investigation_service.py",
+        old='        primary = min(affected, key=lambda name: (-affected[name], name)) if affected else "none"\n',
+        new='        primary = next(iter(set(affected)), "none")  # mutation\n',
+        tests="tests/test_report_namespace.py",
+    ),
+    Mutation(
+        name="resource-scope-ignored-when-ranking",
+        why=(
+            "'Investigate deployment checkout' returned a root cause about the "
+            "notifier pod, because a resource scope narrows two reads and "
+            "ranking considered every pod in the namespace."
+        ),
+        path="app/analysis/engine.py",
+        old="        in_scope = _scope_predicate(scope)\n",
+        new="        in_scope = None  # mutation: scope ignored\n",
+        tests="tests/test_scoped_diagnosis.py",
+    ),
+    Mutation(
+        name="limits-rule-matches-a-label",
+        why=(
+            "ResourceLimitsRule matched a security check by its label text, in "
+            "another module, so renaming labels that asserted outcomes would "
+            "have silently removed the missing-limits signal."
+        ),
+        path="app/analysis/signal_rules.py",
+        old=(
+            '                if item.get("id") == "resource_limits"\n'
+            '                or item.get("label") == "Missing Resource Limits"\n'
+        ),
+        new='                if item.get("label") == "Missing Resource Limits"\n',
+        tests="tests/test_security_checks.py",
+    ),
+    Mutation(
+        name="agents-endpoint-claims-worker-scope",
+        why=(
+            "GET /agents said scope 'worker' for six milestones after presence "
+            "made it answer for the fleet, and /connect told operators so "
+            "above a list holding another worker's agent."
+        ),
+        path="app/api/agents.py",
+        old='        "scope": "fleet",\n',
+        new='        "scope": "worker",\n',
+        tests="tests/test_agent_presence.py",
+    ),
+
+    Mutation(
+        name="cache-stores-absence",
+        why=(
+            "An agent's named 404 is a *successful* EMPTY read, so without this "
+            "a 'ConfigMap does not exist' would be served from cache for the "
+            "length of the TTL — to the operator who has just created it."
+        ),
+        path="app/providers/cache.py",
+        old="if not self.enabled or not result.success or result.not_found:",
+        new="if not self.enabled or not result.success:",
+        tests="tests/test_not_found_parity.py",
+    ),
+
 ]
 
 

@@ -50,7 +50,7 @@ class LocalKubectlProvider(ClusterProvider):
         args = self.to_args(request)
         parse_json = request.output is OutputFormat.JSON
         result = await asyncio.to_thread(self._executor.run, args, parse_json)
-        return self._to_result(result)
+        return self._to_result(result, named=bool(request.name))
 
     async def fetch_many(self, requests: Sequence[ResourceRequest]) -> Sequence[ProviderResult]:
         return await asyncio.gather(*(self.fetch(request) for request in requests))
@@ -106,7 +106,7 @@ class LocalKubectlProvider(ClusterProvider):
         args += _output(request)
         return args
 
-    def _to_result(self, result: KubectlResult) -> ProviderResult:
+    def _to_result(self, result: KubectlResult, named: bool = False) -> ProviderResult:
         return ProviderResult(
             success=result.success,
             data=result.data,
@@ -115,6 +115,9 @@ class LocalKubectlProvider(ClusterProvider):
             equivalent_command=" ".join(result.command),
             truncated=result.truncated,
             total_items=result.total_items,
+            # kubectl's own marker for a 404 on a named object:
+            # `Error from server (NotFound): configmaps "x" not found`.
+            not_found=named and not result.success and "(NotFound)" in (result.stderr or ""),
         )
 
 

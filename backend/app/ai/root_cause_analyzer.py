@@ -11,7 +11,7 @@ from app.analysis.confidence import CompositeConfidenceScorer
 from app.analysis.engine import AnalysisEngine
 from app.analysis.grounding import GroundingResult, GroundingValidator
 from app.analysis.incidents import group_incidents, selection_rationale
-from app.analysis.models import AnalysisResult
+from app.analysis.models import AnalysisResult, Hypothesis
 from app.kubernetes.command_policy import CommandClass, classify_command
 from app.observability import metrics
 from app.remediation.planner import RemediationPlanner
@@ -111,7 +111,17 @@ class RootCauseAnalyzer:
         analysis: AnalysisResult,
         grounding: GroundingResult,
     ) -> dict[str, Any]:
-        fallback = self._fallback(investigation, analysis, "")
+        # The hypothesis-keyed half of the fallback — remediation, commands,
+        # prevention, follow-up — must describe the hypothesis the *model*
+        # selected, not the deterministic leader. Built for the leader, a model
+        # that defensibly chose the second-ranked cause shipped a root cause
+        # about one resource and a remediation plan for another.
+        selected = (
+            analysis.hypothesis(grounding.selected_hypothesis)
+            if grounding.selected_hypothesis
+            else None
+        )
+        fallback = self._fallback(investigation, analysis, "", hypothesis=selected)
 
         # Commands are NEVER taken from the model. Signals and hypotheses are
         # built from cluster text — log lines, event messages, resource names —
@@ -169,10 +179,16 @@ class RootCauseAnalyzer:
         investigation: dict[str, Any],
         analysis: AnalysisResult,
         error: str,
+        hypothesis: Hypothesis | None = None,
     ) -> dict[str, Any]:
-        recommendation = self.fix_engine.recommend(investigation)
+        top = hypothesis or analysis.top_hypothesis
+        # The remediation plan is derived from the hypothesis, so it can name the
+        # actual workload, container and rollback. `remediation_risk` and
+        # `remediation_plan` are projected from it to preserve their existing
+        # shape for the console and reports.
+        plan = self.remediation_planner.plan(analysis, investigation, top)
+        recommendation = self.fix_engine.recommend(investigation, top, plan)
         deterministic_score, reasons = self.confidence_engine.score(investigation)
-        top = analysis.top_hypothesis
         safe_commands = self._vetted_commands(recommendation["kubectl_commands"])
 
         confidence, components = self.scorer.score(
@@ -187,12 +203,6 @@ class RootCauseAnalyzer:
         cited_signals = list(top.supporting_signal_ids) if top else []
         fix = top.remediation_hint if top and top.remediation_hint else recommendation["fix"]
 
-        # The remediation plan is derived from the hypothesis, so it can name the
-        # actual workload, container and rollback. `remediation_risk` and
-        # `remediation_plan` are projected from it to preserve their existing
-        # shape for the console and reports.
-        plan = self.remediation_planner.plan(analysis, investigation)
-
         return {
             "root_cause": self._root_cause_summary(investigation, analysis),
             "explanation": explanation,
@@ -200,7 +210,7 @@ class RootCauseAnalyzer:
             "kubectl_commands": safe_commands,
             "prevention": recommendation["prevention"],
             "evidence_gaps": self._evidence_gaps(investigation, analysis),
-            "next_steps": recommendation.get("next_steps", self._next_steps(investigation)),
+            "next_steps": recommendation["next_steps"],
             "confidence": confidence,
             "confidence_reasoning": self._confidence_reasoning(analysis, reasons),
             "confidence_breakdown": [item.to_dict() for item in components],
@@ -344,18 +354,10 @@ class RootCauseAnalyzer:
         }
 
     def _rollback_commands(self, investigation: dict[str, Any]) -> list[str]:
-        deployments = investigation.get("deployments", {}).get("unhealthy_deployments", [])
-        if not deployments:
-            return ["kubectl rollout history deployment <deployment-name> -n <namespace>"]
-
-        deployment = deployments[0]
-        namespace = deployment.get("namespace", "<namespace>")
-        name = deployment.get("name", "<deployment-name>")
-        return [
-            f"kubectl rollout history deployment {name} -n {namespace}",
-            f"kubectl rollout undo deployment {name} -n {namespace}",
-            f"kubectl rollout status deployment {name} -n {namespace}",
-        ]
+        # Reached only when no hypothesis matched, so there is no diagnosed
+        # workload to roll back. This used to name the first unhealthy
+        # deployment in the payload and offer `rollout undo` against it.
+        return ["kubectl rollout history deployment <deployment-name> -n <namespace>"]
 
     def _evidence_gaps(
         self,
@@ -392,15 +394,6 @@ class RootCauseAnalyzer:
 
         return gaps or ["No major evidence gaps detected in the collected signals."]
 
-    def _next_steps(self, investigation: dict[str, Any]) -> list[str]:
-        if investigation.get("health", {}).get("status") == "healthy":
-            return ["Keep monitoring events and rollout health for regressions."]
-        return [
-            "Review the highest-severity finding and confirm it matches the affected workload.",
-            "Run the suggested read-only commands before applying any remediation.",
-            "Apply the fix during an approved window if it may restart workloads.",
-        ]
-
     def _string_list(self, value: Any, fallback: list[str]) -> list[str]:
         if isinstance(value, list):
             return [str(item) for item in value]
@@ -423,6 +416,15 @@ class RootCauseAnalyzer:
             return "No critical Kubernetes issues detected. Cluster appears healthy."
 
         top = analysis.top_hypothesis
+        if top is not None and analysis.scoped_resource and not analysis.scoped_hypotheses:
+            # Asked about one resource and found nothing wrong with it. Naming
+            # another workload's fault as *the* root cause would answer a
+            # question nobody asked; it is still the leading finding nearby.
+            return (
+                f"No finding in the collected evidence is about "
+                f"{analysis.scoped_resource}. Elsewhere in its namespace: "
+                f"{top.title} ({top.target.key})."
+            )
         if top is not None:
             return f"{top.title} ({top.target.key})."
 

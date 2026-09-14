@@ -9,13 +9,17 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "./AppShell";
 import { NavRail } from "./NavRail";
 import { ScopeSwitcher } from "./ScopeSwitcher";
 import * as api from "../../services/api";
+
+function PathProbe() {
+  return <p>{useLocation().pathname}</p>;
+}
 
 function renderWithin(ui: React.ReactNode, initialEntry = "/") {
   const client = new QueryClient({
@@ -103,6 +107,43 @@ describe("scope switcher", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /staging/i })).toBeInTheDocument(),
     );
+  });
+
+  it("names the cluster whose page is open, not the kubeconfig default", async () => {
+    // `/clusters/staging` showed `prod-eu-west` in the header: the switcher
+    // read only `?cluster=` and adopted the default when it was absent.
+    renderWithin(
+      <Routes>
+        <Route path="/clusters/:context" element={<ScopeSwitcher />} />
+      </Routes>,
+      "/clusters/staging",
+    );
+    expect(await screen.findByRole("button", { name: /staging/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /prod-eu-west/i })).not.toBeInTheDocument();
+  });
+
+  it("opens the chosen cluster's page when switching from one", async () => {
+    const user = userEvent.setup();
+    renderWithin(
+      <Routes>
+        <Route
+          path="/clusters/:context"
+          element={
+            <>
+              <ScopeSwitcher />
+              <PathProbe />
+            </>
+          }
+        />
+      </Routes>,
+      "/clusters/staging",
+    );
+
+    await user.click(await screen.findByRole("button", { name: /staging/i }));
+    const list = await screen.findByRole("listbox", { name: /clusters/i });
+    await user.click(within(list).getByRole("option", { name: /prod-eu-west/i }));
+
+    expect(await screen.findByText("/clusters/prod-eu-west")).toBeInTheDocument();
   });
 
   it("closes on Escape", async () => {

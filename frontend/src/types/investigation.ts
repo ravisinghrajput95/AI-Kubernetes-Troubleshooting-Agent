@@ -146,6 +146,8 @@ export interface EvidenceCoverage {
   total: number;
   usable: number;
   completeness: number;
+  /** Reads with no backend to answer them (Prometheus, Loki unset). */
+  not_applicable?: number;
   by_status?: Record<string, number>;
   degraded?: Array<{ kind: string; status: string; detail: string }>;
 }

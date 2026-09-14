@@ -9,6 +9,7 @@ import { RemediationPlanPanel } from "../components/RemediationPlanPanel";
 import { ReportDocument } from "../components/report/ReportDocument";
 import { SeverityDot } from "../components/report/SeverityDot";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
+import { useScope } from "../hooks/useScope";
 import { useInvestigationJob } from "../hooks/useInvestigationJob";
 import { evidenceIndex, severityTone } from "../lib/report";
 import { getInvestigationReport } from "../services/api";
@@ -65,6 +66,18 @@ export function InvestigationPage() {
 
   const investigation = job.investigation;
   const diagnosis = job.diagnosis;
+
+  // An investigation is about one cluster, and the header's scope says which.
+  // It kept whatever scope the previous page had — an investigation of
+  // `sweep-agent` opened from a form scoped to it arrived under
+  // `?cluster=kind-k8s-agent-dev`, the kubeconfig default, and said so.
+  const { cluster: scoped, setCluster } = useScope();
+  const investigatedCluster = investigation?.context ?? "";
+  useEffect(() => {
+    if (investigatedCluster && investigatedCluster !== scoped) {
+      setCluster(investigatedCluster);
+    }
+  }, [investigatedCluster, scoped, setCluster]);
   const evidence = evidenceIndex(investigation).get(selectedEvidence);
 
   useDocumentTitle(

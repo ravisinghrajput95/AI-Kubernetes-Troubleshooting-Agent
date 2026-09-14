@@ -3,6 +3,7 @@ import { SeverityDot } from "../report/SeverityDot";
 import {
   clusterOverview,
   evidenceIdForKind,
+  securityUnchecked,
   securityWarnings,
   topConsumers,
 } from "../../lib/cluster";
@@ -31,6 +32,7 @@ export function ClusterOverview({
   const index = evidenceIndex(investigation);
   const consumers = topConsumers(investigation);
   const warnings = securityWarnings(investigation);
+  const unchecked = securityUnchecked(investigation);
 
   if (groups.length === 0) {
     return (
@@ -85,6 +87,20 @@ export function ClusterOverview({
               <li key={warning.label} className="flex flex-wrap items-baseline gap-x-2">
                 <SeverityDot tone="warning" label={warning.label} />
                 <span className="text-sm text-ink-2">{warning.detail}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {unchecked.length > 0 ? (
+        <section>
+          <h3 className="text-label uppercase text-ink-3">Not checked</h3>
+          <ul className="mt-3 grid gap-2">
+            {unchecked.map((item) => (
+              <li key={item.label} className="flex flex-wrap items-baseline gap-x-2">
+                <SeverityDot tone="neutral" label={item.label} />
+                <span className="text-sm text-ink-3">{item.detail}</span>
               </li>
             ))}
           </ul>

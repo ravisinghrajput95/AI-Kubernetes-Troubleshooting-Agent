@@ -137,6 +137,28 @@ export function totalContribution(components: ConfidenceComponent[]): number {
   return components.reduce((sum, item) => sum + item.contribution, 0);
 }
 
+/**
+ * A stored timestamp as the reader's local date and time.
+ *
+ * Two lists printed `timestamp.slice(0, 16)` — the UTC digits with no zone —
+ * beside pages that print local time, so one investigation read 18:03 on its
+ * cluster's Reports tab and 23:33 on the Reports page. An incident timeline
+ * that disagrees with itself by the reader's UTC offset is worse than either.
+ */
+export function formatTimestamp(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function formatDuration(ms?: number | null): string {
   if (ms === undefined || ms === null) {
     return "—";

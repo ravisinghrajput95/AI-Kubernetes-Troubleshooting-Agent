@@ -480,13 +480,18 @@ class ConfigReferenceCollector(TargetedCollector):
         self,
         context: CollectionContext,
         name: str,
-    ) -> tuple[list[str], bool, str]:
+    ) -> tuple[list[str], bool | None, str]:
         result = await self._fetch(context, self._get("configmap", name=name))
 
+        if result.not_found:
+            return [], False, "ConfigMap does not exist."
         if not result.success or not isinstance(result.data, dict):
-            if "not found" in result.error.lower():
-                return [], False, "ConfigMap does not exist."
-            return [], False, classify_error(result.error)[1]
+            # Could not look is not the same as looked and it is absent. A
+            # refused or timed-out read used to return False here, and
+            # `ConfigReferenceRule` turned that into "referenced by the pod
+            # but does not exist" — so a caller whose RBAC stops at
+            # ConfigMaps was told, with a citation, that the object was gone.
+            return [], None, classify_error(result.error)[1]
 
         # Key names only; ConfigMap values can carry connection strings.
         keys = sorted(result.data.get("data", {}))
@@ -497,7 +502,7 @@ class ConfigReferenceCollector(TargetedCollector):
         self,
         context: CollectionContext,
         name: str,
-    ) -> tuple[list[str], bool, str]:
+    ) -> tuple[list[str], bool | None, str]:
         # `describe` never prints secret values, so no value ever enters memory.
         result = await self._fetch(
             context,
@@ -510,10 +515,14 @@ class ConfigReferenceCollector(TargetedCollector):
             ),
         )
 
+        if result.not_found:
+            return [], False, "Secret does not exist."
         if not result.success:
-            if "not found" in result.error.lower():
-                return [], False, "Secret does not exist."
-            return [], False, classify_error(result.error)[1]
+            # Unknown, not absent — see `_configmap_keys`. This branch matters
+            # more: `describe` is kubectl's renderer and the agent does not
+            # serve it, so on an agent-reached cluster this read always fails,
+            # and every Secret a pod referenced was reported as nonexistent.
+            return [], None, classify_error(result.error)[1]
 
         return self._parse_described_keys(result.text), True, ""
 

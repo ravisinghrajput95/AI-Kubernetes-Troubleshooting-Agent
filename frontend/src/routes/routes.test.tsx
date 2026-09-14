@@ -10,7 +10,7 @@
 
 import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ErrorBoundary } from "../components/ErrorBoundary";
@@ -99,7 +99,7 @@ describe("settings", () => {
       ],
       gateway_enabled: true,
       trust_domain: "test.local",
-      scope: "worker",
+      scope: "fleet",
     });
     renderPage(<SettingsPage />);
 
@@ -129,7 +129,7 @@ describe("settings", () => {
       ],
       gateway_enabled: true,
       trust_domain: "test.local",
-      scope: "worker",
+      scope: "fleet",
     });
     renderPage(<SettingsPage />);
 
@@ -164,6 +164,44 @@ describe("an investigation at its own address", () => {
     expect(await screen.findByRole("heading", { name: "prod-eu-west" })).toBeInTheDocument();
     expect(screen.getByText("job-1")).toBeInTheDocument();
     expect(api.getInvestigationJob).toHaveBeenCalledWith("job-1");
+  });
+
+  it("scopes the console to the cluster it investigated", async () => {
+    // Started from a form scoped to one cluster, the page arrived with the
+    // scope of another — the kubeconfig default — and the header said so.
+    vi.spyOn(api, "getInvestigationJob").mockResolvedValue({
+      id: "job-1",
+      status: "succeeded",
+      investigation: { context: "sweep-agent" },
+      diagnosis: { root_cause: "Memory limit too low" },
+    } as unknown as Awaited<ReturnType<typeof api.getInvestigationJob>>);
+
+    function Scope() {
+      return <output>{new URLSearchParams(useLocation().search).get("cluster")}</output>;
+    }
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/investigations/job-1?cluster=kind-k8s-agent-dev"]}>
+          <Routes>
+            <Route
+              path="/investigations/:id"
+              element={
+                <>
+                  <InvestigationPage />
+                  <Scope />
+                </>
+              }
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByRole("heading", { name: "sweep-agent" });
+    expect(await screen.findByText("sweep-agent", { selector: "output" })).toBeInTheDocument();
   });
 });
 

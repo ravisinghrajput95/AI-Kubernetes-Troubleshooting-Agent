@@ -166,6 +166,35 @@ describe("tabs", () => {
   });
 });
 
+describe("time", () => {
+  it("prints a run's time in the reader's zone, as the Reports page does", async () => {
+    // This tab printed `timestamp.slice(0, 16)` — UTC digits, no zone — so one
+    // run read 18:03 here and 23:33 on /reports. Pinned to a zone with an
+    // offset: in UTC, where CI runs, the defect and the fix print the same.
+    vi.stubEnv("TZ", "Asia/Kolkata");
+    try {
+      vi.spyOn(api, "getInvestigationHistory").mockResolvedValue([
+        {
+          id: "run-1",
+          context: "prod-eu-west",
+          timestamp: "2026-09-14T17:47:00+00:00",
+          root_cause: "Memory limit too low",
+          namespace: "payments",
+          confidence: 87,
+          severity: "Critical",
+          status: "success",
+        } as InvestigationHistoryItem,
+      ]);
+      renderCluster("/clusters/prod-eu-west?tab=reports");
+      const link = await screen.findByRole("link", { name: /memory limit too low/i });
+      expect(link.textContent).toMatch(/\b(23|11):17\b/);
+      expect(link.textContent).not.toContain("17:47");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
 describe("a cluster with nothing on record", () => {
   it("says so, and that nothing is ever applied", async () => {
     vi.spyOn(api, "getInvestigationHistory").mockResolvedValue([]);

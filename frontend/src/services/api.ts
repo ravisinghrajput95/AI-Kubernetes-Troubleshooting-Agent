@@ -89,7 +89,7 @@ export interface AgentFleet {
   items: AgentStatus[];
   gateway_enabled: boolean;
   trust_domain: string;
-  /** "worker": agents attached to the worker that answered, not the fleet. */
+  /** "fleet": every agent in the tenant, whichever worker holds its stream. */
   scope: string;
 }
 

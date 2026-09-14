@@ -237,6 +237,46 @@ class TestUnmanagedWorkloads:
         assert restart and restart[0].manual
 
 
+class TestOwnershipThatWasNeverCollected:
+    """No pod spec is not the same as no owner.
+
+    `workload_ref()` falls back to the pod whenever its spec was not collected,
+    and every helper read that fallback as an observed bare pod. The QA
+    cluster's `notifier` pod was reported "not managed by a controller" while
+    its ReplicaSet was one read away.
+    """
+
+    SIGNALS: ClassVar[list] = [signal(SignalType.POD_CONFIG_ERROR)]
+
+    def lines(self, plan) -> str:
+        return "\n".join(
+            [
+                *plan.caveats,
+                *(step.description for step in (*plan.remediation, *plan.rollback)),
+            ]
+        ).lower()
+
+    def test_an_uncollected_owner_is_not_reported_as_absent(self):
+        plan = plan_for("workload.missing_configuration", self.SIGNALS, pod_spec=None)
+
+        assert plan.target.kind != "Deployment"
+        text = self.lines(plan)
+        assert "no controller owns" not in text
+        assert "not managed by a controller" not in text
+        assert "it has no controller" not in text
+        assert "was not collected" in text
+
+    def test_an_observed_bare_pod_still_is(self):
+        # The control: the same plan with a spec that shows no owner must keep
+        # saying so, or the test above passes by never saying anything.
+        plan = plan_for(
+            "workload.missing_configuration",
+            self.SIGNALS,
+            pod_spec={**OOM_POD_SPEC, "owner": {}},
+        )
+        assert "no controller owns" in self.lines(plan)
+
+
 class TestMissingConfiguration:
     def test_names_the_missing_key(self):
         plan = plan_for(

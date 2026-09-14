@@ -103,9 +103,21 @@ export function recurringFindings(corpus: CorpusEntry[]): Finding[] {
     }
   }
 
+  const runsOf = (clusters: string[]): Occurrence[] =>
+    corpus
+      .filter((entry) => clusters.includes(entry.cluster))
+      .map((entry) => ({
+        investigationId: entry.investigationId,
+        cluster: entry.cluster,
+        at: entry.at,
+      }));
+
   return [...groups.values()]
     .filter((finding) => finding.occurrences.length > 1)
-    .map((finding) => ({ ...finding, trend: trendOf(finding.occurrences) }))
+    .map((finding) => ({
+      ...finding,
+      trend: trendOf(finding.occurrences, runsOf(finding.clusters)),
+    }))
     .sort((a, b) => {
       if (a.clusters.length !== b.clusters.length) {
         return b.clusters.length - a.clusters.length;
@@ -117,35 +129,56 @@ export function recurringFindings(corpus: CorpusEntry[]): Finding[] {
     });
 }
 
+/** Runs in each half of the window below this are too few to compare. */
+const MIN_RUNS_PER_HALF = 2;
+
 /**
- * Which half of its own history a finding is concentrated in.
+ * Whether a finding shows up in a larger or smaller share of investigations
+ * lately than it used to.
  *
- * Deliberately refuses to answer below three occurrences. Calling two data
- * points a trend is exactly the kind of confident overclaim this product
- * exists not to make.
+ * This compared *when its occurrences fell* and nothing else — "which half of
+ * its own history it is concentrated in" — which measures when people ran
+ * investigations, not how often the finding appears in them. On a live corpus
+ * of four runs, three in the first minute and one five minutes later, every
+ * finding present in all four was labelled "happening less often". A trend is
+ * a rate, and a rate needs the runs where the finding was absent: `runs` is
+ * every investigation of the clusters the finding was seen on.
+ *
+ * Still refuses below three occurrences, and now also when either half of the
+ * window holds too few runs to have a share at all.
  */
-export function trendOf(occurrences: Occurrence[]): Trend {
+export function trendOf(occurrences: Occurrence[], runs: Occurrence[]): Trend {
   if (occurrences.length < MIN_FOR_TREND) {
     return "unknown";
   }
 
-  const times = occurrences.map((item) => Date.parse(item.at)).filter((n) => !Number.isNaN(n));
-  if (times.length < MIN_FOR_TREND) {
+  const seen = new Set(occurrences.map((item) => item.investigationId));
+  const timed = runs
+    .map((run) => ({ at: Date.parse(run.at), present: seen.has(run.investigationId) }))
+    .filter((run) => !Number.isNaN(run.at));
+  if (timed.length < MIN_FOR_TREND) {
     return "unknown";
   }
 
-  const earliest = Math.min(...times);
-  const latest = Math.max(...times);
+  const earliest = Math.min(...timed.map((run) => run.at));
+  const latest = Math.max(...timed.map((run) => run.at));
   if (latest === earliest) {
-    return "steady";
+    return "unknown";
   }
 
   const midpoint = earliest + (latest - earliest) / 2;
-  const recent = times.filter((time) => time > midpoint).length;
-  const earlier = times.length - recent;
+  const earlier = timed.filter((run) => run.at <= midpoint);
+  const recent = timed.filter((run) => run.at > midpoint);
+  if (earlier.length < MIN_RUNS_PER_HALF || recent.length < MIN_RUNS_PER_HALF) {
+    return "unknown";
+  }
 
-  if (recent > earlier) return "rising";
-  if (recent < earlier) return "falling";
+  const share = (half: typeof timed) => half.filter((run) => run.present).length / half.length;
+  const before = share(earlier);
+  const after = share(recent);
+
+  if (after > before) return "rising";
+  if (after < before) return "falling";
   return "steady";
 }
 

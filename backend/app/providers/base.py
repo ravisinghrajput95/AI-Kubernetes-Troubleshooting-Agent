@@ -79,6 +79,14 @@ class ProviderResult:
     equivalent_command: str = ""
     truncated: bool = False
     total_items: int = 0
+    # The named object does not exist — as opposed to a read that failed.
+    #
+    # Collectors used to recognise absence by kubectl's wording, `"not found"`
+    # in stderr. An agent reports the same fact as an EMPTY status and no error
+    # text at all, so on the agent path a missing ConfigMap could not be told
+    # from a read that failed, and the investigation could not name it. Each
+    # provider sets this from what it actually knows; nothing reads prose.
+    not_found: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {

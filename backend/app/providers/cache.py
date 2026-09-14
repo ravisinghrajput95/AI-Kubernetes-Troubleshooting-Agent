@@ -253,7 +253,10 @@ class CollectionCache:
         reads exactly those statuses to tell a locked door from a broken
         cluster — caching one would make the diagnosis persist past its cause.
         """
-        if not self.enabled or not result.success:
+        if not self.enabled or not result.success or result.not_found:
+            # Absence is not stored either: a ConfigMap reported missing is the
+            # one an operator is about to create, and a cached "not found"
+            # would contradict the fix for the length of the TTL.
             return
 
         try:

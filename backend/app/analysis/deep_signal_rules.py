@@ -190,7 +190,11 @@ class ConfigReferenceRule:
                 kind = reference.get("kind", "ConfigMap")
                 name = reference.get("name", "")
 
-                if not reference.get("exists"):
+                # `None` means the read failed, and a failed read is not
+                # evidence of absence; only an explicit not-found is.
+                if reference.get("exists") is None:
+                    continue
+                if reference.get("exists") is False:
                     signals.append(
                         Signal.create(
                             SignalType.CONFIG_REFERENCE_MISSING,

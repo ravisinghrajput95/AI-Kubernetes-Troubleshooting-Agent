@@ -74,7 +74,7 @@ def _require_authentication(principal: Principal) -> None:
 
 @router.get("/agents")
 def list_agents(principal: Principal = Depends(require_principal)) -> dict[str, Any]:
-    """Agents attached to this worker, and what they can do."""
+    """Every agent in this tenant's fleet, and what each can do."""
     from app.api.investigate import connected_agents
 
     agents = connected_agents()
@@ -82,9 +82,13 @@ def list_agents(principal: Principal = Depends(require_principal)) -> dict[str, 
         "items": agents,
         "gateway_enabled": settings.agent_gateway_enabled,
         "trust_domain": settings.agent_trust_domain,
-        # Named so the console can be honest: a fleet spread across workers
-        # shows only this worker's agents until M8 routes by stream ownership.
-        "scope": "worker",
+        # `connected_agents()` answers from the shared presence index on a
+        # distributed deployment and from the one registry there is otherwise,
+        # so this is the fleet either way. It said "worker" for six milestones
+        # after presence made it untrue, and the console repeated it: "shows
+        # only its own until requests are routed by stream ownership", above a
+        # list that included an agent held by the other worker.
+        "scope": "fleet",
     }
 
 

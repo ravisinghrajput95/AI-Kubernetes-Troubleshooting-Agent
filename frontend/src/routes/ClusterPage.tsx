@@ -8,6 +8,7 @@ import { SeverityDot } from "../components/report/SeverityDot";
 import { fleetState, relativeAge, STALE_AFTER_MS } from "../lib/fleet";
 import { evidenceIndex, evidenceTone, severityTone } from "../lib/report";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
+import { formatTimestamp } from "../lib/analysis";
 import {
   getInvestigationHistory,
   getInvestigationReport,
@@ -228,7 +229,10 @@ function RunList({
   return (
     <ul className="grid gap-1">
       {runs.map((run) => (
-        <li key={run.id}>
+        // `min-w-0`: a grid item defaults to `min-width: auto`, and the root
+        // cause below is `truncate`, so min-content is the whole sentence.
+        // Same defect as `ClusterCard`, which carries the full note.
+        <li key={run.id} className="min-w-0">
           <Link
             to={`/investigations/${run.id}`}
             className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 rounded-md px-2 py-2 transition-colors duration-fast hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info"
@@ -239,7 +243,7 @@ function RunList({
             </span>
             <span className="shrink-0 font-mono text-sm text-ink-3">
               {reports ? "PDF · JSON · MD · " : ""}
-              {run.confidence}% · {run.timestamp.slice(0, 16).replace("T", " ")}
+              {run.confidence}% · {formatTimestamp(run.timestamp)}
             </span>
           </Link>
         </li>
@@ -265,7 +269,10 @@ function EvidenceList({
   return (
     <ul className="grid gap-1">
       {records.map((record) => (
-        <li key={record.id}>
+        // `min-w-0` for the same reason as `RunList`: the evidence command is
+        // `truncate`, and an impersonated kubectl line scrolled this tab
+        // sideways by 337px.
+        <li key={record.id} className="min-w-0">
           <button
             type="button"
             onClick={() => onSelect(record.id)}

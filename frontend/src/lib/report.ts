@@ -138,12 +138,40 @@ export function citedBy(diagnosis: Diagnosis | undefined, evidenceId: string): s
  */
 export const ENRICHED_SECTIONS = new Set(["Root Cause", "Evidence", "Confidence Assessment"]);
 
-/** Sections whose prose a model wrote, and which are labelled as such. */
-export const MODEL_AUTHORED_SECTIONS = new Set([
-  "Resolution",
-  "Lessons Learned",
-  "Preventive Actions",
-]);
+export type SectionProvenance = "model" | "general" | "evidence";
+
+/**
+ * Who wrote a section's prose, which is what its label has to say.
+ *
+ * This was a set of titles, labelled "Model-authored · not evidence-derived"
+ * on every report — including every report produced with no model configured
+ * at all, where the diagnosis source a few lines above read "Deterministic
+ * analysis". It also labelled Resolution, whose body is the remediation plan
+ * `app/remediation/` builds from the hypothesis and cites signals for, so the
+ * one section most carefully derived from evidence told the reader not to
+ * trust it as such.
+ *
+ * What a model can author, when one answered: `prevention`, `next_steps` and
+ * `evidence_gaps`, and `fix` only where there is no plan to render instead.
+ * With no model, prevention is general guidance for the diagnosed category —
+ * true of every cluster with this fault, not derived from this one.
+ */
+export function sectionProvenance(
+  title: string,
+  diagnosis: Diagnosis | undefined,
+): SectionProvenance {
+  const modelAnswered = diagnosis?.ai_generated === true;
+  if (title === "Preventive Actions") {
+    return modelAnswered ? "model" : "general";
+  }
+  if (title === "Lessons Learned" && modelAnswered) {
+    return "model";
+  }
+  if (title === "Resolution" && modelAnswered && !diagnosis?.remediation) {
+    return "model";
+  }
+  return "evidence";
+}
 
 export function isCommandLine(line: string): boolean {
   const text = line.trim();
