@@ -93,6 +93,19 @@ class TestLifecycle:
 
         assert store.get(job.id).to_dict()["investigation"] == {"evidence": []}
 
+    async def test_a_run_that_succeeds_carries_no_error(self, store):
+        """A job reaped while its worker was alive — the store was unreachable
+        to renew into — completes onto the reaper's message. It read
+        `succeeded` and "Investigation worker stopped" at once."""
+        job = store.create({})
+        store.mark_running(job.id)
+        store.mark_failed(job.id, "Investigation worker stopped before the run finished.")
+        store.mark_succeeded(job.id, {"diagnosis": {"root_cause": "x"}})
+
+        done = store.get(job.id)
+        assert done.status is JobStatus.SUCCEEDED
+        assert not done.error
+
     async def test_cancellation_is_terminal(self, store):
         job = store.create({})
         store.mark_running(job.id)

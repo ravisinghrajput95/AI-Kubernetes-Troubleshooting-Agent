@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { useInvestigationJob } from "./useInvestigationJob";
+import { ATTACH_RETRY_MS, useInvestigationJob } from "./useInvestigationJob";
 import * as api from "../services/api";
 import { clearToken, setToken } from "../services/auth";
 
@@ -481,7 +481,11 @@ describe("attach", () => {
   });
 
   it("reports an id that does not resolve", async () => {
-    vi.spyOn(api, "getInvestigationJob").mockRejectedValueOnce(new Error("404"));
+    // The shape `http.ts` actually throws. This used a bare `Error("404")`,
+    // which the hook could not tell from the platform being unreachable.
+    vi.spyOn(api, "getInvestigationJob").mockRejectedValueOnce(
+      new api.ApiError("Investigation not found", "http", 404),
+    );
 
     const { result } = renderHook(() => useInvestigationJob());
     await act(async () => {
@@ -490,6 +494,38 @@ describe("attach", () => {
 
     await waitFor(() => expect(result.current.phase).toBe("failed"));
     expect(result.current.error).toMatch(/could not load/i);
+  });
+
+  it("does not call a run failed because the platform could not answer", async () => {
+    // Postgres paused mid-investigation: the page's first read came back 503,
+    // the hook marked the run Failed and never looked again, and the run went
+    // on to succeed.
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(api, "getInvestigationJob")
+        .mockRejectedValueOnce(new api.ApiError("Service unavailable", "http", 503))
+        .mockResolvedValueOnce(
+          RESULT as unknown as Awaited<ReturnType<typeof api.getInvestigationJob>>,
+        );
+
+      const { result } = renderHook(() => useInvestigationJob());
+      await act(async () => {
+        await result.current.attach("job-1");
+      });
+
+      expect(result.current.phase).not.toBe("failed");
+      expect(result.current.error).toMatch(/could not be reached/i);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ATTACH_RETRY_MS);
+      });
+
+      expect(result.current.phase).toBe("succeeded");
+      expect(result.current.error).toBe("");
+      expect(api.getInvestigationJob).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("carries the evidence a failed run did collect", async () => {

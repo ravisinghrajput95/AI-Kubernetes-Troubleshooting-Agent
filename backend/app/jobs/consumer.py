@@ -13,6 +13,7 @@ accepts a submission is by definition the worker that runs it.
 
 import asyncio
 import contextlib
+import time
 
 from loguru import logger
 
@@ -60,6 +61,9 @@ class JobConsumer:
             max_concurrent if max_concurrent is not None else settings.job_max_concurrent
         )
         self._tasks: list[asyncio.Task] = []
+        # When the store was last seen answering after being unreachable, or
+        # `None` while it has not been. See `_reap`.
+        self._store_answering_since: float | None = None
 
     def start(self) -> None:
         self._tasks = [
@@ -187,8 +191,45 @@ class JobConsumer:
             # The reaper cannot know a tenant either: it is looking for jobs
             # whose worker died, across everyone.
             with system_scope():
-                await asyncio.to_thread(self._store.reap_expired, WORKER_LOST)
-                await asyncio.to_thread(self._store.requeue_unclaimed, UNCLAIMED_GRACE_SECONDS)
+                probe_started = time.monotonic()
+                try:
+                    await asyncio.to_thread(self._store.requeue_unclaimed, UNCLAIMED_GRACE_SECONDS)
+                except Exception as exc:
+                    self._store_answering_since = None
+                    logger.warning("Reaper could not reach the job store: {error}", error=exc)
+                    continue
+                answered = time.monotonic()
+                # A call that hung and then succeeded is an outage too. The
+                # first version recorded only calls that *raised*, and on the
+                # worker whose query was already in flight on an open
+                # connection when Postgres paused, nothing raised — the query
+                # waited ninety-five seconds, returned, and that worker's
+                # reaper failed the live job on the same tick. Longer than a
+                # renewal interval is long enough for a renewal to have been
+                # blocked, so it restarts the wait.
+                if (
+                    self._store_answering_since is None
+                    or answered - probe_started > settings.job_lease_seconds / 3
+                ):
+                    self._store_answering_since = answered
+
+                # **An expired lease proves a dead worker only if the worker
+                # could have renewed it.** With Postgres paused for 94 seconds
+                # no worker could write a renewal, every running lease expired,
+                # and the first reaper tick after the store came back failed a
+                # live investigation "Investigation worker stopped before the
+                # run finished" — which then completed on its still-running
+                # worker, leaving a job `succeeded` with that error, and a
+                # console reading Failed for good. Found by pausing the
+                # container mid-investigation, not by a test: every reaping
+                # test kills the worker, where the two cases look the same.
+                #
+                # So nothing is reaped until the store has answered this reaper
+                # for a whole lease. A live worker renews every third of a
+                # lease, so by then its lease is back in force; a dead one's is
+                # reaped one lease later than before, which is the whole cost.
+                if time.monotonic() - self._store_answering_since >= settings.job_lease_seconds:
+                    await asyncio.to_thread(self._store.reap_expired, WORKER_LOST)
             # Sampled on the reaper's tick rather than polled on its own timer:
             # queue depth is the envelope's alarm signal, and this loop already
             # runs at a cadence an operator would want to alarm at.

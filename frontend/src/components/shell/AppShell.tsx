@@ -6,7 +6,7 @@ import { CommandPalette } from "./CommandPalette";
 import { DESTINATIONS, NavRail } from "./NavRail";
 import { ScopeSwitcher } from "./ScopeSwitcher";
 import { ErrorBoundary } from "../ErrorBoundary";
-import { getHealth } from "../../services/api";
+import { getHealth, getReadiness } from "../../services/api";
 
 /**
  * The frame every page sits in: rail, header, content.
@@ -26,6 +26,13 @@ export function AppShell() {
     queryFn: getHealth,
     retry: false,
     refetchInterval: 30_000,
+  });
+
+  const { data: readiness } = useQuery({
+    queryKey: ["readiness"],
+    queryFn: getReadiness,
+    retry: false,
+    refetchInterval: 15_000,
   });
 
   const openPalette = useCallback(() => setPaletteOpen(true), []);
@@ -84,6 +91,7 @@ export function AppShell() {
   }, [navigate]);
 
   const offline = isError || health === undefined;
+  const status = platformStatus(offline, readiness ?? null);
 
   return (
     <div className="flex min-h-screen bg-canvas text-ink">
@@ -96,17 +104,10 @@ export function AppShell() {
           <div className="flex items-center gap-3">
             <span
               className="flex items-center gap-2 text-sm text-ink-3"
-              title={
-                offline
-                  ? "The backend could not be reached."
-                  : `Connected to ${health?.service}`
-              }
+              title={status.detail || `Connected to ${health?.service}`}
             >
-              <span
-                aria-hidden="true"
-                className={`size-1.5 rounded-full ${offline ? "bg-critical" : "bg-healthy"}`}
-              />
-              {offline ? "Offline" : "Connected"}
+              <span aria-hidden="true" className={`size-1.5 rounded-full ${status.dot}`} />
+              {status.label}
             </span>
           </div>
         </header>
@@ -125,4 +126,40 @@ export function AppShell() {
       />
     </div>
   );
+}
+
+/**
+ * Offline, unavailable, degraded or connected — the four things the dot can
+ * honestly say. "Connected" means the backend can serve, not merely answer.
+ */
+export function platformStatus(
+  offline: boolean,
+  readiness: { status: string; reason: string; checks: Record<string, string> } | null,
+): { label: string; dot: string; detail: string } {
+  if (offline) {
+    return { label: "Offline", dot: "bg-critical", detail: "The backend could not be reached." };
+  }
+  if (readiness?.status === "not_ready") {
+    const failing = Object.entries(readiness.checks ?? {})
+      .filter(([, value]) => value === "unavailable")
+      .map(([name]) => name);
+    return {
+      label: "Unavailable",
+      dot: "bg-critical",
+      detail: `The backend is reachable but cannot serve (${
+        failing.length ? `${failing.join(", ")} unavailable` : readiness.reason
+      }). Investigations cannot progress until it recovers.`,
+    };
+  }
+  const degraded = Object.entries(readiness?.checks ?? {})
+    .filter(([, value]) => value === "degraded")
+    .map(([name]) => name);
+  if (degraded.length) {
+    return {
+      label: "Degraded",
+      dot: "bg-warning",
+      detail: `${degraded.join(", ")} degraded: the platform is slower, and still correct.`,
+    };
+  }
+  return { label: "Connected", dot: "bg-healthy", detail: "" };
 }

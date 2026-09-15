@@ -26,6 +26,31 @@ export function getHealth(): Promise<HealthResponse> {
   return get<HealthResponse>("/health");
 }
 
+export interface Readiness {
+  status: "ready" | "not_ready";
+  reason: string;
+  checks: Record<string, string>;
+}
+
+/**
+ * Whether the backend can serve, not only whether it answers.
+ *
+ * `/health` never consults a dependency, by design, so the header read
+ * "Connected" for the ninety seconds Postgres was paused while both workers
+ * reported not ready and every investigation page sat on "No progress yet".
+ * Read directly rather than through `get`, because a worker that cannot serve
+ * answers 503 *with* the body that says why, and `get` throws that away.
+ * Returns `null` when the backend cannot be reached at all.
+ */
+export async function getReadiness(): Promise<Readiness | null> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/health/ready`);
+    return (await response.json()) as Readiness;
+  } catch {
+    return null;
+  }
+}
+
 /** The signed-in caller. `/health` is unauthenticated and cannot answer this. */
 export interface SessionInfo {
   subject: string;

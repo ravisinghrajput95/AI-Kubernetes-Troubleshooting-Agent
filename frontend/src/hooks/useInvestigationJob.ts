@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { authHeaders } from "../services/auth";
 import { readEventStream } from "../services/eventStream";
 import {
+  ApiError,
   cancelInvestigationJob,
   eventStreamUrl,
   getInvestigationJob,
@@ -27,6 +28,23 @@ export type JobPhase = "idle" | JobStatus;
 export type Transport = "stream" | "poll" | null;
 
 const POLL_INTERVAL_MS = 1500;
+
+/** Between attempts to load an investigation the platform could not serve. */
+export const ATTACH_RETRY_MS = 3000;
+
+/**
+ * Whether a failed read says something about the investigation, or only that
+ * the platform could not answer.
+ *
+ * A 404 or a 403 is an answer. A network error, a timeout or a 5xx is not: it
+ * is the platform — its database, most often — being unavailable, and the
+ * investigation behind it may be running perfectly well.
+ */
+function couldNotAnswer(cause: unknown): boolean {
+  if (!(cause instanceof ApiError)) return true;
+  if (cause.kind === "network" || cause.kind === "timeout") return true;
+  return cause.status !== null && cause.status >= 500;
+}
 
 /**
  * The event names the server sends, from `docs/INVESTIGATION_API.md`.
@@ -93,6 +111,7 @@ export function useInvestigationJob(): InvestigationJobHandle {
 
   const streamRef = useRef<AbortController | null>(null);
   const pollRef = useRef<number | null>(null);
+  const retryRef = useRef<number | null>(null);
   const receivedRef = useRef(false);
   const settledRef = useRef(false);
   const mountedRef = useRef(true);
@@ -103,6 +122,10 @@ export function useInvestigationJob(): InvestigationJobHandle {
     if (pollRef.current !== null) {
       window.clearInterval(pollRef.current);
       pollRef.current = null;
+    }
+    if (retryRef.current !== null) {
+      window.clearTimeout(retryRef.current);
+      retryRef.current = null;
     }
   }, []);
 
@@ -328,28 +351,47 @@ export function useInvestigationJob(): InvestigationJobHandle {
       setJobId(id);
       setPhase("pending");
 
-      try {
-        const state = await getInvestigationJob(id);
-        if (!mountedRef.current) {
-          return;
-        }
-        if (state.timeline?.length) {
-          setTimeline(state.timeline);
-        }
-        if (isTerminal(state.status)) {
-          // Already finished: adopt what was just fetched rather than opening
-          // a stream that would immediately close, or fetching it twice.
-          applyResult(state, state.status);
-          return;
-        }
-        setPhase(state.status);
-        stream(id);
-      } catch {
-        if (mountedRef.current) {
+      const load = async (): Promise<void> => {
+        try {
+          const state = await getInvestigationJob(id);
+          if (!mountedRef.current) {
+            return;
+          }
+          setError("");
+          if (state.timeline?.length) {
+            setTimeline(state.timeline);
+          }
+          if (isTerminal(state.status)) {
+            // Already finished: adopt what was just fetched rather than opening
+            // a stream that would immediately close, or fetching it twice.
+            applyResult(state, state.status);
+            return;
+          }
+          setPhase(state.status);
+          stream(id);
+        } catch (cause) {
+          if (!mountedRef.current) {
+            return;
+          }
+          if (couldNotAnswer(cause)) {
+            // **Not "failed".** This set the phase to failed on any error, so
+            // with Postgres paused for ninety seconds one 503 marked a running
+            // investigation Failed — for good, since nothing retried — while
+            // it went on to succeed and save a diagnosis. The platform not
+            // answering is not the investigation's outcome.
+            setError("The platform could not be reached to load this investigation. Retrying…");
+            retryRef.current = window.setTimeout(() => {
+              retryRef.current = null;
+              void load();
+            }, ATTACH_RETRY_MS);
+            return;
+          }
           setPhase("failed");
           setError("Could not load this investigation.");
         }
-      }
+      };
+
+      await load();
     },
     [applyResult, reset, stream],
   );

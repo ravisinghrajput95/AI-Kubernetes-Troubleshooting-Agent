@@ -100,6 +100,7 @@ class InMemoryJobStore:
             return
         job.status = JobStatus.SUCCEEDED
         job.result = result
+        job.error = ""
         job.finished_at = datetime.now(UTC)
         self.publish(job_id, JobEvent(JobEventType.COMPLETED, "Investigation complete"))
         self._close(job_id)

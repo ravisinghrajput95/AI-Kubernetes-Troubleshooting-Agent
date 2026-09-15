@@ -172,8 +172,13 @@ class PostgresRedisJobStore:
 
         self._transition(
             job_id,
-            "UPDATE investigations SET status = %s, result = %s, finished_at = now(), "
-            "lease_worker = NULL, lease_expires_at = NULL WHERE id = %s",
+            # `error = ''`: a run that succeeded has no error (the column is NOT
+            # NULL, and `NULL` here failed every settle on Postgres). A reaped job
+            # whose worker was in fact alive completes onto the reaper's
+            # message, and the record read `succeeded` and "worker stopped"
+            # at once.
+            "UPDATE investigations SET status = %s, result = %s, error = '', "
+            "finished_at = now(), lease_worker = NULL, lease_expires_at = NULL WHERE id = %s",
             (str(JobStatus.SUCCEEDED), Jsonb(result), job_id),
         )
         self.publish(job_id, JobEvent(JobEventType.COMPLETED, "Investigation complete"))

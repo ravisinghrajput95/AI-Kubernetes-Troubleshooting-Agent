@@ -56,6 +56,11 @@ beforeEach(() => {
     auth_mode: "disabled",
     insecure: true,
   });
+  vi.spyOn(api, "getReadiness").mockResolvedValue({
+    status: "ready",
+    reason: "ready",
+    checks: { postgres: "ok", redis: "ok" },
+  });
   vi.spyOn(api, "getKubernetesContexts").mockResolvedValue({
     items: [
       { name: "prod-eu-west", cluster: "eks-prod", current: true },
@@ -237,6 +242,19 @@ describe("platform status", () => {
   it("reports a reachable backend in the header, not as a tile", async () => {
     shell();
     expect(await screen.findByText(/connected/i)).toBeInTheDocument();
+  });
+
+  it("says the backend cannot serve when it answers but is not ready", async () => {
+    // Postgres paused: `/health` answered, both workers reported not ready,
+    // and the header said "Connected" for ninety seconds.
+    vi.spyOn(api, "getReadiness").mockResolvedValue({
+      status: "not_ready",
+      reason: "store",
+      checks: { store: "unavailable" },
+    });
+    shell();
+    expect(await screen.findByText("Unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("Connected")).not.toBeInTheDocument();
   });
 
   it("reports an unreachable one", async () => {

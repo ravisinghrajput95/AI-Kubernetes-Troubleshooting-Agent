@@ -1158,6 +1158,41 @@ MUTATIONS = [
         new="        body = [explanation]\n",
         tests="tests/test_scoped_diagnosis.py",
     ),
+    Mutation(
+        name="reaper-reaps-straight-after-a-store-outage",
+        why=(
+            "With Postgres paused past the lease, no worker could renew, and the "
+            "first reaper tick after recovery failed a live investigation as a "
+            "dead worker; the console showed Failed while it succeeded."
+        ),
+        path="app/jobs/consumer.py",
+        old="                if time.monotonic() - self._store_answering_since >= settings.job_lease_seconds:\n",
+        new="                if True:  # mutation: reap on the first tick after recovery\n",
+        tests="tests/test_reaper_after_store_outage.py",
+    ),
+    Mutation(
+        name="reaper-ignores-a-query-that-hung",
+        why=(
+            "The reaper whose query was in flight when Postgres paused saw no "
+            "error — the query waited out the pause and returned — and reaped "
+            "the live job on that tick."
+        ),
+        path="app/jobs/consumer.py",
+        old="                    or answered - probe_started > settings.job_lease_seconds / 3\n",
+        new="                    or False  # mutation: only raised errors count\n",
+        tests="tests/test_reaper_after_store_outage.py",
+    ),
+    Mutation(
+        name="success-keeps-the-reapers-error",
+        why=(
+            "A job reaped while its worker was alive completed onto the reaper's "
+            "message and read `succeeded` and 'worker stopped' at once."
+        ),
+        path="app/jobs/store.py",
+        old='        job.error = ""\n',
+        new="",
+        tests="tests/test_job_store_contract.py",
+    ),
 ]
 
 
