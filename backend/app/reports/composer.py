@@ -99,7 +99,10 @@ class IncidentReportComposer:
         if severity.get("affected_namespace") not in (None, "none"):
             body.append(f"Primary namespace affected: {severity['affected_namespace']}.")
         if overview.get("critical_issues"):
-            body.append(f"{overview['critical_issues']} critical issue(s) observed.")
+            body.append(
+                f"{overview['critical_issues']} affected workload(s) and service finding(s) "
+                "observed."
+            )
 
         remediation = diagnosis.get("remediation") or {}
         remediation_risk = remediation.get("risk", {})

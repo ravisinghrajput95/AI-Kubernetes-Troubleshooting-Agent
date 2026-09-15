@@ -1,3 +1,4 @@
+import re
 from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
@@ -75,6 +76,39 @@ DEEP_TIMELINE_LABELS: dict[str, str] = {
     EvidenceKind.DNS_WORKLOAD: "Checked Cluster DNS",
     EvidenceKind.SERVICE_ACCOUNT: "Checked Service Account",
 }
+
+
+def distinct_workloads(
+    problematic_pods: list[dict[str, Any]],
+    unhealthy_deployments: list[dict[str, Any]],
+    workload_findings: list[dict[str, Any]],
+) -> int:
+    """How many workloads are affected, counting a Deployment and its pods once.
+
+    This added the problematic pods to the unhealthy Deployments, so a
+    Deployment with a crash-looping pod was two workloads: a namespace with
+    eight broken Deployments and nine of their pods reported "17 workload(s)
+    affected", and the Critical threshold of three was reached by one
+    Deployment with two failing replicas. Pods are matched to a Deployment by
+    `<deployment>-<hash>-<id>`, as `AnalysisEngine` matches a scope, because
+    baseline evidence carries no owner; a pod that matches none counts itself.
+    """
+    owners: dict[str, list[re.Pattern[str]]] = {}
+    for deployment in unhealthy_deployments:
+        owners.setdefault(str(deployment.get("namespace", "")), []).append(
+            re.compile(
+                rf"^{re.escape(str(deployment.get('name', '')))}-[a-z0-9]{{1,10}}-[a-z0-9]{{5}}$"
+            )
+        )
+    unowned = [
+        pod
+        for pod in problematic_pods
+        if not any(
+            pattern.match(str(pod.get("name", "")))
+            for pattern in owners.get(str(pod.get("namespace", "")), [])
+        )
+    ]
+    return len(unhealthy_deployments) + len(unowned) + len(workload_findings)
 
 
 def select_provider(context: str | None, principal: Principal | None) -> ClusterProvider:
@@ -652,11 +686,12 @@ class InvestigationService:
                 healthy_nodes += 1
 
         alerts = len(events.get("findings", []))
-        critical = (
-            len(pods.get("problematic_pods", []))
-            + len(deployments.get("unhealthy_deployments", []))
-            + len(network.get("findings", []))
-        )
+        # Not all of these are critical, and they used to count a Deployment
+        # and its pods twice; see `distinct_workloads`. The key keeps its name
+        # for the stored reports and consumers that read it.
+        critical = distinct_workloads(
+            pods.get("problematic_pods", []), deployments.get("unhealthy_deployments", []), []
+        ) + len(network.get("findings", []))
 
         return {
             "nodes": f"{healthy_nodes}/{total_nodes} Healthy" if total_nodes else "Unavailable",
@@ -846,10 +881,10 @@ class InvestigationService:
             for item in [*problematic_pods, *deployments.get("unhealthy_deployments", [])]
         )
         primary = min(affected, key=lambda name: (-affected[name], name)) if affected else "none"
-        workload_count = (
-            len(problematic_pods)
-            + len(deployments.get("unhealthy_deployments", []))
-            + len(workloads.get("findings", []))
+        workload_count = distinct_workloads(
+            problematic_pods,
+            deployments.get("unhealthy_deployments", []),
+            workloads.get("findings", []),
         )
         event_count = len(events.get("findings", []))
         network_count = len(network.get("findings", []))
@@ -871,9 +906,12 @@ class InvestigationService:
         else:
             severity = "Healthy"
 
+        # "Production" was asserted for every Critical or High cluster,
+        # including every kind cluster these were found on; nothing here knows
+        # what a cluster serves.
         impact = {
-            "Critical": "Production",
-            "High": "Production",
+            "Critical": "Active impact detected",
+            "High": "Active impact detected",
             "Unknown": "Not established — the cluster could not be fully inspected",
         }.get(severity, "No active impact detected")
 

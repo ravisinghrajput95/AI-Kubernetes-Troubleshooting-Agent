@@ -1185,6 +1185,18 @@ MUTATIONS = [
         tests="tests/test_report_metadata.py",
     ),
     Mutation(
+        name="deployment-and-its-pods-counted-twice",
+        why=(
+            "Eight broken Deployments and nine of their pods were '17 workload(s) "
+            "affected', and one Deployment with two failing replicas met the "
+            "Critical threshold of three."
+        ),
+        path="app/services/investigation_service.py",
+        old="    return len(unhealthy_deployments) + len(unowned) + len(workload_findings)\n",
+        new="    return len(unhealthy_deployments) + len(problematic_pods) + len(workload_findings)\n",
+        tests="tests/test_affected_workloads.py",
+    ),
+    Mutation(
         name="refutation-across-unrelated-resources",
         why=(
             "Refuting signals matched by type anywhere in the namespace, so "
