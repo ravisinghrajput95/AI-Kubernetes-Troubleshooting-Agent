@@ -1943,6 +1943,15 @@ Opt-in, like the soak: every route, every link, button, tab and summary clicked 
 
 **Keep its state out of `/tmp`.** The machine restarted mid-session and took the kubeconfig, the dev CA key, the worker scripts and a sweep's output with it — the in-cluster agent survived with a certificate no gateway could verify, and had to be re-enrolled.
 
+**The third full sweep (27 routes, 389 clicks) logged eight overflows and nothing else, and reading its text found seventeen false claims.** They sorted into four shapes, which are the ones to look for next time:
+
+- **A count over pooled resources.** A hypothesis rule pools every resource its triggers fire on, so fraud-scorer's OOM kill "refuted" checkout's startup failure, and archiver's unavailable replicas "supported" it. Refutation and support are now scoped to the triggered workloads (`_about` in `hypothesis_rules.py`), a Service whose selector matches nothing is supported by no pod, and an event supports a workload hypothesis only if it names that workload. Every one of these moved the root cause the two providers reported, and the tie rationale then quoted the inflated count as its reason. `distinct_workloads` is the same mistake one layer up: a Deployment and its failing pods were two affected workloads.
+- **A fallback that reads as a finding.** With no keyword matched, the log collector returned the tail under `relevant_lines`, and `logs.error_pattern` quoted `starting checkout service` at HIGH. `default/kubernetes` has no selector on every cluster. "Top consumers" was kubectl's alphabetical first page.
+- **A state nothing tracks.** Report Status read Open or Resolved. Environment was a substring guess (`kind-prod` → Development). "Secrets were scrubbed from this record" was on every record that went through the redactor. Lessons Learned offered "Prometheus is not configured" as what would have shortened diagnosing a selector mismatch.
+- **Absence that was not observation.** Trends counted runs that collected nothing, or were scoped elsewhere, as the finding being absent, so every finding was "happening more often". One kind cluster reached through a kubeconfig and two agents was "the same failure on 3 clusters"; runs now record the node UIDs they read (`cluster_identity`) and the console groups names that share one.
+
+**Clear the harness's runs between verification sweeps**, or the Ask and Fleet pages keep rendering diagnoses stored by the code you just fixed: truncate `investigations`, `investigation_events` and `investigation_reports` in the sweep database. Leave the agent tables alone, or you have to re-enrol.
+
 ### Operability (`app/core/correlation.py`, `app/core/readiness.py`, M9.2)
 
 **Liveness and readiness are different questions and must stay separate.**
