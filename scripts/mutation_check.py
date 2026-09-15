@@ -1143,6 +1143,48 @@ MUTATIONS = [
         tests="tests/test_reasoning_quality.py",
     ),
     Mutation(
+        name="log-tail-reported-as-failure-lines",
+        why=(
+            "With no keyword matched the collector returned the log's tail under "
+            "relevant_lines, so the fleet page read 'logs report: \"starting "
+            "checkout service\"' as a HIGH error pattern."
+        ),
+        path="app/kubernetes/logs_collector.py",
+        old="        ][:25]\n",
+        new="        ][:25] or [line[:500] for line in logs.splitlines()[-20:]]\n",
+        tests="tests/test_log_lines_are_failures.py",
+    ),
+    Mutation(
+        name="fatal-is-not-a-failure-keyword",
+        why="`FATAL: config key DB_HOST is not set` matched no keyword at all.",
+        path="app/kubernetes/logs_collector.py",
+        old='    "fatal",\n',
+        new="",
+        tests="tests/test_log_lines_are_failures.py",
+    ),
+    Mutation(
+        name="api-server-service-reported-selectorless",
+        why=(
+            "default/kubernetes has no selector on every cluster, and every "
+            "whole-cluster investigation carried network.no_selector for it."
+        ),
+        path="app/kubernetes/network_inspector.py",
+        old="                if endpoint_count == 0:\n",
+        new="                if True:  # mutation: every selector-less service\n",
+        tests="tests/test_selectorless_services.py",
+    ),
+    Mutation(
+        name="report-status-claims-an-incident-lifecycle",
+        why=(
+            "Every report's Status read Open, and a healthy run's read Resolved, "
+            "for a ticket state nothing tracks."
+        ),
+        path="app/reports/rendering.py",
+        old='        return _FINDING_STATUS.get(health, "Unknown")\n',
+        new='        return "Resolved" if health == "healthy" else "Open"\n',
+        tests="tests/test_report_metadata.py",
+    ),
+    Mutation(
         name="refutation-across-unrelated-resources",
         why=(
             "Refuting signals matched by type anywhere in the namespace, so "

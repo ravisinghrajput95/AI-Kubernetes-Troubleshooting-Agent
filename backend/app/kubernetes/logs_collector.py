@@ -16,6 +16,16 @@ LOG_FAILURE_KEYWORDS = (
     "imagepull",
     "back-off",
     "startup",
+    # The two words an application most often uses to name its own death, and
+    # neither was here: `FATAL: config key DB_HOST is not set` matched nothing.
+    "fatal",
+    "panic",
+    # The same markers `signal_rules.OOM_LOG_MARKERS` looks for, which could only
+    # ever see them in lines something else had already matched.
+    "oomkilled",
+    "out of memory",
+    "outofmemory",
+    "cannot allocate memory",
 )
 
 # Reading every pod's logs on a large broken cluster is its own outage. The
@@ -75,6 +85,7 @@ class LogsCollector:
                     "status": pod.get("status"),
                     "success": result.success,
                     "relevant_lines": self._relevant_lines(result.text),
+                    "last_lines": [line[:500] for line in result.text.splitlines()[-20:]],
                     "error": result.error if not result.success else "",
                 }
             )
@@ -85,13 +96,17 @@ class LogsCollector:
         }
 
     def _relevant_lines(self, logs: str) -> list[str]:
-        lines = []
+        """Lines that name a failure, and only those.
 
-        for line in logs.splitlines():
-            if any(keyword in line.lower() for keyword in LOG_FAILURE_KEYWORDS):
-                lines.append(line[:500])
-
-        if lines:
-            return lines[:25]
-
-        return [line[:500] for line in logs.splitlines()[-20:]]
+        When nothing matched this used to return the log's last twenty lines
+        under the same key, and everything downstream reads the key as "failure
+        lines found": `logs.error_pattern` fired at HIGH quoting
+        `"starting checkout service"`, and the confidence engine added twenty
+        points for "Pod logs contain relevant failure lines". The tail is still
+        kept, as `last_lines`, for a reader — not as a finding.
+        """
+        return [
+            line[:500]
+            for line in logs.splitlines()
+            if any(keyword in line.lower() for keyword in LOG_FAILURE_KEYWORDS)
+        ][:25]

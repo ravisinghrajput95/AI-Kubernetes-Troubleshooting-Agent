@@ -72,7 +72,10 @@ export function HistoryTable() {
   });
 
   return (
-    <div className="grid gap-5">
+    // `grid-cols-1` is `minmax(0, 1fr)`: without a zero track minimum each
+    // section keeps `min-width: auto`, and the table's 1080px minimum pushed the
+    // page 21px past a 1440px viewport rather than scrolling inside its box.
+    <div className="grid grid-cols-1 gap-5">
       {report.data ? (
         <ReportPreview report={report.data} onClose={() => setSelectedReportId("")} />
       ) : null}

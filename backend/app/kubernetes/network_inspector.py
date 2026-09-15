@@ -62,17 +62,24 @@ class NetworkInspector:
             if service_type == "ExternalName":
                 continue
 
+            endpoint_count = endpoints_by_key.get((namespace, name), 0)
             if not spec.get("selector"):
-                findings.append(
-                    {
-                        "namespace": namespace,
-                        "service": name,
-                        "issue": "Service has no selector",
-                    }
-                )
+                # A selector-less Service is routed by Endpoints someone else
+                # maintains — `default/kubernetes`, which the API server keeps
+                # pointed at itself, is on every cluster there is. Reported
+                # unconditionally, that one was a medium finding on every
+                # whole-cluster investigation. Only a selector-less Service
+                # with nothing behind it routes nowhere.
+                if endpoint_count == 0:
+                    findings.append(
+                        {
+                            "namespace": namespace,
+                            "service": name,
+                            "issue": "Service has no selector and no endpoints",
+                        }
+                    )
                 continue
 
-            endpoint_count = endpoints_by_key.get((namespace, name), 0)
             if endpoint_count == 0:
                 findings.append(
                     {

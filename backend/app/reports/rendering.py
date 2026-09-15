@@ -19,10 +19,23 @@ be handed to the writer.
 """
 
 import json
+import re
 from textwrap import wrap
 from typing import Any
 
 from app.reports.composer import IncidentReportComposer
+
+_ENVIRONMENT_WORDS = {
+    "Production": frozenset({"prod", "production", "prd"}),
+    "Staging": frozenset({"stage", "staging", "stg"}),
+    "Development": frozenset({"dev", "development"}),
+}
+_LOCAL_CLUSTER_WORDS = frozenset({"kind", "minikube", "k3d"})
+_FINDING_STATUS = {
+    "issues_found": "Issues found",
+    "healthy": "No issues found",
+    "error": "Could not investigate",
+}
 
 
 class ReportRenderer:
@@ -207,14 +220,19 @@ class ReportRenderer:
         return f"INC-{date_part}-{investigation_id[:8].upper()}"
 
     def environment(self, cluster: str) -> str:
-        lowered = cluster.lower()
-        if "docker-desktop" in lowered or "minikube" in lowered or "kind" in lowered:
-            return "Development"
-        if "prod" in lowered or "production" in lowered:
-            return "Production"
-        if "stage" in lowered or "staging" in lowered:
-            return "Staging"
-        if "dev" in lowered:
+        """The environment a cluster's *name* states, or Unknown.
+
+        Nothing configures this; it is read from the name an operator chose.
+        It used to be substring matches with local tooling checked first, so
+        `kind-prod` was Development, `devops-prod` was Production only by
+        luck of order, and `kind` matched inside any word containing it. Whole
+        words only, and a name that states two environments states none.
+        """
+        words = set(re.split(r"[^a-z0-9]+", cluster.lower()))
+        stated = {environment for environment, names in _ENVIRONMENT_WORDS.items() if words & names}
+        if len(stated) == 1:
+            return stated.pop()
+        if not stated and (words & _LOCAL_CLUSTER_WORDS or cluster.startswith("docker-desktop")):
             return "Development"
         return "Unknown"
 
@@ -224,10 +242,15 @@ class ReportRenderer:
         return cluster
 
     def incident_status(self, investigation: dict[str, Any]) -> str:
-        health = investigation.get("health", {}).get("status", "")
-        if health in {"error", "issues_found"}:
-            return "Open"
-        return "Resolved" if health == "healthy" else "Open"
+        """What the investigation found, not an incident lifecycle.
+
+        This said "Open" for every run that found anything or failed, and
+        "Resolved" for a healthy one — a ticket state nothing here tracks, so
+        no report could ever become resolved, and one about a cluster that was
+        never broken claimed something had been fixed.
+        """
+        health = (investigation.get("health") or {}).get("status", "")
+        return _FINDING_STATUS.get(health, "Unknown")
 
     def severity(self, investigation: dict[str, Any]) -> str:
         """Severity for the history entry.
