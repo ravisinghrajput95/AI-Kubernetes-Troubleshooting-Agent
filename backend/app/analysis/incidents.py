@@ -212,12 +212,21 @@ def _tie(top: Hypothesis, hypotheses: tuple[Hypothesis, ...]) -> str:
     ]
     if not tied:
         return ""
-    others = ", ".join(f"'{item.title}'" for item in tied)
+    titles = [f"'{item.title}'" for item in (top, *tied)]
+    named = f"{', '.join(titles[:-1])} and {titles[-1]}"
     runner_up = max(tied, key=lambda item: len(item.supporting_signal_ids))
+    # When breadth ties too, `rank()` falls through to the hypothesis id — an
+    # alphabetical order. "Rests on more signals (15 against 15)" was the
+    # agent-path report's reason for exactly that.
+    if len(top.supporting_signal_ids) > len(runner_up.supporting_signal_ids):
+        why = (
+            f"It is listed first only because it rests on more signals "
+            f"({len(top.supporting_signal_ids)} against {len(runner_up.supporting_signal_ids)})"
+        )
+    else:
+        why = "Nothing in the evidence orders them; the listing order is arbitrary"
     return (
-        f"The evidence does not choose between '{top.title}' and {others}: each is "
-        f"{top.confidence}% and {top.severity}. It is listed first only because it rests "
-        f"on more signals ({len(top.supporting_signal_ids)} against "
-        f"{len(runner_up.supporting_signal_ids)}); treat these as concurrent faults, not "
-        f"one cause and its alternatives."
+        f"The evidence does not choose between {named}: each is {top.confidence}% and "
+        f"{top.severity}. {why}; treat these as concurrent faults, not one cause and "
+        f"its alternatives."
     )

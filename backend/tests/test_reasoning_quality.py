@@ -166,6 +166,39 @@ class TestTheOrderingExplainsItself:
         assert "Image pull" not in text  # a different severity did decide that one
         assert "3 against 2" in text
 
+    def test_it_does_not_claim_breadth_decided_when_breadth_tied_too(self):
+        """Live through the agent: 'rests on more signals (15 against 15)'. With
+        breadth equal, `rank()` orders by hypothesis id, which is no reason."""
+        ranked = (
+            hypothesis(
+                "cfg",
+                severity=Severity.CRITICAL,
+                confidence=92,
+                title="Missing config",
+                supporting=("s1", "s2"),
+            ),
+            hypothesis(
+                "svc",
+                severity=Severity.CRITICAL,
+                confidence=92,
+                title="No endpoints",
+                supporting=("s3", "s4"),
+            ),
+            hypothesis(
+                "img",
+                severity=Severity.CRITICAL,
+                confidence=92,
+                title="Image pull",
+                supporting=("s5",),
+            ),
+        )
+
+        text = selection_rationale(ranked)
+
+        assert "'Missing config', 'No endpoints' and 'Image pull'" in text
+        assert "more signals" not in text
+        assert "arbitrary" in text
+
     def test_no_hypotheses_is_not_an_error(self):
         assert selection_rationale(()) == ""
 

@@ -1132,6 +1132,17 @@ MUTATIONS = [
         tests="tests/test_reasoning_quality.py",
     ),
     Mutation(
+        name="tie-claims-breadth-decided-when-it-tied",
+        why=(
+            "Through the agent the report said the leader 'rests on more signals "
+            "(15 against 15)': with breadth equal too, rank() orders by id."
+        ),
+        path="app/analysis/incidents.py",
+        old="    if len(top.supporting_signal_ids) > len(runner_up.supporting_signal_ids):\n",
+        new="    if True:  # mutation: breadth always the reason\n",
+        tests="tests/test_reasoning_quality.py",
+    ),
+    Mutation(
         name="refutation-across-unrelated-resources",
         why=(
             "Refuting signals matched by type anywhere in the namespace, so "
