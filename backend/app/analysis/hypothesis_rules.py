@@ -87,7 +87,7 @@ class SignalPatternRule:
         # or Deployment signal counts only when it is about a triggered pod or
         # the Deployment that owns one; other kinds (a claim, a node, a class)
         # relate through references this rule cannot see, and stay unscoped.
-        supporting = [signal for signal in supporting if _about(signal, triggering)]
+        supporting = [signal for signal in supporting if _about(signal, triggering, signals)]
 
         confidence = self.base_confidence
         confidence += SUPPORT_BONUS * len({signal.type for signal in supporting})
@@ -119,13 +119,23 @@ class SignalPatternRule:
         )
 
 
-def _about(signal: Signal, triggering: Sequence[Signal]) -> bool:
+def _about(signal: Signal, triggering: Sequence[Signal], signals: Sequence[Signal]) -> bool:
     """Whether a supporting signal concerns the resources a hypothesis rests on."""
     kind = signal.target.kind
     if kind not in {"Pod", "Deployment"}:
         return True
-    # A hypothesis about a StorageClass or a Service is supported by the pods
-    # it blocks, through references only its signals carry; not scoped here.
+    # A Service whose selector is known to match no pod has no backends, so no
+    # pod's state bears on it: checkout-svc selects `app=checkout-api`, and
+    # was "supported" by archiver's pending pod and gateway's failing probe.
+    services = {item.target.key for item in triggering if item.target.kind == "Service"}
+    if services and services <= {
+        item.target.key
+        for item in signals
+        if item.type == SignalType.NETWORK_SELECTOR_MATCHES_NOTHING
+    }:
+        return False
+    # Otherwise a hypothesis about a StorageClass or a Service is supported by
+    # the pods it blocks, through references only its signals carry.
     if any(item.target.kind not in {"Pod", "Deployment"} for item in triggering):
         return True
     keys = {item.target.key for item in triggering}
@@ -311,6 +321,8 @@ DEFAULT_HYPOTHESIS_RULES: tuple[HypothesisRule, ...] = (
         triggers=frozenset({SignalType.NETWORK_NO_ENDPOINTS}),
         supporting=frozenset(
             {
+                # The graph's answer to which of the two causes it is.
+                SignalType.NETWORK_SELECTOR_MATCHES_NOTHING,
                 SignalType.POD_CRASH_LOOP,
                 SignalType.POD_PENDING,
                 SignalType.POD_NOT_READY,

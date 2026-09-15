@@ -481,3 +481,56 @@ class TestTheLogLineIsQuoted:
         result = ENGINE.analyze(self.logs("x" * 900))
 
         assert len(result.by_type(SignalType.LOGS_ERROR_PATTERN)[0].summary) < 260
+
+
+class TestAServiceWithNoBackendsIsNotSupportedByOtherPods:
+    """Live: checkout-svc selects `app=checkout-api`, which matches no pod, and
+    its 'no ready endpoints' hypothesis rested on sixteen signals — archiver's
+    pending pod, gateway's failing probe, every unavailable Deployment in the
+    namespace — which lifted it to 92% while the one finding that actually
+    bears on it, the selector matching nothing, was not counted at all."""
+
+    def analysed(self, selector):
+        return ENGINE.analyze(
+            investigation(
+                network={
+                    "findings": [
+                        {
+                            "namespace": "prod",
+                            "service": "api",
+                            "issue": "Service has no ready endpoints; selector may not match any pods",
+                        }
+                    ],
+                    "selectors": {"prod/api": selector},
+                },
+                pods={
+                    "problematic_pods": [
+                        {
+                            "name": "archiver-6795b9bc5d-zhbs2",
+                            "namespace": "prod",
+                            "status": "Pending",
+                        }
+                    ],
+                    "pod_inventory": [
+                        {
+                            "name": "archiver-6795b9bc5d-zhbs2",
+                            "namespace": "prod",
+                            "labels": {"app": "archiver"},
+                        }
+                    ],
+                },
+            )
+        ).hypothesis("network.service_without_endpoints")
+
+    def test_the_selector_finding_supports_it_and_unrelated_pods_do_not(self):
+        hypothesis = self.analysed({"app": "checkout-api"})
+
+        assert (
+            "network.selector_matches_nothing:service/prod/api" in hypothesis.supporting_signal_ids
+        )
+        assert not any("archiver" in item for item in hypothesis.supporting_signal_ids)
+
+    def test_pods_still_count_when_the_selector_is_not_known_to_match_nothing(self):
+        hypothesis = self.analysed({"app": "archiver"})
+
+        assert any("archiver" in item for item in hypothesis.supporting_signal_ids)

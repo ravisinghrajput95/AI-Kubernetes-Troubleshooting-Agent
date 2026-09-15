@@ -1251,9 +1251,20 @@ MUTATIONS = [
             "replicas too, and that count broke a three-way tie."
         ),
         path="app/analysis/hypothesis_rules.py",
-        old="        supporting = [signal for signal in supporting if _about(signal, triggering)]\n",
+        old="        supporting = [signal for signal in supporting if _about(signal, triggering, signals)]\n",
         new="",
         tests="tests/test_analysis_engine.py",
+    ),
+    Mutation(
+        name="selectorless-match-supported-by-any-pod",
+        why=(
+            "checkout-svc selects a label no pod has, and was 92% on the strength of "
+            "archiver's pending pod and gateway's failing probe."
+        ),
+        path="app/analysis/hypothesis_rules.py",
+        old="    if services and services <= {\n",
+        new="    if False and services <= {\n",
+        tests="tests/test_reasoning_quality.py",
     ),
     Mutation(
         name="refutation-across-unrelated-resources",
