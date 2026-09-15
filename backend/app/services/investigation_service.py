@@ -140,7 +140,56 @@ def select_provider(context: str | None, principal: Principal | None) -> Cluster
             f"investigate the kubeconfig cluster under its own context name."
         )
 
+    if _enrolled_agent_is_away(context):
+        raise ClusterUnreachable(
+            f"Cluster {context!r} is reached through its agent, and that agent is not "
+            f"connected to any worker right now — it may be reconnecting, or the "
+            f"worker holding its stream may have stopped responding. The platform "
+            f"has no kubeconfig context named {context!r} to read instead. Retry once "
+            f"the agent is back; Settings shows when it last checked in."
+        )
+
     return LocalKubectlProvider(context=context, principal=principal)
+
+
+def _kubeconfig_has_context(context: str) -> bool:
+    """Whether the platform's own kubeconfig names this context."""
+    from app.kubernetes.kubectl_executor import KubectlExecutor
+
+    result = KubectlExecutor().run(["config", "get-contexts", "-o", "name"])
+    return result.success and context in {line.strip() for line in result.stdout.splitlines()}
+
+
+def _enrolled_agent_is_away(context: str | None) -> bool:
+    """An enrolled agent is not connected, and there is nothing to fall back to.
+
+    Found by freezing the worker that held an agent's stream: its presence
+    lapsed, the queued investigation was re-offered to the other worker, and
+    this function's absence let `select_provider` hand an agent-only cluster to
+    `LocalKubectlProvider` — which failed with "Verify kubeconfig, cluster
+    access, and kubectl permissions", advice about a path that was never
+    involved, while the agent itself was fine and the worker merely hung.
+
+    Deliberately narrow, because falling back is the flap tolerance M8a chose:
+    only when the cluster has a valid certificate (a real agent, not a laptop
+    context) **and** no local context shares its name. Where one does, the
+    fallback stands — this changes the answer only where the fallback could not
+    have answered at all.
+    """
+    if not context or not (settings.agent_gateway_enabled or settings.distributed_state):
+        return False
+
+    from app.security.enrolment import get_enrolment_store
+
+    try:
+        records = get_enrolment_store().certificates(context)
+    except Exception:
+        return False  # `_agent_was_revoked` has already refused on this
+
+    now = datetime.now(UTC)
+    if not any(not record.revoked and record.expires_at > now for record in records):
+        return False
+    return not _kubeconfig_has_context(context)
 
 
 def _agent_was_revoked(context: str | None) -> bool:

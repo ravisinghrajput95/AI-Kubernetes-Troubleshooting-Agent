@@ -1223,6 +1223,19 @@ MUTATIONS = [
         ),
         tests="tests/test_agent_presence.py",
     ),
+    Mutation(
+        name="away-agent-answered-from-a-missing-kubeconfig-context",
+        why=(
+            "With the worker holding an agent's stream frozen, the re-offered "
+            "investigation fell back to the platform's kubeconfig for a cluster "
+            "it has no context for, and failed telling the operator to check "
+            "their kubeconfig."
+        ),
+        path="app/services/investigation_service.py",
+        old="    if _enrolled_agent_is_away(context):\n",
+        new="    if False:  # mutation: never refuse for an away agent\n",
+        tests="tests/test_agent_routing.py",
+    ),
 ]
 
 

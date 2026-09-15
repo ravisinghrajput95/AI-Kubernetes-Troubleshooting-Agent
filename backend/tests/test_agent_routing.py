@@ -560,8 +560,14 @@ class TestARevokedAgentIsNotQuietlyReplacedByTheKubeconfig:
     wrong cluster and filed it as evidence for the right one.
     """
 
-    def _store(self, monkeypatch, records):
+    def _store(self, monkeypatch, records, local_context=True):
         from app.services import investigation_service
+
+        # Whether the platform's kubeconfig has a context sharing the cluster's
+        # name. These tests are about the fallback, which needs one to exist.
+        monkeypatch.setattr(
+            investigation_service, "_kubeconfig_has_context", lambda context: local_context
+        )
 
         class Store:
             def certificates(self, cluster_id=""):
@@ -604,6 +610,28 @@ class TestARevokedAgentIsNotQuietlyReplacedByTheKubeconfig:
         presence("worker-a")
 
         assert isinstance(select_provider("prod-eu", None), LocalKubectlProvider)
+
+    def test_an_away_agent_with_nothing_to_fall_back_to_says_so(
+        self, gateway, registry, presence, monkeypatch
+    ):
+        """The worker holding the stream froze: presence lapsed, and with no
+        local context of that name the fallback failed telling the operator to
+        check their kubeconfig."""
+        self._store(monkeypatch, [self._cert("prod-eu")], local_context=False)
+        presence("worker-a")  # this worker; no other holder
+
+        with pytest.raises(ClusterUnreachable, match="not connected to any worker"):
+            select_provider("prod-eu", None)
+
+    def test_a_laptop_context_with_no_agent_is_never_refused(
+        self, gateway, registry, presence, monkeypatch
+    ):
+        # The control on the other condition: no certificate means no agent to
+        # be away, whatever the kubeconfig holds.
+        self._store(monkeypatch, [], local_context=False)
+        presence("worker-a")
+
+        assert isinstance(select_provider("laptop", None), LocalKubectlProvider)
 
     def test_a_replacement_agent_lifts_the_refusal(self, gateway, registry, presence, monkeypatch):
         """Re-enrolling is the documented remedy, so it has to work without an

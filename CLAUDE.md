@@ -884,6 +884,8 @@ worker running a gateway, the same soak measured **100% agent-path collection
 across two workers** — the first live number for M8a routing, against
 synthetic ones before.
 
+**An enrolled agent that is not connected anywhere refuses too, when there is nothing to fall back to.** Found by SIGSTOPping the worker holding an agent's stream: presence lapsed at 45s, the queued investigation was re-offered to the other worker at ~80s, and `select_provider` handed an agent-only cluster to `LocalKubectlProvider` — which failed with "Verify kubeconfig, cluster access, and kubectl permissions" about a path never involved. `_enrolled_agent_is_away` refuses only when the cluster has a valid certificate **and** the platform's kubeconfig has no context of that name; where one exists, the flap-tolerant fallback stands.
+
 **A presence record naming *this* worker is never a routing target.**
 `holder()` is consulted only after the local registry has said no, so a record
 still claiming us means the agent disconnected here within the TTL. Returning it
@@ -1913,6 +1915,8 @@ Response shapes are typed in `src/types/investigation.ts`, but the backend retur
 ### Sweeping the console (`scripts/console_sweep.mjs`)
 
 Opt-in, like the soak: every route, every link, button, tab and summary clicked from a fresh load of its route, with non-2xx responses, console errors, dialogs and overflow recorded — and **every state's text written to `OUT/text/`**, because that is where the defects are. Its first full run logged zero failed requests and zero console errors across 220 clicks, and reading the dumps beside the investigation JSON found eleven false claims; the second found five more, including a node restart reported as a cluster-wide crash loop and citations to records that do not exist. The automated findings are the floor. Lists of like controls are capped at three clicks each; reloading before sixty identical evidence rows took over an hour and found nothing the first three did not.
+
+**A browser tab that is not in front does not run timers.** Chrome throttles a CDP target's timers when another target is foregrounded, so a console tab watched beside a second one never refetched — a Settings page read "Agent online" for 200 seconds after the API said otherwise, and it was the harness. `Page.bringToFront` plus `Emulation.setFocusEmulationEnabled`, one live tab at a time; check the watcher's request log before believing a stale screen.
 
 **Keep its state out of `/tmp`.** The machine restarted mid-session and took the kubeconfig, the dev CA key, the worker scripts and a sweep's output with it — the in-cluster agent survived with a certificate no gateway could verify, and had to be re-enrolled.
 

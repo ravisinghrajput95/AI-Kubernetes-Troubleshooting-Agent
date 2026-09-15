@@ -92,7 +92,7 @@ describe("settings", () => {
     renderPage(<SettingsPage />);
 
     expect(await screen.findByText(/agent index cannot be read/i)).toBeInTheDocument();
-    expect(screen.queryByText(/no agent has connected yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no agent is connected right now/i)).not.toBeInTheDocument();
     expect(screen.queryByText("None connected")).not.toBeInTheDocument();
   });
 

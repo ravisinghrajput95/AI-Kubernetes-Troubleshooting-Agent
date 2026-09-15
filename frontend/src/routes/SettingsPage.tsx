@@ -123,7 +123,10 @@ export function SettingsPage() {
           </p>
         ) : connected.length === 0 ? (
           <p className="max-w-measure px-4 py-3 text-sm leading-6 text-ink-2">
-            The gateway is listening and no agent has connected yet.{" "}
+            {/* "No agent is connected", not "no agent has connected yet": an
+                enrolled agent behind a worker that stopped responding lapses
+                from the index too, and "yet" claimed it never had. */}
+            The gateway is listening and no agent is connected right now.{" "}
             <Link to="/connect" className="text-info underline-offset-4 hover:underline">
               Connect a cluster
             </Link>
