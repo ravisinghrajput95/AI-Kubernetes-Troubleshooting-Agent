@@ -5,6 +5,7 @@ import {
   evidenceIdForKind,
   securityUnchecked,
   securityWarnings,
+  memoryBytes,
   topConsumers,
 } from "./cluster";
 import type { InvestigationResponse } from "../types/investigation";
@@ -185,6 +186,9 @@ describe("coverage gaps", () => {
       evidence_coverage: { total: 61, usable: 50, completeness: 100, not_applicable: 11 },
     } as Investigation).find((g) => g.title === "Coverage");
     expect(coverage?.figures.map((f) => f.label)).not.toContain("Gaps");
+    // Counted out of the reads that could answer, as completeness is.
+    expect(coverage?.figures.find((f) => f.label === "Usable evidence")?.value).toBe("50 of 50");
+    expect(coverage?.figures.find((f) => f.label === "Not applicable")?.value).toBe("11");
   });
 });
 
@@ -195,5 +199,26 @@ describe("top consumers", () => {
 
   it("is empty when metrics were unavailable", () => {
     expect(topConsumers({} as Investigation)).toEqual([]);
+  });
+
+  it("lists the heaviest pods, not the first ones kubectl printed", () => {
+    // kubectl top prints in namespace/name order; on a kind cluster the
+    // alphabetical first eight cut the API server, the largest pod there is.
+    const names = ["agent", "coredns-a", "coredns-b", "etcd", "kindnet", "kube-apiserver", "controller", "kube-proxy", "scheduler"];
+    const memory = ["29Mi", "69Mi", "22Mi", "92Mi", "44Mi", "341Mi", "135Mi", "67Mi", "1.2Gi"];
+    const top_pods = names.map((name, i) => ({ namespace: "kube-system", name, cpu: "1m", memory: memory[i] }));
+
+    const listed = topConsumers({ metrics: { top_pods } } as unknown as Investigation).map((pod) => pod.name);
+
+    expect(listed.slice(0, 3)).toEqual(["scheduler", "kube-apiserver", "controller"]);
+    expect(listed).toHaveLength(8);
+    expect(listed).not.toContain("coredns-b");
+  });
+
+  it("reads memory quantities in both binary and decimal units", () => {
+    expect(memoryBytes("512Ki")).toBe(512 * 1024);
+    expect(memoryBytes("1G")).toBe(1e9);
+    expect(memoryBytes("12345")).toBe(12345);
+    expect(memoryBytes("n/a")).toBeNaN();
   });
 });

@@ -109,7 +109,7 @@ export function ClusterOverview({
 
       {consumers.length > 0 ? (
         <section>
-          <h3 className="text-label uppercase text-ink-3">Top consumers</h3>
+          <h3 className="text-label uppercase text-ink-3">Top consumers by memory</h3>
           <div className="mt-3 overflow-x-auto">
             <table className="w-full min-w-[420px] border-collapse text-left">
               <thead>

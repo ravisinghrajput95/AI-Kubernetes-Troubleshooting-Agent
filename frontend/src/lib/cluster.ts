@@ -221,11 +221,17 @@ export function clusterOverview(investigation?: Investigation): OverviewGroup[] 
     groups.push({
       title: "Coverage",
       figures: [
+        // Out of the reads that could answer, like completeness beside it:
+        // "50 of 60" next to "100%" read as a contradiction, the ten being
+        // Prometheus and Loki reads on a deployment with neither configured.
         {
           label: "Usable evidence",
-          value: `${coverage.usable} of ${coverage.total}`,
+          value: `${coverage.usable} of ${coverage.total - (coverage.not_applicable ?? 0)}`,
           tone: coverage.usable === 0 ? "critical" : undefined,
         },
+        ...(coverage.not_applicable
+          ? [{ label: "Not applicable", value: String(coverage.not_applicable) }]
+          : []),
         {
           label: "Completeness",
           value: `${coverage.completeness ?? 0}%`,
@@ -248,8 +254,35 @@ export interface Consumer {
   memory: string;
 }
 
+const MEMORY_UNITS: Record<string, number> = {
+  "": 1, Ki: 2 ** 10, Mi: 2 ** 20, Gi: 2 ** 30, Ti: 2 ** 40,
+  k: 1e3, K: 1e3, M: 1e6, G: 1e9, T: 1e12,
+};
+
+/** Bytes from a Kubernetes memory quantity; NaN when it is not one. */
+export function memoryBytes(quantity: string): number {
+  const match = /^([0-9.]+)([A-Za-z]*)$/.exec(quantity.trim());
+  if (!match || !(match[2] in MEMORY_UNITS)) return Number.NaN;
+  return Number(match[1]) * MEMORY_UNITS[match[2]];
+}
+
+/**
+ * The pods using the most memory, heaviest first.
+ *
+ * This was the first eight rows `kubectl top` printed, and kubectl prints in
+ * namespace/name order: on a kind cluster "Top consumers" listed the agent at
+ * 29Mi and two CoreDNS pods, and cut the API server at 341Mi from the bottom
+ * of an alphabetical page. Memory rather than CPU because it is the figure a
+ * limit kills a pod over; an unparseable quantity sorts last, never first.
+ */
 export function topConsumers(investigation?: Investigation): Consumer[] {
-  return (investigation?.metrics?.top_pods ?? []).slice(0, 8);
+  const weight = (pod: Consumer) => {
+    const bytes = memoryBytes(pod.memory ?? "");
+    return Number.isNaN(bytes) ? -1 : bytes;
+  };
+  return [...(investigation?.metrics?.top_pods ?? [])]
+    .sort((a, b) => weight(b) - weight(a))
+    .slice(0, 8);
 }
 
 /**
