@@ -133,6 +133,52 @@ def test_another_pods_fault_does_not_refute_this_one():
     assert not beside.refuting_signal_ids
 
 
+def test_a_refuted_pod_does_not_refute_the_pods_nothing_argued_against():
+    """Live: fraud-scorer was OOM-killed and backing off, checkout was crash
+    looping on `FATAL: config key DB_HOST is not set`. The rule pools every
+    backing-off pod, fraud-scorer's OOM refuted the pooled hypothesis, and the
+    report listed checkout's startup failure as an alternative the evidence
+    argued against."""
+    result = ENGINE.analyze(
+        investigation(
+            pods={
+                "problematic_pods": [
+                    CRASHING,
+                    {"name": "scorer-0", "namespace": "prod", "status": "OOMKilled"},
+                ]
+            },
+            events={
+                "findings": [
+                    {
+                        "namespace": "prod",
+                        "reason": "BackOff",
+                        "object": "Pod/scorer-0",
+                        "message": "Back-off restarting failed container",
+                    }
+                ]
+            },
+        )
+    )
+    hypothesis = result.hypothesis("workload.application_startup_failure")
+
+    # Vacuity: the OOM pod really is among what the rule fired on.
+    assert any(
+        signal.target.name == "scorer-0"
+        for signal in result.signals
+        if signal.type == "event.backoff"
+    )
+    assert not hypothesis.refuting_signal_ids
+    assert hypothesis.target.name == "web-0"
+    assert not any("scorer-0" in signal_id for signal_id in hypothesis.supporting_signal_ids)
+
+
+def test_a_hypothesis_every_resource_of_which_is_refuted_stays_refuted():
+    only_oom = _startup_failure(
+        {**CRASHING, "status": "CrashLoopBackOff"}, {**CRASHING, "status": "OOMKilled"}
+    )
+    assert only_oom.refuting_signal_ids
+
+
 def test_pending_pod_with_unbound_pvc_ranks_scheduling_hypothesis():
     result = ENGINE.analyze(
         investigation(
@@ -465,3 +511,13 @@ def test_a_scheduling_failure_does_not_refute_the_claim_that_causes_it():
         "the scheduler reporting an unbound claim is the fault's own symptom, "
         "not evidence against the claim being the cause"
     )
+
+
+def test_a_refuted_hypothesis_cites_only_refutations_of_its_own_resources():
+    refuted = _startup_failure(
+        CRASHING,
+        {**CRASHING, "status": "ImagePullBackOff"},
+        {"name": "web-1", "namespace": "prod", "status": "OOMKilled"},
+    )
+    assert refuted.refuting_signal_ids
+    assert all("web-0" in signal_id for signal_id in refuted.refuting_signal_ids)

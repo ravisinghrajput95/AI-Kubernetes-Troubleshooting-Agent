@@ -66,6 +66,18 @@ class SignalPatternRule:
             for signal in signals
             if signal.type in self.refuting and signal.target.key in triggered
         ]
+        # **And a refutation of one resource is not a refutation of the rest.**
+        # A rule pools every resource its triggers fire on — every pod with a
+        # BackOff event — so fraud-scorer's OOM kill and ledger's image pull
+        # "argued against" checkout failing on startup, a pod whose own log read
+        # `FATAL: config key DB_HOST is not set`, and the report listed that
+        # cause under "Alternatives the evidence argued against". While any
+        # triggered resource has nothing against it, the hypothesis rests on
+        # those; it is refuted only when every one of them is.
+        refuted = {signal.target.key for signal in refuting}
+        standing = [signal for signal in triggering if signal.target.key not in refuted]
+        if standing:
+            triggering, refuting = standing, []
 
         confidence = self.base_confidence
         confidence += SUPPORT_BONUS * len({signal.type for signal in supporting})
