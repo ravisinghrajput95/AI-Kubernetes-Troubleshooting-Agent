@@ -1245,6 +1245,17 @@ MUTATIONS = [
         tests="tests/test_remediation_safety.py",
     ),
     Mutation(
+        name="support-from-unrelated-workloads",
+        why=(
+            "checkout's startup failure rested on archiver's and ledger's unavailable "
+            "replicas too, and that count broke a three-way tie."
+        ),
+        path="app/analysis/hypothesis_rules.py",
+        old="        supporting = [signal for signal in supporting if _about(signal, triggering)]\n",
+        new="",
+        tests="tests/test_analysis_engine.py",
+    ),
+    Mutation(
         name="refutation-across-unrelated-resources",
         why=(
             "Refuting signals matched by type anywhere in the namespace, so "

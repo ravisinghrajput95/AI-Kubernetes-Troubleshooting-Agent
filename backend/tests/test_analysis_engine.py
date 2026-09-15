@@ -521,3 +521,42 @@ def test_a_refuted_hypothesis_cites_only_refutations_of_its_own_resources():
     )
     assert refuted.refuting_signal_ids
     assert all("web-0" in signal_id for signal_id in refuted.refuting_signal_ids)
+
+
+def test_support_is_about_the_workload_the_hypothesis_is_about():
+    """Live: checkout's startup failure rested on twenty signals, among them
+    archiver's and ledger's unavailable replicas and gateway's failing probe,
+    and that count decided a three-way tie "because it rests on more signals"."""
+    result = ENGINE.analyze(
+        investigation(
+            pods={
+                "problematic_pods": [
+                    {
+                        "name": "checkout-5b5fd56dbf-4cnmv",
+                        "namespace": "prod",
+                        "status": "CrashLoopBackOff",
+                    }
+                ]
+            },
+            deployments={
+                "unhealthy_deployments": [
+                    {
+                        "name": "checkout",
+                        "namespace": "prod",
+                        "desired_replicas": 2,
+                        "available_replicas": 0,
+                    },
+                    {
+                        "name": "archiver",
+                        "namespace": "prod",
+                        "desired_replicas": 1,
+                        "available_replicas": 0,
+                    },
+                ]
+            },
+        )
+    )
+    supporting = result.hypothesis("workload.application_startup_failure").supporting_signal_ids
+
+    assert "deployment.unavailable_replicas:deployment/prod/checkout" in supporting
+    assert "deployment.unavailable_replicas:deployment/prod/archiver" not in supporting

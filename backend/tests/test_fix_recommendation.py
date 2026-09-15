@@ -118,8 +118,9 @@ class TestTheDeterministicPath:
     def test_the_fixture_has_the_shape_that_hid_the_defect(self, investigation, diagnosis):
         # Vacuity: if the leader were about `checkout`, the heuristic and the
         # rule would agree and nothing below could fail.
+        # Which of the fixture's tied faults leads is not the point, and moved
+        # when support was scoped to the workloads a hypothesis is about.
         assert diagnosis["ai_generated"] is False
-        assert diagnosis["selected_hypothesis"] == "workload.missing_configuration"
         assert "checkout" not in about(diagnosis)
         assert len(investigation["pods"]["problematic_pods"]) > 3
 
@@ -139,7 +140,10 @@ class TestTheDeterministicPath:
         assert [command.split("   #")[0] for command in diagnosis["kubectl_commands"]] == planned
 
     def test_prevention_is_for_the_category_diagnosed(self, diagnosis):
-        assert diagnosis["prevention"] == PREVENTION_BY_CATEGORY["configuration"]
+        selected = next(
+            h for h in diagnosis["hypotheses"] if h["id"] == diagnosis["selected_hypothesis"]
+        )
+        assert diagnosis["prevention"] == PREVENTION_BY_CATEGORY[selected["category"]]
 
     def test_the_report_and_mcp_carry_the_same_guidance(self, investigation, diagnosis):
         # The two consumers that surfaced the defect: the Preventive Actions
@@ -168,28 +172,39 @@ class TestTheGroundedPath:
         analyzer = RootCauseAnalyzer()
         analyzer.llm_client = NoModel()
         baseline = analyzer.analyze(investigation)
-        image = next(h for h in baseline["hypotheses"] if h["id"] == "image.pull_failure")
-        pull_signal = next(
-            s for s in image["supporting_signals"] if s.startswith("pod.image_pull_failure:")
+        leader = next(
+            h for h in baseline["hypotheses"] if h["id"] == baseline["selected_hypothesis"]
         )
-        pod = image["target"]["name"]
+        # The model picks a fault that is *not* the deterministic leader, or
+        # guidance built for the leader would pass. Which one leads the tie
+        # moved once already; choosing here keeps the test from going vacuous.
+        choice = (
+            "image.pull_failure"
+            if leader["id"] != "image.pull_failure"
+            else ("workload.missing_configuration")
+        )
+        chosen = next(h for h in baseline["hypotheses"] if h["id"] == choice)
+        assert chosen["category"] != leader["category"]
+        cited = next(s for s in chosen["supporting_signals"] if s.startswith("pod."))
+        pod = chosen["target"]["name"]
 
         analyzer.llm_client = Model(
             {
-                "selected_hypothesis": "image.pull_failure",
-                "root_cause": f"Pod payments/{pod} cannot pull its image.",
-                "explanation": "The image tag does not exist in the registry.",
-                "cited_signals": [pull_signal],
-                "fix": "Correct the image tag.",
+                "selected_hypothesis": choice,
+                "root_cause": f"Pod payments/{pod} is failing: {chosen['title']}.",
+                "explanation": chosen["rationale"],
+                "cited_signals": [cited],
+                "fix": "Correct it.",
                 "confidence": 80,
             }
         )
         diagnosis = analyzer.analyze(investigation)
 
         assert diagnosis["ai_generated"] is True, diagnosis["grounding"]
-        assert diagnosis["selected_hypothesis"] == "image.pull_failure"
-        assert diagnosis["remediation"]["hypothesis_id"] == "image.pull_failure"
-        assert diagnosis["prevention"] != PREVENTION_BY_CATEGORY["configuration"]
+        assert diagnosis["selected_hypothesis"] == choice
+        assert diagnosis["remediation"]["hypothesis_id"] == choice
+        assert diagnosis["prevention"] == PREVENTION_BY_CATEGORY[chosen["category"]]
+        assert diagnosis["prevention"] != PREVENTION_BY_CATEGORY[leader["category"]]
         strays = named_in(guidance(diagnosis), workload_names(investigation)) - about(diagnosis)
         assert not strays, f"guidance names {strays}: {guidance(diagnosis)}"
 

@@ -5,6 +5,7 @@ which strengthen it, and which argue against it. Adding a failure mode means
 adding a rule to the tuple below.
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
@@ -78,6 +79,15 @@ class SignalPatternRule:
         standing = [signal for signal in triggering if signal.target.key not in refuted]
         if standing:
             triggering, refuting = standing, []
+        # Support is scoped the same way, for the workloads it can be scoped
+        # for. Checkout's startup failure was "supported" by archiver's and
+        # ledger's unavailable replicas and gateway's failing probe — twenty
+        # signals, most about other workloads, which is what then decided a
+        # three-way tie "because it rests on more signals". A supporting Pod
+        # or Deployment signal counts only when it is about a triggered pod or
+        # the Deployment that owns one; other kinds (a claim, a node, a class)
+        # relate through references this rule cannot see, and stay unscoped.
+        supporting = [signal for signal in supporting if _about(signal, triggering)]
 
         confidence = self.base_confidence
         confidence += SUPPORT_BONUS * len({signal.type for signal in supporting})
@@ -107,6 +117,36 @@ class SignalPatternRule:
             missing_evidence=self.missing_evidence,
             remediation_hint=self.remediation_hint,
         )
+
+
+def _about(signal: Signal, triggering: Sequence[Signal]) -> bool:
+    """Whether a supporting signal concerns the resources a hypothesis rests on."""
+    kind = signal.target.kind
+    if kind not in {"Pod", "Deployment"}:
+        return True
+    # A hypothesis about a StorageClass or a Service is supported by the pods
+    # it blocks, through references only its signals carry; not scoped here.
+    if any(item.target.kind not in {"Pod", "Deployment"} for item in triggering):
+        return True
+    keys = {item.target.key for item in triggering}
+    if signal.target.key in keys:
+        return True
+    pods = [item.target for item in triggering if item.target.kind == "Pod"]
+    if kind == "Deployment":
+        owned = re.compile(rf"^{re.escape(signal.target.name)}-[a-z0-9]{{1,10}}-[a-z0-9]{{5}}$")
+        return any(
+            pod.namespace == signal.target.namespace and owned.match(pod.name) for pod in pods
+        )
+    # A pod signal about a pod the triggers did not name: related only if the
+    # triggers are about its Deployment.
+    return any(
+        item.target.kind == "Deployment"
+        and item.target.namespace == signal.target.namespace
+        and re.match(
+            rf"^{re.escape(item.target.name)}-[a-z0-9]{{1,10}}-[a-z0-9]{{5}}$", signal.target.name
+        )
+        for item in triggering
+    )
 
 
 DEFAULT_HYPOTHESIS_RULES: tuple[HypothesisRule, ...] = (
