@@ -1131,6 +1131,33 @@ MUTATIONS = [
         new="            if signal.type in self.refuting\n",
         tests="tests/test_analysis_engine.py",
     ),
+    Mutation(
+        name="history-item-without-scope-on-live-save",
+        why=(
+            "The fleet card and cluster page took the newest run whatever it was "
+            "asked about; recording scope fixed it only if the live save wrote "
+            "it, and the first version wrote it on the regenerate path alone."
+        ),
+        path="app/services/history_service.py",
+        old=(
+            "            # console's fix would have read nothing on every live save.\n"
+            '            "scope": dict(investigation.get("scope") or {}),\n'
+        ),
+        new="            # console's fix would have read nothing on every live save.\n",
+        tests="tests/test_report_namespace.py",
+    ),
+    Mutation(
+        name="rationale-computed-and-rendered-nowhere",
+        why=(
+            "selection_rationale was computed since the audit asked for it and "
+            "rendered only by a panel no route mounts, so the report showed a "
+            "less confident cause SELECTED with no reason given."
+        ),
+        path="app/reports/composer.py",
+        old='        body = [explanation, str(diagnosis.get("selection_rationale") or "")]\n',
+        new="        body = [explanation]\n",
+        tests="tests/test_scoped_diagnosis.py",
+    ),
 ]
 
 

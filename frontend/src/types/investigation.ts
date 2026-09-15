@@ -387,6 +387,8 @@ export interface InvestigationHistoryItem {
   timestamp: string;
   root_cause: string;
   namespace: string;
+  /** What the run was asked about. Absent on entries written before it was recorded. */
+  scope?: { namespace?: string; resource_kind?: string; resource_name?: string };
   confidence: number;
   status: string;
   severity?: string;

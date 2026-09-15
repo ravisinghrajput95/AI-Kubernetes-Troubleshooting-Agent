@@ -5,7 +5,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ClusterOverview } from "../components/cluster/ClusterOverview";
 import { EvidenceInspector } from "../components/report/EvidenceInspector";
 import { SeverityDot } from "../components/report/SeverityDot";
-import { fleetState, relativeAge, STALE_AFTER_MS } from "../lib/fleet";
+import {
+  describeScope,
+  fleetState,
+  relativeAge,
+  representativeRun,
+  STALE_AFTER_MS,
+} from "../lib/fleet";
 import { evidenceIndex, evidenceTone, severityTone } from "../lib/report";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { formatTimestamp } from "../lib/analysis";
@@ -75,7 +81,11 @@ export function ClusterPage() {
     [context, contexts.data?.items, history.data],
   );
 
-  const latestId = runs[0]?.id ?? "";
+  // The newest whole-cluster run, not simply the newest: a run scoped to one
+  // deployment reads seven pods, and this page presents them as the cluster.
+  const representative = representativeRun(runs);
+  const latestId = representative?.id ?? "";
+  const scopeNote = representative ? describeScope(representative) : "";
   const report = useQuery({
     queryKey: ["investigation-report", latestId],
     queryFn: () => getInvestigationReport(latestId),
@@ -117,7 +127,7 @@ export function ClusterPage() {
                   product could ship. */}
               <p className={`mt-1 text-sm ${stale ? "text-warning" : "text-ink-3"}`}>
                 {latestId
-                  ? `As of the last investigation, ${relativeAge(row?.ageMs ?? null)}${
+                  ? `As of the last investigation${scopeNote ? `, scoped to ${scopeNote}` : ""}, ${relativeAge(row?.ageMs ?? null)}${
                       stale ? " — this is what was true then, not now" : ""
                     }`
                   : "Never investigated"}
@@ -313,6 +323,14 @@ function Findings({
           <span className="text-sm text-ink">
             {String(item.reason ?? item.message ?? item.issue ?? "Finding")}
           </span>
+          {/* Which object. Without it two "Readiness probe failed: 503" rows
+              could not be told apart, and neither said where to look. */}
+          {item.object ? (
+            <span className="font-mono text-sm text-ink-2">
+              {item.namespace ? `${String(item.namespace)}/` : ""}
+              {String(item.object)}
+            </span>
+          ) : null}
           <span className="text-sm text-ink-3">
             {String(item.detail ?? item.message ?? "")}
           </span>

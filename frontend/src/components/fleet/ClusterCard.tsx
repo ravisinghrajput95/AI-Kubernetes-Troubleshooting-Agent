@@ -63,6 +63,13 @@ export function ClusterCard({
             <span className="text-ink-3"> · {row.namespace}</span>
           ) : null}
         </p>
+        {row.scope ? (
+          // Only when no whole-cluster reading exists: the finding above is
+          // about this scope, and the rest of the cluster was not read.
+          <p className="mt-1 truncate text-sm text-ink-3">
+            Only {row.scope} has been investigated.
+          </p>
+        ) : null}
         {row.state === "stale" ? (
           <p className="mt-1 text-sm text-warning">
             Last investigated {relativeAge(row.ageMs)} — this is what was true then.

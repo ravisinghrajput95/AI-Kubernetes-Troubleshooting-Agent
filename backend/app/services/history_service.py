@@ -80,6 +80,10 @@ class InvestigationHistoryService:
             "timestamp": timestamp,
             "root_cause": root_cause,
             "namespace": namespace,
+            # See `_upsert_history_item`: the two builders are separate, and
+            # this field was first added only to the regenerate path, where the
+            # console's fix would have read nothing on every live save.
+            "scope": dict(investigation.get("scope") or {}),
             "confidence": confidence,
             "status": status,
             "severity": self._renderer.severity(investigation),
@@ -238,6 +242,12 @@ class InvestigationHistoryService:
             "timestamp": timestamp,
             "root_cause": diagnosis.get("root_cause", "Unknown root cause"),
             "namespace": namespace,
+            # What was asked, so a view of the *cluster* can tell a whole-cluster
+            # reading from one scoped to a namespace or a single deployment. The
+            # fleet card and cluster page took whichever run was newest, so an
+            # investigation of one deployment became the cluster's headline and
+            # its seven pods the cluster's capacity.
+            "scope": dict(investigation.get("scope") or {}),
             "confidence": int(diagnosis.get("confidence", 0)),
             "status": status,
             "severity": self._renderer.severity(investigation),

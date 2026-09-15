@@ -174,3 +174,16 @@ def test_every_mapped_item_is_one_a_rule_declares():
 
     declared = {item for rule in DEFAULT_HYPOTHESIS_RULES for item in rule.missing_evidence}
     assert set(ANSWERED_BY) <= declared, set(ANSWERED_BY) - declared
+
+
+async def test_the_rationale_reaches_the_report():
+    # Computed and rendered nowhere is the same as not computed.
+    from app.reports.composer import IncidentReportComposer
+
+    investigation, diagnosis = await diagnose_scoped(Namespace())
+    report = IncidentReportComposer().compose(
+        diagnosis, investigation, "INC-1", "2026-09-15T00:00:00Z", "payments", "success"
+    )
+    root_cause = next(s for s in report.sections if s.title == "Root Cause")
+    assert diagnosis["selection_rationale"]
+    assert diagnosis["selection_rationale"] in root_cause.as_lines()

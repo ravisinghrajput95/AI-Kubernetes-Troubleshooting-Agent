@@ -130,7 +130,11 @@ class IncidentReportComposer:
         explanation = str(diagnosis.get("explanation", ""))
         # Strip the operational suffix the analyzer appends for the console.
         explanation = explanation.split("OpenAI status:")[0].strip()
-        body = [explanation]
+        # Why a less confident cause was selected. Computed since the audit and
+        # rendered by nothing: the only consumer was a panel no route mounts,
+        # so this table showed an 85% cause SELECTED above three at 92% and
+        # said nothing about the investigation having been scoped to it.
+        body = [explanation, str(diagnosis.get("selection_rationale") or "")]
 
         hypotheses = diagnosis.get("hypotheses") or []
         selected = diagnosis.get("selected_hypothesis")

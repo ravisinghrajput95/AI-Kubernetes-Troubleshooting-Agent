@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { correlateSignals, fleetState, relativeAge, rollup, STALE_AFTER_MS } from "./fleet";
+import {
+  correlateSignals,
+  describeScope,
+  fleetState,
+  relativeAge,
+  rollup,
+  STALE_AFTER_MS,
+} from "./fleet";
 import type { InvestigationHistoryItem, KubernetesContext } from "../types/investigation";
 
 const NOW = Date.parse("2026-07-31T12:00:00Z");
@@ -272,5 +279,57 @@ describe("a cluster that could not be read", () => {
     );
     expect(rollup(rows).unreadable).toBe(1);
     expect(rollup(rows).healthy).toBe(0);
+  });
+});
+
+
+describe("a scoped run is not the cluster's state", () => {
+  // The shapes the backend writes: `investigation["scope"]` copied verbatim.
+  const WHOLE = { namespace: "all", resource_kind: "cluster", resource_name: "" };
+  const DEPLOYMENT = { namespace: "payments", resource_kind: "deployment", resource_name: "checkout" };
+  const NOW = Date.parse("2026-09-15T06:30:00Z");
+  const run = (id: string, at: string, scope: typeof WHOLE, root: string) => ({
+    id,
+    context: "prod",
+    timestamp: at,
+    root_cause: root,
+    namespace: "payments",
+    confidence: 90,
+    status: "success",
+    severity: "Critical",
+    pdf_url: "",
+    scope,
+  });
+
+  it("speaks from the newest whole-cluster run, even when a scoped one is newer", () => {
+    // Live: an investigation of one deployment became the fleet card's
+    // headline, and its seven pods the cluster page's capacity.
+    const [row] = fleetState(
+      [],
+      [
+        run("scoped", "2026-09-15T06:20:00Z", DEPLOYMENT, "Checkout fails on startup"),
+        run("whole", "2026-09-15T06:10:00Z", WHOLE, "Service has no endpoints"),
+      ],
+      new Map(),
+      NOW,
+    );
+    expect(row.investigationId).toBe("whole");
+    expect(row.rootCause).toBe("Service has no endpoints");
+    expect(row.scope).toBe("");
+  });
+
+  it("says what was read when only scoped runs exist", () => {
+    const [row] = fleetState(
+      [],
+      [run("scoped", "2026-09-15T06:20:00Z", DEPLOYMENT, "Checkout fails on startup")],
+      new Map(),
+      NOW,
+    );
+    expect(row.investigationId).toBe("scoped");
+    expect(row.scope).toBe("deployment payments/checkout");
+  });
+
+  it("treats an entry written before scope was recorded as it always was", () => {
+    expect(describeScope({})).toBe("");
   });
 });

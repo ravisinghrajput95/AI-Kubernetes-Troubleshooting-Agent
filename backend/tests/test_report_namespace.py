@@ -113,3 +113,29 @@ def test_the_primary_namespace_does_not_depend_on_the_process():
         )
         answers.add(out.stdout.strip().splitlines()[-1])
     assert answers == {"bravo"}
+
+
+async def test_the_history_item_records_what_was_asked(tmp_path):
+    # The console's `isWholeCluster` reads exactly these keys and values; a
+    # history item without them makes every run look whole-cluster, which is
+    # how a one-deployment investigation became the fleet card's headline.
+    from tests.test_scoped_diagnosis import Namespace, diagnose_scoped
+
+    investigation, diagnosis = await diagnose_scoped(Namespace())
+    store = FilesystemReportStore(tmp_path)
+    scoped = InvestigationHistoryService(store).save(diagnosis, investigation)
+    assert scoped["scope"] == {
+        "namespace": "payments",
+        "resource_kind": "deployment",
+        "resource_name": "checkout",
+    }
+
+    whole, whole_diagnosis = await diagnose(TwoNamespaces(CONFIGMAP_REF))
+    item = InvestigationHistoryService(store).save(whole_diagnosis, whole)
+    assert item["scope"] == {"namespace": "all", "resource_kind": "cluster", "resource_name": ""}
+
+    # Regenerating re-renders from the stored JSON through a second, separate
+    # item builder; it must not drop what the live save recorded.
+    regenerated = InvestigationHistoryService(store).regenerate(scoped["id"])
+    indexed = store.find(scoped["id"])
+    assert regenerated is not None and indexed["scope"]["resource_name"] == "checkout"

@@ -195,6 +195,65 @@ describe("time", () => {
   });
 });
 
+describe("scope", () => {
+  const item = (id: string, msAgo: number, scope: Record<string, string>) =>
+    ({
+      id,
+      context: "prod-eu-west",
+      timestamp: at(msAgo),
+      root_cause: `root cause of ${id}`,
+      namespace: "payments",
+      confidence: 80,
+      severity: "Critical",
+      status: "success",
+      scope,
+    }) as InvestigationHistoryItem;
+
+  it("reads the cluster from its newest whole-cluster run, not a newer scoped one", async () => {
+    vi.spyOn(api, "getInvestigationHistory").mockResolvedValue([
+      item("scoped", 60_000, { namespace: "payments", resource_kind: "deployment", resource_name: "checkout" }),
+      item("whole", 600_000, { namespace: "all", resource_kind: "cluster", resource_name: "" }),
+    ]);
+    renderCluster();
+    await screen.findByText(/As of the last investigation, /);
+    expect(api.getInvestigationReport).toHaveBeenCalledWith("whole");
+    expect(api.getInvestigationReport).not.toHaveBeenCalledWith("scoped");
+  });
+
+  it("names the scope when nothing else was read", async () => {
+    vi.spyOn(api, "getInvestigationHistory").mockResolvedValue([
+      item("scoped", 60_000, { namespace: "payments", resource_kind: "deployment", resource_name: "checkout" }),
+    ]);
+    renderCluster();
+    expect(
+      await screen.findByText(/scoped to deployment payments\/checkout/),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("events", () => {
+  it("names the object each event is about", async () => {
+    vi.spyOn(api, "getInvestigationReport").mockResolvedValue({
+      investigation: {
+        events: {
+          findings: [
+            {
+              type: "Warning",
+              object: "Pod/coredns-589f44dc88-6gh4t",
+              reason: "Unhealthy",
+              message: "Readiness probe failed: HTTP probe failed with statuscode: 503",
+              namespace: "kube-system",
+            },
+          ],
+        },
+      },
+      diagnosis: {},
+    } as never);
+    renderCluster("/clusters/prod-eu-west?tab=events");
+    expect(await screen.findByText("kube-system/Pod/coredns-589f44dc88-6gh4t")).toBeInTheDocument();
+  });
+});
+
 describe("a cluster with nothing on record", () => {
   it("says so, and that nothing is ever applied", async () => {
     vi.spyOn(api, "getInvestigationHistory").mockResolvedValue([]);

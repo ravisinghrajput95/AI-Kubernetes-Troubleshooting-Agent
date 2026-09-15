@@ -42,6 +42,49 @@ export interface ClusterState {
   connection: ClusterConnection;
   /** Present only when an agent is connected for this cluster. */
   agent: AgentStatus | null;
+  /**
+   * What the run behind this row was asked about, when it was not the whole
+   * cluster — "" otherwise. Only set when no whole-cluster run exists.
+   */
+  scope: string;
+}
+
+/**
+ * Whether a run read the whole cluster.
+ *
+ * An entry written before scope was recorded counts as whole — that is how
+ * every view treated every entry before, and it cannot be known otherwise.
+ */
+export function isWholeCluster(item: Pick<InvestigationHistoryItem, "scope">): boolean {
+  const scope = item.scope;
+  if (!scope) return true;
+  const namespaced = Boolean(scope.namespace) && scope.namespace !== "all";
+  const resource = Boolean(scope.resource_name) && scope.resource_kind !== "cluster";
+  return !namespaced && !resource;
+}
+
+/** "deployment payments/checkout", "namespace payments", or "" for the whole cluster. */
+export function describeScope(item: Pick<InvestigationHistoryItem, "scope">): string {
+  if (isWholeCluster(item)) return "";
+  const scope = item.scope ?? {};
+  const namespace = scope.namespace && scope.namespace !== "all" ? scope.namespace : "";
+  if (scope.resource_name && scope.resource_kind && scope.resource_kind !== "cluster") {
+    return `${scope.resource_kind} ${namespace ? `${namespace}/` : ""}${scope.resource_name}`;
+  }
+  return `namespace ${namespace}`;
+}
+
+/**
+ * The run a view of the whole cluster should speak from: the newest one that
+ * read the whole cluster, else the newest of any scope.
+ *
+ * Taking simply the newest made an investigation of one deployment the
+ * cluster's headline on the fleet page and its seven pods the cluster's
+ * capacity on the cluster page.
+ */
+export function representativeRun<T extends InvestigationHistoryItem>(runs: T[]): T | undefined {
+  const newestFirst = [...runs].sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""));
+  return newestFirst.find(isWholeCluster) ?? newestFirst[0];
 }
 
 const ORDER: Record<FleetState, number> = {
@@ -69,7 +112,7 @@ export function fleetState(
   jobContexts: Map<string, string> = new Map(),
   now: number = Date.now(),
 ): ClusterState[] {
-  const newest = new Map<string, InvestigationHistoryItem>();
+  const byContext = new Map<string, InvestigationHistoryItem[]>();
 
   for (const item of history) {
     const context = item.context || jobContexts.get(item.id) || "";
@@ -78,10 +121,13 @@ export function fleetState(
       // assigned to an arbitrary one.
       continue;
     }
-    const existing = newest.get(context);
-    if (!existing || (item.timestamp ?? "") > (existing.timestamp ?? "")) {
-      newest.set(context, item);
-    }
+    byContext.set(context, [...(byContext.get(context) ?? []), item]);
+  }
+
+  const newest = new Map<string, InvestigationHistoryItem>();
+  for (const [context, runs] of byContext) {
+    const run = representativeRun(runs);
+    if (run) newest.set(context, run);
   }
 
   const names = new Set<string>([
@@ -114,6 +160,7 @@ export function fleetState(
         ageMs: null,
         connection,
         agent,
+        scope: "",
       });
       continue;
     }
@@ -143,6 +190,7 @@ export function fleetState(
       investigationId: item.id,
       at: item.timestamp ?? "",
       ageMs,
+      scope: describeScope(item),
     });
   }
 
