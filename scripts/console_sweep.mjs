@@ -66,10 +66,22 @@ const ws = new WebSocket(target.webSocketDebuggerUrl);
 let nextId = 0;
 const pending = new Map();
 const requests = new Map();
+// **Every command has a deadline.** Without one, a command Chrome never
+// answered left a promise nothing would settle, Node found its event loop empty
+// and exited — "Detected unsettled top-level await", no summary, seventeen states
+// into a sweep that looked, from its counts, like one that had found nothing.
+const COMMAND_TIMEOUT_MS = Number(process.env.COMMAND_TIMEOUT_MS || 30000);
 const send = (method, params = {}) =>
-  new Promise((resolve) => {
+  new Promise((resolve, reject) => {
     const id = ++nextId;
-    pending.set(id, resolve);
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(`Chrome did not answer ${method} within ${COMMAND_TIMEOUT_MS}ms`));
+    }, COMMAND_TIMEOUT_MS);
+    pending.set(id, (result) => {
+      clearTimeout(timer);
+      resolve(result);
+    });
     ws.send(JSON.stringify({ id, method, params }));
   });
 
@@ -120,6 +132,11 @@ ws.addEventListener("message", (event) => {
   }
 });
 await new Promise((resolve) => ws.addEventListener("open", resolve));
+// A closed debugging connection ends the run as untrusted rather than letting
+// every later command wait for an answer that cannot come.
+ws.addEventListener("close", () => {
+  for (const [, settle] of pending) settle({ error: "connection closed" });
+});
 const evaluate = async (expression) =>
   (await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }))?.result
     ?.value;
@@ -259,7 +276,7 @@ try {
   untrusted += 1;
   record("sweep-crash", { error: String(error.stack || error).slice(0, 600) });
 } finally {
-  await send("Target.closeTarget", { targetId: target.id });
+  await send("Target.closeTarget", { targetId: target.id }).catch(() => {});
   ws.close();
 }
 

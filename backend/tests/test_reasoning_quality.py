@@ -130,13 +130,41 @@ class TestTheOrderingExplainsItself:
 
         assert selection_rationale(ranked) == ""
 
-    def test_it_says_nothing_when_confidence_ties(self):
+    def test_it_says_nothing_when_confidence_ties_but_severity_decides(self):
         ranked = (
             hypothesis("a", severity=Severity.CRITICAL, confidence=80),
             hypothesis("b", severity=Severity.HIGH, confidence=80),
         )
 
         assert selection_rationale(ranked) == ""
+
+    def test_it_says_the_evidence_could_not_choose_when_only_breadth_did(self):
+        """The same cluster through its agent and its kubeconfig named two root
+        causes a minute apart: three tied at 92% and critical, separated by one
+        signal of churn, and each report presented its winner as *the* cause."""
+        ranked = (
+            hypothesis(
+                "svc",
+                severity=Severity.CRITICAL,
+                confidence=92,
+                title="No endpoints",
+                supporting=("s1", "s2", "s3"),
+            ),
+            hypothesis(
+                "cfg",
+                severity=Severity.CRITICAL,
+                confidence=92,
+                title="Missing config",
+                supporting=("s1", "s2"),
+            ),
+            hypothesis("img", severity=Severity.HIGH, confidence=92, title="Image pull"),
+        )
+
+        text = selection_rationale(ranked)
+
+        assert "does not choose between 'No endpoints' and 'Missing config'" in text
+        assert "Image pull" not in text  # a different severity did decide that one
+        assert "3 against 2" in text
 
     def test_no_hypotheses_is_not_an_error(self):
         assert selection_rationale(()) == ""

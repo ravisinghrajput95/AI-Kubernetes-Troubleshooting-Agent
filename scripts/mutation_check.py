@@ -1120,6 +1120,18 @@ MUTATIONS = [
         tests="tests/test_scoped_diagnosis.py tests/test_reasoning_quality.py",
     ),
     Mutation(
+        name="rationale-silent-when-only-breadth-ranked",
+        why=(
+            "Two faults on different pods, both 80% and critical, and the report "
+            "said nothing about why one was the root cause and the other its "
+            "alternative: the order was set by how many signals each rested on."
+        ),
+        path="app/analysis/incidents.py",
+        old='        return _tie(top, hypotheses) if selected is None or top.id == leader.id else ""\n',
+        new='        return ""\n',
+        tests="tests/test_reasoning_quality.py",
+    ),
+    Mutation(
         name="refutation-across-unrelated-resources",
         why=(
             "Refuting signals matched by type anywhere in the namespace, so "

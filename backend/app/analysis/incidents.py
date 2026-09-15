@@ -165,7 +165,7 @@ def selection_rationale(
     top = selected or leader
     most_confident = max(hypotheses, key=lambda item: item.confidence)
     if most_confident.confidence <= top.confidence:
-        return ""
+        return _tie(top, hypotheses) if selected is None or top.id == leader.id else ""
 
     lead = (
         f"'{top.title}' was selected over '{most_confident.title}' despite lower "
@@ -189,3 +189,35 @@ def selection_rationale(
             f"explanation ranks below an uncontradicted one whatever its confidence."
         )
     return ""
+
+
+def _tie(top: Hypothesis, hypotheses: tuple[Hypothesis, ...]) -> str:
+    """Say so when the evidence could not choose between the leading causes.
+
+    The same cluster investigated twice, a minute apart, through its agent and
+    through a kubeconfig, named two different root causes: three causes tied at
+    92% and critical, and `rank()` broke the tie on how many signals each rested
+    on — 16 against 15, the difference being one deployment mid-restart. Both
+    reports presented their winner as *the* root cause with nothing to say, since
+    the leader was also, jointly, the most confident. A choice made by one
+    signal of churn is not a finding, and the reader should know it was not.
+    """
+    tied = [
+        item
+        for item in hypotheses
+        if item.id != top.id
+        and item.confidence == top.confidence
+        and item.severity == top.severity
+        and bool(item.refuting_signal_ids) == bool(top.refuting_signal_ids)
+    ]
+    if not tied:
+        return ""
+    others = ", ".join(f"'{item.title}'" for item in tied)
+    runner_up = max(tied, key=lambda item: len(item.supporting_signal_ids))
+    return (
+        f"The evidence does not choose between '{top.title}' and {others}: each is "
+        f"{top.confidence}% and {top.severity}. It is listed first only because it rests "
+        f"on more signals ({len(top.supporting_signal_ids)} against "
+        f"{len(runner_up.supporting_signal_ids)}); treat these as concurrent faults, not "
+        f"one cause and its alternatives."
+    )
