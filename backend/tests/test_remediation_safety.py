@@ -205,3 +205,33 @@ MUTATING_VERBS = (
 def _is_mutating(command: str) -> bool:
     args = _kubectl_args(command)
     return bool(args) and args[0] in MUTATING_VERBS
+
+
+@pytest.mark.parametrize("hypothesis_id", RULE_IDS)
+def test_a_rollback_never_applies_a_file_no_step_wrote(hypothesis_id):
+    """Read off a live report: the service plan's rollback was
+    `kubectl apply -f checkout-svc-before.yaml`, and no step anywhere in the
+    plan wrote that file — so the undo an operator would reach for mid-incident
+    failed with "the path does not exist"."""
+    plan = build_plan(hypothesis_id)
+    written = {
+        step.command.rsplit(">", 1)[1].strip()
+        for step in (*plan.preconditions, *plan.remediation)
+        if step.command and ">" in step.command
+    }
+    for step in plan.rollback:
+        for word in (step.command or "").split():
+            if word.endswith("-before.yaml"):
+                assert word in written, f"{hypothesis_id} rolls back from {word}, never written"
+
+
+@pytest.mark.parametrize("hypothesis_id", RULE_IDS)
+def test_the_access_check_asks_about_the_change_not_the_read(hypothesis_id):
+    """Every plan printed `kubectl auth can-i get …` for access it said was
+    `get, patch`: the check answers yes for any read-only operator, who then
+    finds out at the edit step."""
+    plan = build_plan(hypothesis_id)
+    for permission in plan.required_permissions:
+        changes = [verb for verb in permission.verbs if verb not in {"get", "list", "watch"}]
+        if changes:
+            assert f"can-i {changes[0]} " in permission.check_command, permission.check_command

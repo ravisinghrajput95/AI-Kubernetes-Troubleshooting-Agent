@@ -576,6 +576,9 @@ class QuotaExhaustedRule:
             ),
             requires_approval=True,
             preconditions=(
+                _capture_current(
+                    ResourceRef(kind="ResourceQuota", name=quota_name, namespace=namespace)
+                ),
                 RemediationStep(
                     "Review current quota usage against its limits.",
                     f"kubectl describe resourcequota {quota_name} -n {namespace}",
@@ -736,6 +739,7 @@ class ServiceEndpointsRule:
             ),
             requires_approval=True,
             preconditions=(
+                _capture_current(service),
                 RemediationStep(
                     "Read the service's current selector.",
                     f"kubectl get service {service.name}{flag} -o jsonpath='{{.spec.selector}}'",

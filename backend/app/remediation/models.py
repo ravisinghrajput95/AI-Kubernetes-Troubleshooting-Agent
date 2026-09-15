@@ -77,6 +77,9 @@ class RemediationStep:
         }
 
 
+_READ_VERBS = frozenset({"get", "list", "watch"})
+
+
 @dataclass(frozen=True, slots=True)
 class Permission:
     """RBAC a operator needs to carry out a step."""
@@ -87,9 +90,16 @@ class Permission:
 
     @property
     def check_command(self) -> str:
-        """`kubectl auth can-i`, so permission can be confirmed before starting."""
+        """`kubectl auth can-i`, so permission can be confirmed before starting.
+
+        Asks about the change, not the read. It asked about `verbs[0]`, which is
+        `get` in every plan here, so a read-only operator was told yes and
+        found out at the edit step — the one check meant to prevent that.
+        """
         scope = f" -n {self.namespace}" if self.namespace else " --all-namespaces"
-        return f"kubectl auth can-i {self.verbs[0]} {self.resources[0]}{scope}"
+        changes = [verb for verb in self.verbs if verb not in _READ_VERBS]
+        verb = changes[0] if changes else self.verbs[0]
+        return f"kubectl auth can-i {verb} {self.resources[0]}{scope}"
 
     def to_dict(self) -> dict[str, Any]:
         return {
