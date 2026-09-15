@@ -1267,6 +1267,14 @@ MUTATIONS = [
         tests="tests/test_reasoning_quality.py",
     ),
     Mutation(
+        name="event-about-another-object-supports-a-workload",
+        why="A Warning on the archive-data claim supported notifier's missing ConfigMap and broke a tie.",
+        path="app/analysis/hypothesis_rules.py",
+        old='    if workloads_only and signal.type.startswith("event.") and kind not in {"Pod", "Deployment"}:\n',
+        new="    if False:  # mutation: events about any object count\n",
+        tests="tests/test_analysis_engine.py",
+    ),
+    Mutation(
         name="refutation-across-unrelated-resources",
         why=(
             "Refuting signals matched by type anywhere in the namespace, so "

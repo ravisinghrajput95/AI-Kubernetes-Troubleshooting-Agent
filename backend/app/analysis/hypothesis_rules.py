@@ -122,6 +122,12 @@ class SignalPatternRule:
 def _about(signal: Signal, triggering: Sequence[Signal], signals: Sequence[Signal]) -> bool:
     """Whether a supporting signal concerns the resources a hypothesis rests on."""
     kind = signal.target.kind
+    workloads_only = all(item.target.kind in {"Pod", "Deployment"} for item in triggering)
+    # An event names the object it is about. notifier's missing ConfigMap was
+    # supported by a Warning on the archive-data claim, and that one signal
+    # decided a three-way tie on breadth.
+    if workloads_only and signal.type.startswith("event.") and kind not in {"Pod", "Deployment"}:
+        return False
     if kind not in {"Pod", "Deployment"}:
         return True
     # A Service whose selector is known to match no pod has no backends, so no

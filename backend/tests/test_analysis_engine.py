@@ -560,3 +560,46 @@ def test_support_is_about_the_workload_the_hypothesis_is_about():
 
     assert "deployment.unavailable_replicas:deployment/prod/checkout" in supporting
     assert "deployment.unavailable_replicas:deployment/prod/archiver" not in supporting
+
+
+def test_an_event_about_another_object_does_not_support_a_workload_hypothesis():
+    """Live: notifier's missing ConfigMap was supported by a ProvisioningFailed
+    Warning on the archive-data claim, which then broke a three-way tie."""
+    result = ENGINE.analyze(
+        investigation(
+            pods={
+                "problematic_pods": [
+                    {
+                        "name": "notifier-6fbf6f6dc-v89dg",
+                        "namespace": "prod",
+                        "status": "CreateContainerConfigError",
+                    }
+                ]
+            },
+            events={
+                "findings": [
+                    {
+                        "namespace": "prod",
+                        "reason": "ProvisioningFailed",
+                        "object": "PersistentVolumeClaim/archive-data",
+                        "message": 'storageclass.storage.k8s.io "fast" not found',
+                    },
+                    {
+                        "namespace": "prod",
+                        "reason": "Failed",
+                        "object": "Pod/notifier-6fbf6f6dc-v89dg",
+                        "message": 'Error: configmap "notifier-config" not found',
+                    },
+                ]
+            },
+        )
+    )
+    hypothesis = result.hypothesis("workload.missing_configuration")
+    signals = hypothesis.supporting_signal_ids
+
+    # Vacuity: the claim's event really was extracted as a signal of a supporting type.
+    assert any(
+        "archive-data" in signal.id and signal.type.startswith("event.")
+        for signal in result.signals
+    )
+    assert not any("archive-data" in item for item in signals)
