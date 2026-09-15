@@ -78,6 +78,8 @@ export interface Finding {
   clusters: string[];
   /** Namespaces its signals named; empty for cluster-level findings. */
   namespaces: string[];
+  /** How many clusters `clusters` names; fewer when names reach the same nodes. */
+  distinct: number;
   firstSeen: string;
   lastSeen: string;
   trend: Trend;
@@ -92,7 +94,10 @@ const MIN_FOR_TREND = 3;
  * One occurrence is an incident, not a pattern, so it is not reported here —
  * it is already on its own investigation page.
  */
-export function recurringFindings(corpus: CorpusEntry[]): Finding[] {
+export function recurringFindings(
+  corpus: CorpusEntry[],
+  key: (cluster: string) => string = (cluster) => cluster,
+): Finding[] {
   const groups = new Map<string, Finding>();
 
   for (const entry of corpus) {
@@ -116,6 +121,7 @@ export function recurringFindings(corpus: CorpusEntry[]): Finding[] {
           occurrences: [occurrence],
           clusters: entry.cluster ? [entry.cluster] : [],
           namespaces: signal.namespace ? [signal.namespace] : [],
+          distinct: 0,
           firstSeen: entry.at,
           lastSeen: entry.at,
           trend: "unknown",
@@ -158,11 +164,12 @@ export function recurringFindings(corpus: CorpusEntry[]): Finding[] {
     .filter((finding) => finding.occurrences.length > 1)
     .map((finding) => ({
       ...finding,
+      distinct: new Set(finding.clusters.map(key)).size,
       trend: trendOf(finding.occurrences, runsOf(finding)),
     }))
     .sort((a, b) => {
-      if (a.clusters.length !== b.clusters.length) {
-        return b.clusters.length - a.clusters.length;
+      if (a.distinct !== b.distinct) {
+        return b.distinct - a.distinct;
       }
       if (a.occurrences.length !== b.occurrences.length) {
         return b.occurrences.length - a.occurrences.length;
@@ -226,7 +233,7 @@ export function trendOf(occurrences: Occurrence[], runs: Occurrence[]): Trend {
 
 /** Findings that appeared on more than one cluster. */
 export function sharedAcrossClusters(findings: Finding[]): Finding[] {
-  return findings.filter((finding) => finding.clusters.length > 1);
+  return findings.filter((finding) => finding.distinct > 1);
 }
 
 /**
@@ -237,7 +244,7 @@ export function sharedAcrossClusters(findings: Finding[]): Finding[] {
  * reader has to work out that it is not two problems.
  */
 export function recurredOnOneCluster(findings: Finding[]): Finding[] {
-  return findings.filter((finding) => finding.clusters.length <= 1);
+  return findings.filter((finding) => finding.distinct <= 1);
 }
 
 /**

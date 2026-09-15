@@ -70,6 +70,11 @@ export function ClusterCard({
             Only {row.scope} has been investigated.
           </p>
         ) : null}
+        {row.sameAs.length ? (
+          <p className="mt-1 truncate text-sm text-ink-3">
+            Reads the same nodes as {row.sameAs.join(", ")}.
+          </p>
+        ) : null}
         {row.state === "stale" ? (
           <p className="mt-1 text-sm text-warning">
             Last investigated {relativeAge(row.ageMs)} — this is what was true then.

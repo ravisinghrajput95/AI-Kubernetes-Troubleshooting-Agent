@@ -5,6 +5,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { SeverityDot } from "../components/report/SeverityDot";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { formatTimestamp } from "../lib/analysis";
+import { clusterKeys } from "../lib/fleet";
 import {
   recurredOnOneCluster,
   recurringFindings,
@@ -113,7 +114,10 @@ export function AskPage() {
     : [];
   const uncovered = fleet.filter((cluster) => !covered.has(cluster.name));
 
-  const findings = useMemo(() => recurringFindings(corpus), [corpus]);
+  const findings = useMemo(
+    () => recurringFindings(corpus, clusterKeys(history.data ?? [])),
+    [corpus, history.data],
+  );
   const matches = useMemo(() => search(findings, query), [findings, query]);
   const shared = useMemo(() => sharedAcrossClusters(matches), [matches]);
   // Disjoint from `shared`, so one finding never appears under two headings.
@@ -260,8 +264,8 @@ function FindingList({
               <span className="shrink-0 text-right">
                 <span className="block font-mono text-sm text-ink-2">
                   {finding.occurrences.length} runs
-                  {finding.clusters.length > 1
-                    ? ` · ${finding.clusters.length} clusters`
+                  {finding.distinct > 1
+                    ? ` · ${finding.distinct} clusters`
                     : ""}
                 </span>
                 <span className="mt-1 block text-sm text-ink-3">

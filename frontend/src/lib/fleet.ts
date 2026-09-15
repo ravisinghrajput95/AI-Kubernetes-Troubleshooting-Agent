@@ -47,6 +47,8 @@ export interface ClusterState {
    * cluster — "" otherwise. Only set when no whole-cluster run exists.
    */
   scope: string;
+  /** Other names whose runs read the same nodes as this one. */
+  sameAs: string[];
 }
 
 /**
@@ -135,8 +137,10 @@ export function fleetState(
     ...newest.keys(),
   ]);
 
+  const key = clusterKeys(history);
   const rows: ClusterState[] = [];
   for (const name of names) {
+    const sameAs = sameClusterAs(name, [...names], key);
     const item = newest.get(name);
     const context = contexts.find((entry) => entry.name === name);
     const cluster = context?.cluster ?? "";
@@ -161,6 +165,7 @@ export function fleetState(
         connection,
         agent,
         scope: "",
+        sameAs,
       });
       continue;
     }
@@ -191,6 +196,7 @@ export function fleetState(
       at: item.timestamp ?? "",
       ageMs,
       scope: describeScope(item),
+      sameAs,
     });
   }
 
@@ -231,11 +237,62 @@ export function rollup(rows: ClusterState[]): Record<FleetState, number> {
   return counts;
 }
 
+/**
+ * Which cluster each name reaches, by the nodes its runs read.
+ *
+ * A cluster is named by whatever reaches it: a kubeconfig context, an agent's
+ * enrolment id. Enrolling an agent for a cluster already read through a
+ * kubeconfig is the documented way onto agents, and a sweep of the console
+ * found one kind cluster, reached three ways, reported as "the same failure on
+ * 3 clusters, counted as one incident". Node UIDs are assigned by the API
+ * server, so names whose runs share one are the same cluster. Returns each
+ * name's group key — the alphabetically first name in its group — and a name
+ * with no recorded nodes is its own group, which is the direction that was
+ * already assumed.
+ */
+export function clusterKeys(history: InvestigationHistoryItem[]): (name: string) => string {
+  const parent = new Map<string, string>();
+  const find = (name: string): string => {
+    let root = name;
+    while (parent.has(root) && parent.get(root) !== root) root = parent.get(root) as string;
+    return root;
+  };
+  const union = (a: string, b: string) => {
+    const [ra, rb] = [find(a), find(b)];
+    if (ra === rb) return;
+    const [keep, fold] = ra < rb ? [ra, rb] : [rb, ra];
+    parent.set(keep, keep);
+    parent.set(fold, keep);
+  };
+
+  const owner = new Map<string, string>();
+  for (const item of history) {
+    if (!item.context) continue;
+    for (const uid of item.node_uids ?? []) {
+      const seen = owner.get(uid);
+      if (seen === undefined) owner.set(uid, item.context);
+      else union(seen, item.context);
+    }
+  }
+  return (name: string) => find(name);
+}
+
+/** The other names that reach the same nodes as `name`. */
+export function sameClusterAs(
+  name: string,
+  names: string[],
+  key: (name: string) => string,
+): string[] {
+  return names.filter((other) => other !== name && key(other) === key(name)).sort();
+}
+
 export interface SignalCluster {
   type: string;
   summary: string;
   severity: string;
   clusters: string[];
+  /** How many clusters those names are; fewer when names share nodes. */
+  distinct: number;
 }
 
 /**
@@ -249,6 +306,7 @@ export interface SignalCluster {
  */
 export function correlateSignals(
   perCluster: Array<{ cluster: string; signals: Array<{ type: string; summary: string; severity: string }> }>,
+  key: (name: string) => string = (name) => name,
 ): SignalCluster[] {
   const groups = new Map<string, SignalCluster>();
 
@@ -262,6 +320,7 @@ export function correlateSignals(
         summary: signal.summary,
         severity: signal.severity,
         clusters: [],
+        distinct: 0,
       };
       if (!group.clusters.includes(cluster)) {
         group.clusters.push(cluster);
@@ -271,10 +330,11 @@ export function correlateSignals(
   }
 
   return [...groups.values()]
-    .filter((group) => group.clusters.length > 1)
+    .map((group) => ({ ...group, distinct: new Set(group.clusters.map(key)).size }))
+    .filter((group) => group.distinct > 1)
     .sort((a, b) => {
-      if (a.clusters.length !== b.clusters.length) {
-        return b.clusters.length - a.clusters.length;
+      if (a.distinct !== b.distinct) {
+        return b.distinct - a.distinct;
       }
       return ORDER[severityTone(a.severity)] - ORDER[severityTone(b.severity)];
     });

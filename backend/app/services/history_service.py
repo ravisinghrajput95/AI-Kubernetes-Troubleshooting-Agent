@@ -84,6 +84,9 @@ class InvestigationHistoryService:
             # this field was first added only to the regenerate path, where the
             # console's fix would have read nothing on every live save.
             "scope": dict(investigation.get("scope") or {}),
+            # Which cluster this was, beneath its name: see
+            # `InvestigationService._cluster_identity`. Both builders, as scope.
+            "node_uids": list((investigation.get("cluster_identity") or {}).get("node_uids") or []),
             "confidence": confidence,
             "status": status,
             "severity": self._renderer.severity(investigation),
@@ -248,6 +251,9 @@ class InvestigationHistoryService:
             # investigation of one deployment became the cluster's headline and
             # its seven pods the cluster's capacity.
             "scope": dict(investigation.get("scope") or {}),
+            # Which cluster this was, beneath its name: see
+            # `InvestigationService._cluster_identity`. Both builders, as scope.
+            "node_uids": list((investigation.get("cluster_identity") or {}).get("node_uids") or []),
             "confidence": int(diagnosis.get("confidence", 0)),
             "status": status,
             "severity": self._renderer.severity(investigation),

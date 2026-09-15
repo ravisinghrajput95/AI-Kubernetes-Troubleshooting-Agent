@@ -242,3 +242,19 @@ describe("search", () => {
     expect(search(findings, "  ")).toHaveLength(1);
   });
 });
+
+describe("names for the same cluster", () => {
+  it("counts clusters, not the names that reach them", () => {
+    const corpus = [
+      entry("1", "kind-dev", "2026-07-01T00:00:00Z", ["pod.crash_loop"]),
+      entry("2", "sweep-agent", "2026-07-02T00:00:00Z", ["pod.crash_loop"]),
+    ];
+    const sameNodes = (cluster: string) => (cluster === "sweep-agent" ? "kind-dev" : cluster);
+
+    const findings = recurringFindings(corpus, sameNodes);
+
+    expect(findings[0].distinct).toBe(1);
+    expect(sharedAcrossClusters(findings)).toEqual([]);
+    expect(recurredOnOneCluster(findings)).toHaveLength(1);
+  });
+});

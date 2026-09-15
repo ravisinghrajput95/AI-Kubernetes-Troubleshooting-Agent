@@ -140,6 +140,21 @@ describe("trends", () => {
   });
 });
 
+describe("names for one cluster", () => {
+  it("does not call a finding cross-cluster when the names read the same nodes", async () => {
+    vi.spyOn(api, "getInvestigationHistory").mockResolvedValue([
+      { ...item("run-a", "kind-dev", "2026-07-01T00:00:00Z"), node_uids: ["uid-1"] },
+      { ...item("run-b", "sweep-agent", "2026-07-02T00:00:00Z"), node_uids: ["uid-1"] },
+    ]);
+
+    renderAsk();
+
+    expect(await screen.findByText("image.no_pull_secret")).toBeInTheDocument();
+    expect(screen.queryByText(/seen on more than one cluster/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/2 clusters/)).not.toBeInTheDocument();
+  });
+});
+
 describe("nothing on record", () => {
   it("says so rather than answering approximately", async () => {
     const user = userEvent.setup();

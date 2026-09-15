@@ -78,6 +78,9 @@ DEEP_TIMELINE_LABELS: dict[str, str] = {
 }
 
 
+NODE_IDENTITY_LIMIT = 32
+
+
 def distinct_workloads(
     problematic_pods: list[dict[str, Any]],
     unhealthy_deployments: list[dict[str, Any]],
@@ -502,6 +505,7 @@ class InvestigationService:
         view = {
             "context": self.context,
             "scope": self._scope(),
+            "cluster_identity": self._cluster_identity(store),
             "health": health,
             "overview": overview,
             "severity": severity,
@@ -526,6 +530,28 @@ class InvestigationService:
         # volumes and owner to the graph the next analysis pass reasons over.
         view["graph"] = self._graph(view)
         return view
+
+    def _cluster_identity(self, store: EvidenceStore) -> dict[str, Any]:
+        """Which nodes this read saw, so two names for one cluster can be told apart.
+
+        A cluster is named by whoever reaches it — a kubeconfig context, an
+        agent's enrolment id — and the documented way onto an agent is to
+        enrol a cluster you already read through a kubeconfig. The fleet and
+        Ask pages then counted one kind cluster reached three ways as "the same
+        failure on 3 clusters, counted as one incident". Node UIDs are assigned
+        by the API server and read by both providers in `k8s.nodes.raw`, so a
+        shared UID means the same cluster. Capped: identity needs overlap, not
+        the whole list, and a thousand-node fleet should not store a thousand.
+        """
+        items = (store.data(EvidenceKind.NODES_RAW, {}) or {}).get("items") or []
+        uids = sorted(
+            {
+                str((item.get("metadata") or {}).get("uid"))
+                for item in items
+                if isinstance(item, dict) and (item.get("metadata") or {}).get("uid")
+            }
+        )
+        return {"node_uids": uids[:NODE_IDENTITY_LIMIT]}
 
     async def _collect(self) -> tuple[EvidenceStore, list[dict[str, Any]]]:
         context = CollectionContext(

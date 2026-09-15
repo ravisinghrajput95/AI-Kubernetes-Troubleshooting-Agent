@@ -389,6 +389,8 @@ export interface InvestigationHistoryItem {
   namespace: string;
   /** What the run was asked about. Absent on entries written before it was recorded. */
   scope?: { namespace?: string; resource_kind?: string; resource_name?: string };
+  /** UIDs of the nodes the run read; two names sharing one are one cluster. */
+  node_uids?: string[];
   confidence: number;
   status: string;
   severity?: string;

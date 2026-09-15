@@ -165,6 +165,25 @@ describe("fleet-wide correlation", () => {
     expect(within(region).getByText(/2 clusters/i)).toBeInTheDocument();
   });
 
+  it("does not call one cluster reached under two names a cross-cluster failure", async () => {
+    // A kind cluster read through its kubeconfig and through an enrolled agent.
+    vi.spyOn(api, "getInvestigationHistory").mockResolvedValue([
+      entry({ id: "1", context: "prod-eu-west", node_uids: ["uid-1"] }),
+      entry({ id: "2", context: "staging-1", node_uids: ["uid-1"] }),
+    ]);
+    vi.spyOn(api, "getInvestigationReport").mockResolvedValue({
+      incident_id: "INC",
+      diagnosis: {
+        signals: [{ type: "image.no_pull_secret", summary: "Image pull is failing", severity: "critical" }],
+      },
+    } as never);
+
+    renderFleet();
+
+    expect(await screen.findByText(/reads the same nodes as staging-1/i)).toBeInTheDocument();
+    expect(screen.queryByText(/cross-cluster signals/i)).not.toBeInTheDocument();
+  });
+
   it("shows nothing when no failure is shared", async () => {
     renderFleet();
     expect(screen.queryByText(/cross-cluster signals/i)).not.toBeInTheDocument();

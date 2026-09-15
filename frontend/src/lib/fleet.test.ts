@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  clusterKeys,
   correlateSignals,
   describeScope,
   fleetState,
@@ -331,5 +332,43 @@ describe("a scoped run is not the cluster's state", () => {
 
   it("treats an entry written before scope was recorded as it always was", () => {
     expect(describeScope({})).toBe("");
+  });
+});
+
+describe("names for the same cluster", () => {
+  // A kind cluster reached through its kubeconfig context and two enrolled
+  // agents: "the same failure on 3 clusters, counted as one incident".
+  const kind = ["uid-node-1"];
+  const history = [
+    entry({ id: "a", context: "kind-dev", node_uids: kind }),
+    entry({ id: "b", context: "sweep-agent", node_uids: kind }),
+    entry({ id: "c", context: "api-cut", node_uids: ["uid-node-1", "uid-node-2"] }),
+    entry({ id: "d", context: "prod-eu", node_uids: ["uid-prod-1"] }),
+    entry({ id: "e", context: "no-nodes-recorded" }),
+  ];
+  const signal = { type: "pod.crash_loop", summary: "crash", severity: "critical" };
+
+  it("groups names whose runs read the same nodes, and nothing else", () => {
+    const key = clusterKeys(history);
+    expect(new Set(["kind-dev", "sweep-agent", "api-cut"].map(key)).size).toBe(1);
+    expect(key("prod-eu")).not.toBe(key("kind-dev"));
+    expect(key("no-nodes-recorded")).toBe("no-nodes-recorded");
+  });
+
+  it("does not report one cluster reached three ways as a cross-cluster failure", () => {
+    const perCluster = ["kind-dev", "sweep-agent", "api-cut"].map((cluster) => ({ cluster, signals: [signal] }));
+    expect(correlateSignals(perCluster, clusterKeys(history))).toEqual([]);
+
+    const withProd = correlateSignals([...perCluster, { cluster: "prod-eu", signals: [signal] }], clusterKeys(history));
+    expect(withProd).toHaveLength(1);
+    expect(withProd[0].distinct).toBe(2);
+    expect(withProd[0].clusters).toHaveLength(4);
+  });
+
+  it("tells each card which other names reach its nodes", () => {
+    const contexts = ["kind-dev", "sweep-agent", "api-cut", "prod-eu"].map(context);
+    const rows = fleetState(contexts, history, new Map(), NOW);
+    expect(rows.find((row) => row.name === "sweep-agent")?.sameAs).toEqual(["api-cut", "kind-dev"]);
+    expect(rows.find((row) => row.name === "prod-eu")?.sameAs).toEqual([]);
   });
 });

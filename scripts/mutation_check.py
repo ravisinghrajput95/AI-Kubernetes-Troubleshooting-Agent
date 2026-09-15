@@ -1197,6 +1197,27 @@ MUTATIONS = [
         tests="tests/test_affected_workloads.py",
     ),
     Mutation(
+        name="cluster-identity-lost-on-regenerate",
+        why=(
+            "One kind cluster reached through a kubeconfig and two agents was "
+            "'the same failure on 3 clusters'. Node UIDs tell the names apart "
+            "only if both history builders record them."
+        ),
+        path="app/services/history_service.py",
+        old=(
+            '            "scope": dict(investigation.get("scope") or {}),\n'
+            "            # Which cluster this was, beneath its name: see\n"
+            "            # `InvestigationService._cluster_identity`. Both builders, as scope.\n"
+            '            "node_uids": list((investigation.get("cluster_identity") or {}).get("node_uids") or []),\n'
+            '            "confidence": int(diagnosis.get("confidence", 0)),\n'
+        ),
+        new=(
+            '            "scope": dict(investigation.get("scope") or {}),\n'
+            '            "confidence": int(diagnosis.get("confidence", 0)),\n'
+        ),
+        tests="tests/test_cluster_identity.py",
+    ),
+    Mutation(
         name="refutation-across-unrelated-resources",
         why=(
             "Refuting signals matched by type anywhere in the namespace, so "

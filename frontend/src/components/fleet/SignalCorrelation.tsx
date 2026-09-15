@@ -47,7 +47,10 @@ export function SignalCorrelation({
                 <span className="font-mono text-sm text-ink">{group.type}</span>
               </span>
               <span className="font-mono text-sm text-ink-2">
-                {group.clusters.length} clusters
+                {group.distinct} clusters
+                {group.clusters.length > group.distinct
+                  ? ` · ${group.clusters.length} names`
+                  : ""}
               </span>
             </div>
             <p className="mt-2 text-sm text-ink-2">{group.summary}</p>

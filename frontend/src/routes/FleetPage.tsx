@@ -8,6 +8,7 @@ import { SignalCorrelation } from "../components/fleet/SignalCorrelation";
 import { SeverityDot } from "../components/report/SeverityDot";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import {
+  clusterKeys,
   correlateSignals,
   fleetState,
   rollup,
@@ -102,9 +103,10 @@ export function FleetPage() {
             })),
           }))
           .filter((entry) => entry.cluster),
+        clusterKeys(history.data ?? []),
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [reports.map((report) => report.data?.incident_id).join("|")],
+    [reports.map((report) => report.data?.incident_id).join("|"), history.data],
   );
 
   async function investigate(name: string) {
