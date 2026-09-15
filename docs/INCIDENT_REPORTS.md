@@ -30,7 +30,7 @@ investigation + diagnosis  →  IncidentReportComposer  →  IncidentReport
 | Confidence Assessment | How the number was composed |
 | Resolution | The reviewed change, its risk, and rollback |
 | Verification | How to confirm it worked, and the access needed |
-| Lessons Learned | What would have shortened this investigation |
+| Lessons Learned | Evidence the investigation did not have, and what the deep round added |
 | Preventive Actions | What to change so it does not recur |
 | Appendix | Every command the platform ran |
 

@@ -146,8 +146,15 @@ function EvidenceSection({
     <>
       {coverage ? (
         <p className="max-w-measure text-body text-ink-2">
-          {coverage.usable} of {coverage.total} records were usable
-          {coverage.completeness ? `, ${coverage.completeness}% coverage` : ""}.
+          {/* Out of the reads that could answer, as coverage is: "50 of 60
+              records were usable, 100% coverage" read as a contradiction. */}
+          {coverage.usable} of {coverage.total - (coverage.not_applicable ?? 0)} records were
+          usable
+          {coverage.completeness ? `, ${coverage.completeness}% coverage` : ""}
+          {coverage.not_applicable
+            ? `; ${coverage.not_applicable} not applicable`
+            : ""}
+          .
         </p>
       ) : null}
 

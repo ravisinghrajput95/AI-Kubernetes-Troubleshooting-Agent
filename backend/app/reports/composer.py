@@ -305,7 +305,11 @@ class IncidentReportComposer:
 
         gaps = diagnosis.get("evidence_gaps") or []
         if gaps:
-            body.append("Evidence that would have shortened this investigation:")
+            # What was missing, not a counterfactual: the list includes every
+            # backend nobody configured, and "Prometheus is not configured"
+            # was offered as what would have shortened diagnosing a Service
+            # selector that matches no pod — which no metric bears on.
+            body.append("Evidence this investigation did not have:")
             body.extend(f"  - {gap}" for gap in gaps[:8])
 
         rounds = investigation.get("playbook_rounds") or []

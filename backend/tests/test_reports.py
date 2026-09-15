@@ -242,6 +242,14 @@ class TestContent:
         assert "Previous container logs" in text
         assert "derived" in text
 
+    def test_lessons_learned_lists_missing_evidence_without_claiming_it_would_have_helped(self):
+        """A live report offered "Prometheus is not configured" as evidence that
+        would have shortened diagnosing a Service selector matching no pod."""
+        text = lines_of(compose(), "Lessons Learned")
+
+        assert "Evidence this investigation did not have:" in text
+        assert "would have shortened" not in text
+
     def test_appendix_notes_that_all_commands_were_read_only(self):
         section = compose().section("Appendix: Commands Executed")
 

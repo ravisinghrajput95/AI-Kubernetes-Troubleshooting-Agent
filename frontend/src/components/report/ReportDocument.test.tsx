@@ -168,6 +168,17 @@ describe("evidence", () => {
     expect(screen.getByText(/9 of 11 records were usable/i)).toBeInTheDocument();
   });
 
+  it("counts usable records out of those that could answer", () => {
+    renderDocument({
+      investigation: {
+        ...INVESTIGATION,
+        evidence_coverage: { total: 60, usable: 50, completeness: 100, not_applicable: 10 },
+      } as never,
+    });
+    const line = screen.getByText(/records were\s+usable/i);
+    expect(line.textContent).toMatch(/50 of 50 records were\s+usable, 100% coverage; 10 not applicable/);
+  });
+
   it("lists gaps as findings rather than omitting them", () => {
     // A gap is a result. "We could not look" must stay distinguishable from
     // "we looked and everything was fine".

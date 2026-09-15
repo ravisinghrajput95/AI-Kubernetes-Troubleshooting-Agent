@@ -1218,6 +1218,33 @@ MUTATIONS = [
         tests="tests/test_cluster_identity.py",
     ),
     Mutation(
+        name="one-refuted-pod-refutes-the-pool",
+        why=(
+            "fraud-scorer's OOM kill 'argued against' checkout failing on startup, "
+            "because the rule pooled every pod with a BackOff event."
+        ),
+        path="app/analysis/hypothesis_rules.py",
+        old="        if standing:\n",
+        new="        if False:  # mutation: refute the pool\n",
+        tests="tests/test_analysis_engine.py",
+    ),
+    Mutation(
+        name="access-check-asks-about-the-read",
+        why="Every plan's access check was `can-i get`, which a read-only operator passes.",
+        path="app/remediation/models.py",
+        old="        verb = changes[0] if changes else self.verbs[0]\n",
+        new="        verb = self.verbs[0]\n",
+        tests="tests/test_remediation_safety.py",
+    ),
+    Mutation(
+        name="rollback-from-a-file-never-written",
+        why="The service plan rolled back from checkout-svc-before.yaml, which no step wrote.",
+        path="app/remediation/rules.py",
+        old="                _capture_current(service),\n",
+        new="",
+        tests="tests/test_remediation_safety.py",
+    ),
+    Mutation(
         name="refutation-across-unrelated-resources",
         why=(
             "Refuting signals matched by type anywhere in the namespace, so "
