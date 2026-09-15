@@ -574,3 +574,27 @@ class TestAKubeconfigWithNoContexts:
         assert result["items"] == []
         assert result["current_context"] == ""
         assert result["error"] == ""
+
+
+async def test_a_report_of_a_run_that_collected_nothing_does_not_say_success(monkeypatch, tmp_path):
+    """Its Executive Summary read "Status: success" under a Failed badge: the
+    runner saved every report with the literal status "success"."""
+    from app.providers.local_kubectl import LocalKubectlProvider
+    from app.services import history_service, investigation_runner, investigation_service
+    from app.services.report_store import FilesystemReportStore
+
+    monkeypatch.setattr(
+        investigation_service,
+        "select_provider",
+        lambda context, principal: LocalKubectlProvider(
+            context="test-cluster", executor=UnreachableCluster()
+        ),
+    )
+    monkeypatch.setattr(
+        history_service, "get_report_store", lambda: FilesystemReportStore(tmp_path)
+    )
+
+    result = await investigation_runner.run_investigation()
+
+    assert investigation_runner.collection_failure(result["investigation"])  # vacuity
+    assert result["history_item"]["status"] == "failed"

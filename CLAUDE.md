@@ -1478,6 +1478,17 @@ Three conditions, and each stops a different false accusation:
 The message names the impersonated identity, because the confusing part is that
 the *platform* can read the cluster and the user cannot.
 
+**`agent_cannot_reach_api` is the third sibling**: an agent connected and
+heartbeating, with only its own traffic to port 6443 dropped. Every read failed
+promptly with client-go's `dial tcp …:6443: i/o timeout` and was recorded — each
+record and the investigation — as "Verify kubeconfig, cluster access, and kubectl
+permissions", because `classify_error` knew only kubectl's wordings and replaced
+anything else with that default. Network errors are now their own class that
+**keeps the reason**, matched after kubectl's "Unable to connect" so the kubeconfig
+path's messages are unchanged. Reproducing it took two attempts that measured the
+harness: detaching the container from the kind network also cut its route to the
+gateway, and the first DROP rule was IPv4-only on a dual-stack network.
+
 ### Analysis layer (`app/analysis/`)
 
 Evidence → **signals** → **hypotheses**, all deterministic, all before any model call.
@@ -1626,6 +1637,8 @@ add them to the captured fixture.
 distinct query shapes rather than distinct workloads.
 
 ### Reports (`app/reports/`)
+
+**A report's status is the run's.** `run_investigation` saved every report as the literal `"success"`, so an investigation that collected nothing — failed by the job API a moment later — had an Executive Summary reading "Status: success" under the console's Failed badge. It applies `collection_failure`, the job API's own test.
 
 `IncidentReportComposer` builds a structured `IncidentReport`; the PDF, Markdown and JSON writers all render **that one composition**, so the formats cannot disagree and a new section is one change rather than three. The JSON report carries the composition under its `report` key.
 

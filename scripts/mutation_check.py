@@ -1236,6 +1236,29 @@ MUTATIONS = [
         new="    if False:  # mutation: never refuse for an away agent\n",
         tests="tests/test_agent_routing.py",
     ),
+    Mutation(
+        name="agent-network-error-becomes-kubectl-advice",
+        why=(
+            "An agent whose API server was unreachable returned dial tcp i/o "
+            "timeout for every read, recorded as 'Verify kubeconfig, cluster "
+            "access, and kubectl permissions' with the reason discarded."
+        ),
+        path="app/kubernetes/errors.py",
+        old="    if any(needle in lowered for needle in _NETWORK_NEEDLES):\n",
+        new="    if False:  # mutation: network errors fall to the kubectl default\n",
+        tests="tests/test_agent_api_server_unreachable.py",
+    ),
+    Mutation(
+        name="failed-run-reported-as-success",
+        why=(
+            "Every report was saved with the literal status 'success', so a run "
+            "that collected nothing read 'Status: success' under a Failed badge."
+        ),
+        path="app/services/investigation_runner.py",
+        old='            "failed" if collection_failure(investigation) else "success",\n',
+        new='            "success",\n',
+        tests="tests/test_investigation_service.py",
+    ),
 ]
 
 

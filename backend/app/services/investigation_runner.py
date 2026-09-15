@@ -91,7 +91,12 @@ async def run_investigation(
             InvestigationHistoryService().save,
             diagnosis,
             investigation,
-            "success",
+            # The report's own verdict, the same test the job API applies. This
+            # was the literal "success", so every investigation that collected
+            # nothing — and was marked failed by the job a moment later — had a
+            # report whose Executive Summary said "Status: success" under the
+            # console's red Failed badge.
+            "failed" if collection_failure(investigation) else "success",
             investigation_id,
             principal.subject if principal else "",
         )

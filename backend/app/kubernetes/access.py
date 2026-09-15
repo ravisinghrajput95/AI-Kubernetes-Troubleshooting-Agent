@@ -36,6 +36,8 @@ presence.
 
 from typing import Any
 
+from app.kubernetes.errors import API_SERVER_UNREACHABLE
+
 # What fraction of the *failures* must have been refusals before a run with no
 # usable evidence is called an access problem rather than an unreachable
 # cluster. Both conditions are required — see below.
@@ -161,4 +163,43 @@ def agent_unanswered(
         f"kubeconfig or permissions problem — check the k8s-ops-agent pod in that "
         f"cluster, which may be hung, starved of CPU, or unable to reach its own "
         f"API server."
+    )
+
+
+def agent_cannot_reach_api(
+    coverage: dict[str, Any],
+    through_agent: bool,
+    cluster_id: str = "",
+) -> str | None:
+    """A message when an agent answered, but its API server did not.
+
+    The third of these. With the agent connected and heartbeating, and only its
+    traffic to port 6443 dropped, every read came back promptly as a failure
+    — so not `agent_unanswered`, which is about silence — and the investigation
+    said "Verify kubeconfig, cluster access, and kubectl permissions". Nothing
+    about a kubeconfig was involved: the agent's own path to its API server was
+    broken, and each record now says so in the agent's words.
+
+    Same guards as its siblings: through an agent, nothing usable, enough
+    failures to diagnose from, and those failures dominated by the network.
+    """
+    if not through_agent:
+        return None
+    degraded = coverage.get("degraded") or []
+    unreachable = [
+        item for item in degraded if str(item.get("detail", "")).startswith(API_SERVER_UNREACHABLE)
+    ]
+    if len(unreachable) < MINIMUM_REFUSALS or int(coverage.get("usable", 0)) > 0:
+        return None
+    attempted = [item for item in degraded if item.get("status") != "not_applicable"]
+    if not attempted or len(unreachable) / len(attempted) < TIMEOUT_SHARE:
+        return None
+
+    who = f"'{cluster_id}'" if cluster_id else "this cluster"
+    reason = str(unreachable[0]["detail"])[len(API_SERVER_UNREACHABLE) + 2 :]
+    return (
+        f"The agent for {who} is connected and answering, but it could not reach its "
+        f"cluster's API server: {len(unreachable)} of {len(attempted)} reads failed "
+        f"({reason}). This is the network path from the agent to its API server, not "
+        f"the platform's kubeconfig or your permissions."
     )

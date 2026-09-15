@@ -17,7 +17,7 @@ from app.collectors.kubernetes import build_default_collectors
 from app.core.config import settings
 from app.evidence.models import EvidenceKind
 from app.evidence.store import EvidenceStore
-from app.kubernetes.access import access_failure, agent_unanswered
+from app.kubernetes.access import access_failure, agent_cannot_reach_api, agent_unanswered
 from app.kubernetes.errors import friendly_error
 from app.observability import metrics
 from app.playbooks.kubernetes import DEFAULT_PLAYBOOKS
@@ -449,10 +449,17 @@ class InvestigationService:
             through_agent=type(underlying(self.provider)).__name__ == "RemoteAgentProvider",
             cluster_id=getattr(self.provider, "cluster_id", "") or "",
         )
+        cut_off = agent_cannot_reach_api(
+            store.coverage(),
+            through_agent=type(underlying(self.provider)).__name__ == "RemoteAgentProvider",
+            cluster_id=getattr(self.provider, "cluster_id", "") or "",
+        )
         if refusal:
             health = {"status": "error", "message": refusal}
         elif unanswered:
             health = {"status": "error", "message": unanswered}
+        elif cut_off:
+            health = {"status": "error", "message": cut_off}
         overview = self._cluster_overview(store, pods, events, deployments, network, metrics)
         severity = self._severity_summary(
             pods, events, deployments, network, nodes, storage, workloads
