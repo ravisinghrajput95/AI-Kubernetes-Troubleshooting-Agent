@@ -6,6 +6,7 @@ import { AgentDot } from "../components/fleet/AgentDot";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { useScope } from "../hooks/useScope";
 import { useSession } from "../hooks/useSession";
+import { describeScope } from "../lib/fleet";
 import {
   getInvestigationHistory,
   getKubernetesContexts,
@@ -261,7 +262,8 @@ function RecentInvestigations() {
             >
               <span className="min-w-0 flex-1 truncate text-ink">{item.root_cause}</span>
               <span className="shrink-0 font-mono text-sm text-ink-3">
-                {item.context || item.namespace} · {item.confidence}%
+                {item.context || item.namespace}
+                {describeScope(item) ? ` · ${describeScope(item)}` : ""} · {item.confidence}%
               </span>
             </Link>
           </li>

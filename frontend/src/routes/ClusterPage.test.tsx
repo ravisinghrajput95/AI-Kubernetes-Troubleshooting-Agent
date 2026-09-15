@@ -231,6 +231,32 @@ describe("scope", () => {
   });
 });
 
+describe("run lists", () => {
+  it("say which runs were scoped, so two root causes do not read as one cluster changing its mind", async () => {
+    vi.spyOn(api, "getInvestigationHistory").mockResolvedValue([
+      {
+        id: "scoped", context: "prod-eu-west", timestamp: at(60_000), root_cause: "Application fails on startup",
+        namespace: "payments", confidence: 89, severity: "Critical", status: "success",
+        scope: { namespace: "payments", resource_kind: "deployment", resource_name: "checkout" },
+      },
+      {
+        id: "whole", context: "prod-eu-west", timestamp: at(600_000), root_cause: "Service has no ready endpoints",
+        namespace: "payments", confidence: 94, severity: "Critical", status: "success",
+        scope: { namespace: "all", resource_kind: "cluster", resource_name: "" },
+      },
+    ] as InvestigationHistoryItem[]);
+
+    for (const tab of ["investigations", "reports"]) {
+      const { unmount } = renderCluster(`/clusters/prod-eu-west?tab=${tab}`);
+      const scoped = await screen.findByRole("link", { name: /application fails on startup/i });
+      expect(scoped.textContent).toContain("deployment payments/checkout");
+      const whole = screen.getByRole("link", { name: /no ready endpoints/i });
+      expect(whole.textContent).not.toMatch(/deployment|namespace/);
+      unmount();
+    }
+  });
+});
+
 describe("events", () => {
   it("names the object each event is about", async () => {
     vi.spyOn(api, "getInvestigationReport").mockResolvedValue({

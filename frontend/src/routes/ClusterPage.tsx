@@ -14,6 +14,7 @@ import {
 } from "../lib/fleet";
 import { evidenceIndex, evidenceTone, severityTone } from "../lib/report";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
+import type { InvestigationHistoryItem } from "../types/investigation";
 import { formatTimestamp } from "../lib/analysis";
 import {
   getInvestigationHistory,
@@ -229,7 +230,7 @@ function RunList({
   runs,
   reports = false,
 }: {
-  runs: Array<{ id: string; timestamp: string; root_cause: string; severity?: string; confidence: number }>;
+  runs: InvestigationHistoryItem[];
   reports?: boolean;
 }) {
   if (runs.length === 0) {
@@ -251,6 +252,12 @@ function RunList({
               <SeverityDot tone={severityTone(run.severity)} />
               <span className="truncate text-sm text-ink">{run.root_cause}</span>
             </span>
+            {/* A run scoped to one deployment and a whole-cluster run minutes
+                apart named different root causes, listed alike: the list read
+                as the cluster changing its mind. */}
+            {describeScope(run) ? (
+              <span className="shrink-0 text-sm text-ink-3">{describeScope(run)}</span>
+            ) : null}
             <span className="shrink-0 font-mono text-sm text-ink-3">
               {reports ? "PDF · JSON · MD · " : ""}
               {run.confidence}% · {formatTimestamp(run.timestamp)}
