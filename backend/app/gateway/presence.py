@@ -55,7 +55,13 @@ class AgentPresence:
 
     def announce(self, session) -> None:
         """Publish, or refresh, one agent's presence."""
-        record = {**session.describe(), "worker": self._worker}
+        # `written_at` is on this worker's clock, like `last_seen`, so the two
+        # can be compared with each other without another worker's clock.
+        record = {
+            **session.describe(),
+            "worker": self._worker,
+            "written_at": datetime.now(UTC).isoformat(),
+        }
         try:
             self._bus.set_expiring(
                 self._key(session.tenant, session.cluster_id),
@@ -138,21 +144,26 @@ class AgentPresence:
         raises: a console that under-reports is bad, an investigation failed
         by its index is worse.
         """
+        pattern = f"{self._bus.prefix}:agents:{tenant}:*"
         try:
-            raw = self._bus.scan_values(f"{self._bus.prefix}:agents:{tenant}:*")
+            if hasattr(self._bus, "scan_values_with_ttl"):
+                raw = self._bus.scan_values_with_ttl(pattern)
+            else:
+                raw = [(value, None) for value in self._bus.scan_values(pattern)]
         except Exception as exc:
             logger.warning("Could not read agent presence: {error}", error=exc)
             return None
 
         records = []
         now = datetime.now(UTC)
-        for value in raw:
+        for value, remaining in raw:
             try:
                 record = json.loads(value)
             except (TypeError, ValueError):
                 continue
             record["local"] = record.get("worker") == self._worker
-            records.append(_as_of(record, now))
+            elapsed = None if remaining is None else max(0.0, PRESENCE_TTL_SECONDS - remaining)
+            records.append(_as_of(record, now, elapsed))
         return sorted(records, key=lambda item: item.get("cluster_id", ""))
 
 
@@ -174,7 +185,9 @@ def get_agent_presence() -> AgentPresence | None:
     return _presence
 
 
-def _as_of(record: dict[str, Any], now: datetime) -> dict[str, Any]:
+def _as_of(
+    record: dict[str, Any], now: datetime, elapsed_since_write: float | None = None
+) -> dict[str, Any]:
     """A presence record's liveness, evaluated when it is read.
 
     `announce` stores `session.describe()`, which computes `online` and
@@ -197,5 +210,28 @@ def _as_of(record: dict[str, Any], now: datetime) -> dict[str, Any]:
         return record
     if seen.tzinfo is None:
         seen = seen.replace(tzinfo=UTC)
-    since = max(0.0, (now - seen).total_seconds())
+
+    # **Never the reader's clock against the writer's.** `last_seen` is on the
+    # worker that holds the stream, and comparing it with this worker's `now`
+    # made every agent on a worker whose clock lagged by more than the stale
+    # threshold read silent from every other worker, and one whose clock ran
+    # ahead read online after it had gone quiet — so the console's verdict on
+    # one agent depended on which replica the load balancer picked. The age is
+    # the writer's own `written_at - last_seen` plus the time since the write,
+    # which Redis's TTL measures on the one clock every worker shares.
+    written = _parse_time(record.get("written_at"))
+    if written is not None and elapsed_since_write is not None:
+        since = max(0.0, (written - seen).total_seconds() + elapsed_since_write)
+    else:
+        since = max(0.0, (now - seen).total_seconds())
     return {**record, "seconds_since_seen": round(since, 1), "online": since <= AGENT_STALE_SECONDS}
+
+
+def _parse_time(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)

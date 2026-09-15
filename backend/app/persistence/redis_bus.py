@@ -141,6 +141,27 @@ class RedisBus:
             return []
         return [value for value in self._sync.mget(keys) if value]
 
+    def scan_values_with_ttl(self, pattern: str) -> list[tuple[str, float | None]]:
+        """Values of every key matching `pattern`, each with its remaining TTL.
+
+        The TTL is on Redis's clock, which is the one clock every worker shares
+        — so "how long ago was this written" can be answered without comparing
+        two workers' clocks. `None` for a key with no expiry.
+        """
+        keys = list(self._sync.scan_iter(match=pattern, count=100))
+        if not keys:
+            return []
+        pipe = self._sync.pipeline(transaction=False)
+        pipe.mget(keys)
+        for key in keys:
+            pipe.pttl(key)
+        values, *ttls = pipe.execute()
+        return [
+            (value, ttl / 1000 if ttl is not None and ttl >= 0 else None)
+            for value, ttl in zip(values, ttls, strict=False)
+            if value
+        ]
+
     # --- queue --------------------------------------------------------------
 
     def enqueue(self, job_id: str, worker_id: str = "") -> None:

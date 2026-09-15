@@ -70,7 +70,7 @@ MUTATIONS = [
             "seconds and the console's red 'Agent silent' state never appeared."
         ),
         path="app/gateway/presence.py",
-        old="            records.append(_as_of(record, now))\n",
+        old="            records.append(_as_of(record, now, elapsed))\n",
         new="            records.append(record)  # mutation: liveness as written\n",
         tests="tests/test_agent_presence.py",
     ),
@@ -1258,6 +1258,18 @@ MUTATIONS = [
         old='            "failed" if collection_failure(investigation) else "success",\n',
         new='            "success",\n',
         tests="tests/test_investigation_service.py",
+    ),
+    Mutation(
+        name="presence-age-compares-two-workers-clocks",
+        why=(
+            "last_seen from the stream-holding worker was aged against the "
+            "reading worker's clock, so a lagging writer's healthy agents read "
+            "silent from every other replica."
+        ),
+        path="app/gateway/presence.py",
+        old="    if written is not None and elapsed_since_write is not None:\n",
+        new="    if False:  # mutation: reader clock against writer clock\n",
+        tests="tests/test_agent_presence.py",
     ),
 ]
 

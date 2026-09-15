@@ -1660,6 +1660,16 @@ Sections with nothing behind them are **omitted, not padded** — same rule as t
 
 **"Online" is heartbeat-derived, not socket-derived.** An idle stream and a half-open one look identical from the platform's side, so the gateway pings every 15s and the agent's `AgentHealth` reply refreshes `last_seen`; `AGENT_STALE_SECONDS` (30) decides staleness. Do not replace this with "the stream is open".
 
+**Presence age never compares two workers' clocks.** `last_seen` is written on
+the worker holding the stream and was aged against the *reading* worker's `now`,
+so a writer whose clock lagged by more than `AGENT_STALE_SECONDS` made its
+healthy agents read silent from every other replica — the console's verdict on
+one agent depending on which replica answered. Records carry `written_at` on the
+writer's clock; the age is `written_at - last_seen` plus the time since the
+write, which `scan_values_with_ttl` reads from Redis's remaining TTL on the one
+clock every worker shares. Job leases were already safe: they compare against
+Postgres `now()`.
+
 **Liveness is evaluated when a presence record is read, and the timings are one
 ordered chain** (`app/gateway/timing.py`): heartbeat 15 < stale 30 < presence
 TTL 45 < unclaimed grace 60. `announce` stores `session.describe()`, which

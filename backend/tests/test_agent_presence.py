@@ -24,6 +24,9 @@ class FakeBus:
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
         self.ttls: dict[str, int] = {}
+        # Remaining TTL per key, as Redis's PTTL would report it. Unset keys
+        # report none, which is how a bus without TTLs behaves.
+        self.remaining: dict[str, float] = {}
         self.prefix = "test"
 
     def set_expiring(self, key: str, value: str, ttl_seconds: int) -> None:
@@ -37,6 +40,15 @@ class FakeBus:
     def scan_values(self, pattern: str) -> list[str]:
         head = pattern.rstrip("*")
         return [value for key, value in self.values.items() if key.startswith(head)]
+
+    def scan_values_with_ttl(self, pattern: str) -> list[tuple[str, float | None]]:
+        """`ttls` holds what Redis would report as *remaining* for each key."""
+        head = pattern.rstrip("*")
+        return [
+            (value, self.remaining.get(key))
+            for key, value in self.values.items()
+            if key.startswith(head)
+        ]
 
     def get(self, key: str) -> str | None:
         return self.values.get(key)
@@ -311,3 +323,56 @@ def test_with_the_index_unreadable_the_api_shows_this_workers_agents_as_partial(
 
     assert [item["cluster_id"] for item in answer["items"]] == ["prod-eu"]
     assert answer["complete"] is False
+
+
+class TestAgeDoesNotDependOnWhichWorkerReads:
+    """Workers' clocks drift, and presence compared them.
+
+    `last_seen` is written on the worker holding the stream and was aged
+    against the *reading* worker's clock: a writer 90 seconds behind made its
+    healthy agents read silent from every other replica, and one ahead made a
+    silent agent read online. Now the age is the writer's own difference plus
+    the time since the write, which Redis measures on its single clock.
+    """
+
+    KEY = "test:agents:default:skewed"
+
+    def write(self, bus, writer_offset: float, silent_for: float, written_ago: float) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        from app.gateway.presence import PRESENCE_TTL_SECONDS
+
+        writer_now = (
+            datetime.now(UTC) + timedelta(seconds=writer_offset) - timedelta(seconds=written_ago)
+        )
+        bus.values[self.KEY] = json.dumps(
+            {
+                "cluster_id": "skewed",
+                "tenant": "default",
+                "online": True,
+                "last_seen": (writer_now - timedelta(seconds=silent_for)).isoformat(),
+                "written_at": writer_now.isoformat(),
+                "worker": "worker-a",
+            }
+        )
+        bus.remaining[self.KEY] = PRESENCE_TTL_SECONDS - written_ago
+
+    def test_a_healthy_agent_on_a_lagging_worker_reads_online(self, bus):
+        self.write(bus, writer_offset=-90, silent_for=3, written_ago=1)
+        [agent] = AgentPresence(bus, "worker-b").fleet("default")
+        assert agent["online"] is True, agent
+        assert agent["seconds_since_seen"] < 10
+
+    def test_a_silent_agent_on_a_fast_worker_reads_silent(self, bus):
+        from app.gateway.timing import AGENT_STALE_SECONDS
+
+        self.write(bus, writer_offset=+90, silent_for=AGENT_STALE_SECONDS + 5, written_ago=1)
+        [agent] = AgentPresence(bus, "worker-b").fleet("default")
+        assert agent["online"] is False, agent
+
+    def test_time_since_the_write_still_counts(self, bus):
+        # The control on the TTL half: an agent last heard just before a write
+        # that happened 40 seconds ago has been silent for 40 seconds.
+        self.write(bus, writer_offset=-90, silent_for=1, written_ago=40)
+        [agent] = AgentPresence(bus, "worker-b").fleet("default")
+        assert agent["online"] is False, agent
