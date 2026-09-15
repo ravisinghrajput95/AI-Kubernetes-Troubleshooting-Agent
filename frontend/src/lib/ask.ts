@@ -28,7 +28,37 @@ export interface CorpusEntry {
   cluster: string;
   at: string;
   rootCause: string;
-  signals: Array<{ type: string; summary: string; severity: string }>;
+  signals: Array<{ type: string; summary: string; severity: string; namespace?: string }>;
+  /**
+   * Whether this run read the cluster at all. A run that collected nothing
+   * found nothing, and that is not the same as a finding being absent.
+   * Absent on older callers, and treated as true.
+   */
+  collected?: boolean;
+  /** What the run was asked about; absent means the whole cluster. */
+  scope?: { namespace?: string; resource_kind?: string; resource_name?: string };
+}
+
+/**
+ * Whether a run could have raised a finding about these namespaces.
+ *
+ * A trend's denominator is the runs where a finding *could* have appeared. On a
+ * live console every finding read "happening more often", because the early
+ * half held runs whose agent could not reach its API server — nothing
+ * collected, so nothing found — and runs scoped to one deployment, which never
+ * read the pods the finding was about. Both were counted as the finding being
+ * absent. A resource-scoped run is treated as seeing nothing it did not
+ * report, which is the conservative reading: the pod and deployment reads are
+ * narrowed to that resource.
+ */
+function couldSee(entry: CorpusEntry, namespaces: string[]): boolean {
+  if (entry.collected === false) return false;
+  const scope = entry.scope ?? {};
+  if (scope.resource_name && scope.resource_kind && scope.resource_kind !== "cluster") {
+    return false;
+  }
+  if (!scope.namespace || scope.namespace === "all") return true;
+  return namespaces.length > 0 && namespaces.every((namespace) => namespace === scope.namespace);
 }
 
 export interface Occurrence {
@@ -46,6 +76,8 @@ export interface Finding {
   tone: SeverityTone;
   occurrences: Occurrence[];
   clusters: string[];
+  /** Namespaces its signals named; empty for cluster-level findings. */
+  namespaces: string[];
   firstSeen: string;
   lastSeen: string;
   trend: Trend;
@@ -83,6 +115,7 @@ export function recurringFindings(corpus: CorpusEntry[]): Finding[] {
           tone: severityTone(signal.severity),
           occurrences: [occurrence],
           clusters: entry.cluster ? [entry.cluster] : [],
+          namespaces: signal.namespace ? [signal.namespace] : [],
           firstSeen: entry.at,
           lastSeen: entry.at,
           trend: "unknown",
@@ -95,6 +128,9 @@ export function recurringFindings(corpus: CorpusEntry[]): Finding[] {
       if (!existing.occurrences.some((item) => item.investigationId === entry.investigationId)) {
         existing.occurrences.push(occurrence);
       }
+      if (signal.namespace && !existing.namespaces.includes(signal.namespace)) {
+        existing.namespaces.push(signal.namespace);
+      }
       if (entry.cluster && !existing.clusters.includes(entry.cluster)) {
         existing.clusters.push(entry.cluster);
       }
@@ -103,9 +139,15 @@ export function recurringFindings(corpus: CorpusEntry[]): Finding[] {
     }
   }
 
-  const runsOf = (clusters: string[]): Occurrence[] =>
+  // Every run that found it, plus every run that could have and did not.
+  const runsOf = (finding: Finding): Occurrence[] =>
     corpus
-      .filter((entry) => clusters.includes(entry.cluster))
+      .filter(
+        (entry) =>
+          finding.clusters.includes(entry.cluster) &&
+          (finding.occurrences.some((item) => item.investigationId === entry.investigationId) ||
+            couldSee(entry, finding.namespaces)),
+      )
       .map((entry) => ({
         investigationId: entry.investigationId,
         cluster: entry.cluster,
@@ -116,7 +158,7 @@ export function recurringFindings(corpus: CorpusEntry[]): Finding[] {
     .filter((finding) => finding.occurrences.length > 1)
     .map((finding) => ({
       ...finding,
-      trend: trendOf(finding.occurrences, runsOf(finding.clusters)),
+      trend: trendOf(finding.occurrences, runsOf(finding)),
     }))
     .sort((a, b) => {
       if (a.clusters.length !== b.clusters.length) {

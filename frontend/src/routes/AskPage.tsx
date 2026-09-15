@@ -80,7 +80,11 @@ export function AskPage() {
               type: signal.type,
               summary: signal.summary,
               severity: String(signal.severity),
+              namespace: signal.target?.namespace ?? undefined,
             })),
+            collected:
+              item.status !== "failed" && report.data.investigation?.health?.status !== "error",
+            scope: item.scope,
           };
         })
         .filter((entry): entry is CorpusEntry => entry !== null),

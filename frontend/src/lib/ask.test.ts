@@ -146,6 +146,44 @@ describe("trend", () => {
     expect(trendOf(days(1, 2, 3), days(1, 2, 3, 10))).toBe("unknown");
   });
 
+  it("does not count runs that could not have seen the finding as its absence", () => {
+    // The live console: runs whose agent could not reach its API server, and
+    // runs scoped to one deployment, early on; the finding in every run that
+    // read its namespace. Every finding on the page read "happening more often".
+    const at = (day: number) => `2026-07-${String(day).padStart(2, "0")}T00:00:00Z`;
+    const archiver = [{ type: "pod.pending", summary: "archiver Pending", severity: "high", namespace: "payments" }];
+    const corpus: CorpusEntry[] = [
+      { ...entry("1", "prod", at(1), []), collected: false },
+      { ...entry("2", "prod", at(2), []), collected: false },
+      { ...entry("3", "prod", at(3), []), scope: { namespace: "payments", resource_kind: "deployment", resource_name: "checkout" } },
+      { ...entry("4", "prod", at(4), []), scope: { namespace: "kube-system", resource_kind: "cluster" } },
+      { ...entry("5", "prod", at(5), []), signals: archiver },
+      { ...entry("6", "prod", at(6), []), signals: archiver, scope: { namespace: "payments" } },
+      { ...entry("7", "prod", at(9), []), signals: archiver },
+      { ...entry("8", "prod", at(10), []), signals: archiver },
+    ];
+
+    const [finding] = recurringFindings(corpus);
+
+    expect(finding.namespaces).toEqual(["payments"]);
+    expect(finding.trend).not.toBe("rising");
+  });
+
+  it("still counts a whole-cluster run that read the namespace and found nothing", () => {
+    const at = (day: number) => `2026-07-${String(day).padStart(2, "0")}T00:00:00Z`;
+    const oom = [{ type: "pod.oom_killed", summary: "OOM", severity: "critical", namespace: "payments" }];
+    const corpus: CorpusEntry[] = [
+      { ...entry("1", "prod", at(1), []) },
+      { ...entry("2", "prod", at(2), []), scope: { namespace: "payments" } },
+      { ...entry("3", "prod", at(3), []), signals: oom },
+      { ...entry("4", "prod", at(8), []), signals: oom },
+      { ...entry("5", "prod", at(9), []), signals: oom },
+      { ...entry("6", "prod", at(10), []), signals: oom },
+    ];
+
+    expect(recurringFindings(corpus)[0].trend).toBe("rising");
+  });
+
   it("says so plainly when there is not enough history", () => {
     expect(trendLabel("unknown")).toMatch(/not enough history/i);
   });

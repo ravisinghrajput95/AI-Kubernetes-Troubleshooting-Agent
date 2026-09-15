@@ -107,6 +107,39 @@ describe("answers", () => {
   });
 });
 
+describe("trends", () => {
+  it("does not read runs that could not see a finding as the finding being absent", async () => {
+    // Read off a live sweep: early runs whose agent could not reach its API
+    // server (a failed run, and one saved before failures were marked) and a
+    // run scoped to one deployment, then the finding in every run that read
+    // its namespace. Every finding on the page read "happening more often".
+    const at = (day: number) => `2026-07-${String(day).padStart(2, "0")}T00:00:00Z`;
+    vi.spyOn(api, "getInvestigationHistory").mockResolvedValue([
+      item("r8", "prod", at(10)),
+      item("r7", "prod", at(9)),
+      item("r6", "prod", at(6)),
+      item("r5", "prod", at(5)),
+      { ...item("r3", "prod", at(3)), scope: { namespace: "payments", resource_kind: "deployment", resource_name: "checkout" } },
+      item("r2", "prod", at(2)),
+      { ...item("r1", "prod", at(1)), status: "failed" },
+    ]);
+    vi.spyOn(api, "getInvestigationReport").mockImplementation(async (id: string) => ({
+      incident_id: id,
+      investigation: { health: { status: id === "r2" ? "error" : "issues_found" } },
+      diagnosis: {
+        signals: ["r1", "r2", "r3"].includes(id)
+          ? []
+          : [{ type: "pod.pending", summary: "archiver Pending", severity: "high", target: { kind: "Pod", name: "archiver", namespace: "payments" } }],
+      },
+    }) as never);
+
+    renderAsk();
+
+    expect(await screen.findByText("pod.pending")).toBeInTheDocument();
+    expect(screen.queryByText(/happening more often/i)).not.toBeInTheDocument();
+  });
+});
+
 describe("nothing on record", () => {
   it("says so rather than answering approximately", async () => {
     const user = userEvent.setup();
