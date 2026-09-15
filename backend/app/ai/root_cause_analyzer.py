@@ -9,6 +9,7 @@ from app.ai.llm_client import LLMClient
 from app.ai.prompt_builder import PromptBuilder
 from app.analysis.confidence import CompositeConfidenceScorer
 from app.analysis.engine import AnalysisEngine
+from app.analysis.evidence_gaps import outstanding
 from app.analysis.grounding import GroundingResult, GroundingValidator
 from app.analysis.incidents import group_incidents, selection_rationale
 from app.analysis.models import AnalysisResult, Hypothesis
@@ -209,7 +210,7 @@ class RootCauseAnalyzer:
             "fix": fix,
             "kubectl_commands": safe_commands,
             "prevention": recommendation["prevention"],
-            "evidence_gaps": self._evidence_gaps(investigation, analysis),
+            "evidence_gaps": self._evidence_gaps(investigation, analysis, top),
             "next_steps": recommendation["next_steps"],
             "confidence": confidence,
             "confidence_reasoning": self._confidence_reasoning(analysis, reasons),
@@ -233,7 +234,12 @@ class RootCauseAnalyzer:
             # invisible — severity outranks confidence, so the leader can show
             # a lower percentage than an entry beneath it.
             "incidents": [item.to_dict() for item in group_incidents(analysis.hypotheses)],
-            "selection_rationale": selection_rationale(analysis.hypotheses),
+            "selection_rationale": selection_rationale(
+                analysis.hypotheses,
+                selected=top,
+                scoped_resource=analysis.scoped_resource,
+                scoped_count=analysis.scoped_hypotheses,
+            ),
             "selected_hypothesis": top.id if top else None,
             "cited_signals": cited_signals,
             "cited_evidence": analysis.evidence_ids_for(tuple(cited_signals)),
@@ -363,6 +369,7 @@ class RootCauseAnalyzer:
         self,
         investigation: dict[str, Any],
         analysis: AnalysisResult,
+        hypothesis: Hypothesis | None = None,
     ) -> list[str]:
         gaps = []
         if not investigation.get("logs", {}).get("logs"):
@@ -387,10 +394,12 @@ class RootCauseAnalyzer:
             if detail and detail not in gaps:
                 gaps.append(detail)
 
-        # What the leading hypothesis still needs in order to be confirmed.
-        top = analysis.top_hypothesis
-        if top is not None:
-            gaps.extend(item for item in top.missing_evidence if item not in gaps)
+        # What the selected hypothesis still needs in order to be confirmed —
+        # not its rule's whole wish list, which listed evidence the playbook
+        # round had already collected as "would have shortened this".
+        selected = hypothesis or analysis.top_hypothesis
+        if selected is not None:
+            gaps.extend(item for item in outstanding(selected, investigation) if item not in gaps)
 
         return gaps or ["No major evidence gaps detected in the collected signals."]
 

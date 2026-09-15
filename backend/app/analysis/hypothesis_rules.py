@@ -55,7 +55,17 @@ class SignalPatternRule:
             return None
 
         supporting = [signal for signal in signals if signal.type in self.supporting]
-        refuting = [signal for signal in signals if signal.type in self.refuting]
+        # Refutation is about the resources the hypothesis rests on. Matched by
+        # type alone, `notifier`'s missing ConfigMap "argued against" checkout
+        # failing on startup, and the report listed that under "Alternatives
+        # the evidence argued against" — evidence about one pod counted as
+        # evidence about another.
+        triggered = {signal.target.key for signal in triggering}
+        refuting = [
+            signal
+            for signal in signals
+            if signal.type in self.refuting and signal.target.key in triggered
+        ]
 
         confidence = self.base_confidence
         confidence += SUPPORT_BONUS * len({signal.type for signal in supporting})

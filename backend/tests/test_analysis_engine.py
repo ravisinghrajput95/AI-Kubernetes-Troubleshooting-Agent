@@ -102,30 +102,35 @@ def test_crashloop_with_logs_produces_startup_failure_hypothesis():
     assert hypothesis.missing_evidence
 
 
-def test_refuting_signal_lowers_hypothesis_confidence():
-    crash_only = ENGINE.analyze(
-        investigation(
-            pods={
-                "problematic_pods": [
-                    {"name": "web-0", "namespace": "prod", "status": "CrashLoopBackOff"}
-                ]
-            }
-        )
-    ).hypothesis("workload.application_startup_failure")
+def _startup_failure(*pods):
+    return ENGINE.analyze(investigation(pods={"problematic_pods": list(pods)})).hypothesis(
+        "workload.application_startup_failure"
+    )
 
-    with_refutation = ENGINE.analyze(
-        investigation(
-            pods={
-                "problematic_pods": [
-                    {"name": "web-0", "namespace": "prod", "status": "CrashLoopBackOff"},
-                    {"name": "web-1", "namespace": "prod", "status": "ImagePullBackOff"},
-                ]
-            }
-        )
-    ).hypothesis("workload.application_startup_failure")
+
+CRASHING = {"name": "web-0", "namespace": "prod", "status": "CrashLoopBackOff"}
+
+
+def test_refuting_signal_about_the_same_pod_lowers_confidence():
+    crash_only = _startup_failure(CRASHING)
+    # The same pod also reported with a cause that contradicts "fails on startup".
+    with_refutation = _startup_failure(CRASHING, {**CRASHING, "status": "ImagePullBackOff"})
 
     assert with_refutation.confidence < crash_only.confidence
     assert with_refutation.refuting_signal_ids
+
+
+def test_another_pods_fault_does_not_refute_this_one():
+    """This test used to require the opposite: `web-1` failing to pull its
+    image lowered confidence that `web-0` fails on startup. Live, notifier's
+    missing ConfigMap was listed as evidence against checkout crash-looping."""
+    crash_only = _startup_failure(CRASHING)
+    beside = _startup_failure(
+        CRASHING, {"name": "web-1", "namespace": "prod", "status": "ImagePullBackOff"}
+    )
+
+    assert beside.confidence == crash_only.confidence
+    assert not beside.refuting_signal_ids
 
 
 def test_pending_pod_with_unbound_pvc_ranks_scheduling_hypothesis():

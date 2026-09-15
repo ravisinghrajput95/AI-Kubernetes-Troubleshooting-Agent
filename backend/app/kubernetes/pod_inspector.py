@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from datetime import datetime, timedelta
 from typing import Any
 
 from app.evidence.models import EvidenceKind
@@ -94,6 +95,17 @@ REASON_PRECEDENCE = (
 # turns into a `CrashLoopBackOff` claim.
 RESTART_THRESHOLD = 2
 
+# How long a container must have been running before its restart history stops
+# describing its present. The kubelet resets crash-loop backoff once a
+# container has run for ten minutes, so past that point it is not looping by
+# the kubelet's own definition.
+STABLE_AFTER = timedelta(minutes=10)
+
+# A last termination that says nothing about the application. containerd
+# reports `Unknown` (exit 255) for every container whose sandbox went away —
+# a node reboot, a kubelet restart, a Docker Desktop restart under kind.
+NOT_A_CRASH = frozenset({"Completed", "Unknown"})
+
 # `phase: Running` with `Ready: False`. The workload is up and serving nothing,
 # which is what a Service with no endpoints is usually made of.
 NOT_READY = "NotReady"
@@ -132,11 +144,12 @@ class PodInspector:
 
         # A named read returns the object itself; a list read returns `items`.
         pod_items = listed if isinstance(listed, list) else [data]
+        observed_at = _newest_timestamp(pod_items)
         for pod in pod_items:
             metadata = pod.get("metadata", {})
             if pod.get("status", {}).get("phase") == "Running":
                 running_pods += 1
-            pod_status = self._detect_pod_status(pod)
+            pod_status = self._detect_pod_status(pod, observed_at)
             if pod_status:
                 problematic_pods.append(
                     {
@@ -207,11 +220,43 @@ class PodInspector:
         if container_status.get("restartCount", 0) < RESTART_THRESHOLD:
             return None
         terminated = (container_status.get("lastState") or {}).get("terminated") or {}
-        if not terminated or terminated.get("reason") == "Completed":
+        # `Unknown` is excluded as well as `Completed`, and that was found by a
+        # machine restart rather than a test. Every container on the node came
+        # back with `lastState.terminated.reason: Unknown, exitCode: 255` and a
+        # restart count one higher, so after the second restart of a laptop the
+        # API server, etcd, CoreDNS and every healthy workload were each
+        # reported "in CrashLoopBackOff" — and a Service whose two Ready pods
+        # were serving read "no healthy backend: all 2 pods it selects are
+        # failing".
+        if not terminated or terminated.get("reason") in NOT_A_CRASH:
             return None
         return "CrashLoopBackOff"
 
-    def _detect_pod_status(self, pod: dict[str, Any]) -> str | None:
+    @staticmethod
+    def _stable(container_status: dict[str, Any], observed_at: datetime | None) -> bool:
+        """Provably past any crash loop, judged from the read itself.
+
+        `analyse()` has no clock by design, so "running for a while" cannot be
+        asked of the wall clock. It can be asked of the evidence: the newest
+        timestamp anywhere in the same pod list is a lower bound on when the
+        list was read. A container Ready and running since at least
+        `STABLE_AFTER` before that bound has outlived the kubelet's backoff, so
+        its restart history — and a `lastState` of `Error` — describe the past.
+        The same evidence always gives the same answer, which is the property
+        the missing clock protects.
+
+        Without this, `local-path-provisioner` — four crashes while its node
+        booted, then twenty-three minutes Ready — was reported in
+        CrashLoopBackOff for as long as the pod lived.
+        """
+        if observed_at is None or not container_status.get("ready"):
+            return False
+        started = _parse((container_status.get("state") or {}).get("running", {}).get("startedAt"))
+        return started is not None and observed_at - started >= STABLE_AFTER
+
+    def _detect_pod_status(
+        self, pod: dict[str, Any], observed_at: datetime | None = None
+    ) -> str | None:
         """The most specific reason this pod is unhealthy, or `None`.
 
         **Container reasons are read before the phase, and the order is the
@@ -252,11 +297,18 @@ class PodInspector:
         ]:
             state = container_status.get("state") or {}
             last_state = container_status.get("lastState") or {}
+            history = (
+                ()
+                if self._stable(container_status, observed_at)
+                else (
+                    (last_state.get("terminated") or {}).get("reason"),
+                    self._restart_candidate(container_status),
+                )
+            )
             for reason in (
                 (state.get("waiting") or {}).get("reason"),
                 (state.get("terminated") or {}).get("reason"),
-                (last_state.get("terminated") or {}).get("reason"),
-                self._restart_candidate(container_status),
+                *history,
             ):
                 if reason in CONTAINER_PROBLEM_REASONS:
                     candidates.add(reason)
@@ -296,3 +348,39 @@ class PodInspector:
                 return NOT_READY
 
         return None
+
+
+def _parse(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+_TIMESTAMP_KEYS = ("startedAt", "finishedAt", "lastTransitionTime", "creationTimestamp")
+
+
+def _newest_timestamp(pods: Sequence[dict[str, Any]]) -> datetime | None:
+    """The latest moment any pod in the read records — a floor on when it was read."""
+    newest: datetime | None = None
+
+    def visit(node: Any) -> None:
+        nonlocal newest
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in _TIMESTAMP_KEYS:
+                    parsed = _parse(value)
+                    if parsed is not None and (newest is None or parsed > newest):
+                        newest = parsed
+                else:
+                    visit(value)
+        elif isinstance(node, list):
+            for item in node:
+                visit(item)
+
+    for pod in pods:
+        visit(pod.get("metadata", {}))
+        visit(pod.get("status", {}))
+    return newest

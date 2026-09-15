@@ -110,3 +110,67 @@ async def test_a_scope_nothing_matched_says_so_instead_of_blaming_a_neighbour():
     assert diagnosis["root_cause"].startswith(
         "No finding in the collected evidence is about deployment/checkout."
     ), diagnosis["root_cause"]
+
+
+async def test_the_scoped_selection_explains_itself_truthfully():
+    _, diagnosis = await diagnose_scoped(Namespace())
+    selected = next(
+        h for h in diagnosis["hypotheses"] if h["id"] == diagnosis["selected_hypothesis"]
+    )
+    others = [h for h in diagnosis["hypotheses"] if h["confidence"] > selected["confidence"]]
+    # Vacuity: a more confident cause about another workload must exist, or
+    # there is no ordering to explain.
+    assert others, [(h["id"], h["confidence"]) for h in diagnosis["hypotheses"]]
+    assert "deployment/checkout" in diagnosis["selection_rationale"], diagnosis[
+        "selection_rationale"
+    ]
+
+
+async def test_evidence_the_round_collected_is_not_reported_missing():
+    """Lessons Learned listed "Container exit code and termination reason" as
+    evidence that would have shortened the investigation — on a page showing
+    the exit code, read from the pod spec that round collected."""
+    investigation, diagnosis = await diagnose_scoped(Namespace())
+    selected = diagnosis["selected_hypothesis"]
+    target = next(h for h in diagnosis["hypotheses"] if h["id"] == selected)["target"]
+    held = {
+        entry["id"] for entry in investigation["evidence"] if entry["status"] in {"ok", "empty"}
+    }
+    # Vacuity: the pod spec for the selected target really was collected.
+    assert f"k8s.pod.spec:pod/{target['namespace']}/{target['name']}" in held
+
+    gaps = diagnosis["evidence_gaps"]
+    assert "Container exit code and termination reason" not in gaps, gaps
+    steps = [step["description"] for step in diagnosis["remediation"]["remediation"]]
+    assert not any("exit code" in step for step in steps), steps
+
+
+def test_evidence_not_collected_for_the_target_is_still_reported():
+    # The control: another pod's spec answers nothing about this one.
+    from app.analysis.evidence_gaps import outstanding
+    from app.analysis.models import Hypothesis, Severity
+    from app.evidence.models import ResourceRef
+
+    hypothesis = Hypothesis(
+        id="workload.application_startup_failure",
+        title="t",
+        category="workload",
+        severity=Severity.CRITICAL,
+        confidence=80,
+        rationale="",
+        target=ResourceRef(kind="Pod", name="checkout-0", namespace="payments"),
+        supporting_signal_ids=("s",),
+        missing_evidence=("Container exit code and termination reason", "Which revision"),
+    )
+    elsewhere = {"evidence": [{"id": "k8s.pod.spec:pod/payments/other-0", "status": "ok"}]}
+    assert outstanding(hypothesis, elsewhere) == hypothesis.missing_evidence
+
+
+def test_every_mapped_item_is_one_a_rule_declares():
+    # A key that matches no rule's wording maps nothing, and the item it was
+    # meant for goes on being reported missing after it was collected.
+    from app.analysis.evidence_gaps import ANSWERED_BY
+    from app.analysis.hypothesis_rules import DEFAULT_HYPOTHESIS_RULES
+
+    declared = {item for rule in DEFAULT_HYPOTHESIS_RULES for item in rule.missing_evidence}
+    assert set(ANSWERED_BY) <= declared, set(ANSWERED_BY) - declared

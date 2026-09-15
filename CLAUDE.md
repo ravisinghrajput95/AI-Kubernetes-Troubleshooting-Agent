@@ -1437,6 +1437,8 @@ Deep payloads land in `investigation["deep_evidence"]` keyed by kind (baseline k
 
 Edge rules live in `edge_rules.py` and are declarative. **No rule invents a node**: an edge is emitted only when both ends were observed, so "depends on a ConfigMap we could not see" and "depends on nothing" cannot look alike to a traversal. Placeholders are refused explicitly — a pod whose node reads `Pending` is not placed on a node called Pending, a claim whose class reads `none` is not linked to a class called none.
 
+**An edge cites a record id, never a kind.** The pod-spec edge rules read `evidence_id`, a key deep entries never had, and fell back to `k8s.pod.spec` — so every owns/mounts/reads/runs_as edge, and every graph signal walking one, cited a record that does not exist, rendered as an empty citation chip. `tests/test_graph.py`'s fixture used the same wrong key. `tests/test_citations_resolve.py` follows every citation from a real pipeline run to a held record.
+
 `ClusterGraph.depends_on()` / `dependents()` are breadth-first, depth-limited (5) and cycle-safe. The direction is a flag, not the identity of the step function: `step is self.out_edges` is always False because attribute access builds a new bound method, which made every forward traversal stop after one hop while still returning plausible results.
 
 `graph_signal_rules.py` holds the signals a single section cannot reach. The test for belonging there is that the finding is a *path*: `storage.pvc_unbound` needs no graph, but "this Pending pod is blocked by that claim, and that claim's class is blocking others too" is three sections that mean nothing apart. Graph signals cite every edge walked, not just the destination.
@@ -1483,6 +1485,14 @@ A `Hypothesis` is a candidate root cause. Rules in `hypothesis_rules.py` are **d
 `signal_rules.py` runs over baseline evidence; `deep_signal_rules.py` runs over targeted evidence and produces findings baseline cannot reach (exit code 137 confirming an OOM, a referenced ConfigMap key that does not exist). Rules that could fire broadly are gated on evidence of the specific failure — `image.no_pull_secret` only fires when a container is actually failing to pull.
 
 Both rule loops are individually fault-isolated: one broken rule is logged and skipped, not fatal.
+
+**A node restart is not a crash loop, and restart history expires by the evidence's own clock.** Every container on a restarted node comes back with `lastState.terminated.reason: Unknown` (exit 255) and one more restart, so after a laptop's second restart `_restart_candidate` reported the API server, etcd, CoreDNS and every healthy workload "in CrashLoopBackOff", and a Service with two Ready pods "no healthy backend". `Unknown` is excluded like `Completed`. And a container Ready and running for `STABLE_AFTER` (10 min — the kubelet's backoff reset) before **the newest timestamp in the same pod list** has its restart history treated as history: `analyse()` still has no clock, the read is its own lower bound on "now", so a stored report re-derives identically. `tests/test_pods_after_node_restart.py` uses the captured post-restart payload with kubectl's own verdict as the oracle.
+
+**Refutation is about the resources a hypothesis rests on.** Refuting signals used to match by type anywhere, so notifier's missing ConfigMap was listed as evidence against checkout failing on startup. They now count only when their target is one of the hypothesis's triggering targets; `test_analysis_engine.py` had pinned the cross-pod behaviour and was split into both directions.
+
+**Missing evidence is what was not collected, not the rule's wish list** (`app/analysis/evidence_gaps.py`). `missing_evidence` is prose, and was printed as "evidence that would have shortened this investigation" and as manual "Establish:" steps even after a playbook round had collected it — "Container exit code" beside the exit code. `ANSWERED_BY` maps the items a record fully answers to its kind (per-pod kinds must be for the hypothesis's own pod); an unmapped item stays outstanding, the safe direction, and a test holds the map's keys to the rules' wording.
+
+**The selection rationale names the reason that applied**, or nothing: the scope, a refuted more-confident cause, or a model's choice. It used to always cite severity — "ranked critical rather than critical" — which had been false since `rank()` moved confidence ahead of severity.
 
 **A resource scope orders hypotheses; it does not only narrow two reads.** `resource_kind`/`resource_name` narrow the pod and deployment inspectors, and events, networking and the namespace's other pods are still read — so "investigate deployment `checkout`" returned a root cause about the `notifier` pod. `AnalysisEngine` now builds hypotheses from the scoped resource's own signals first (a deployment's pods recognised by `<name>-<hash>-<id>`) and ranks the rest after, never duplicating a rule. When nothing matched, `_root_cause_summary` says "No finding in the collected evidence is about deployment/checkout" before naming the nearby finding — not "no failure was found", because a read that failed also produces no signal.
 
@@ -1895,6 +1905,12 @@ The env prefix is `react_PUBLIC_` (not `VITE_`), registered in `vite.config.ts`'
 Response shapes are typed in `src/types/investigation.ts`, but the backend returns `dict[str, Any]` for `investigation` and `diagnosis` — **the TS types are the only contract and Pydantic will not catch drift.** `scratchpad/contract_check.py` style verification (run the backend against a fake cluster, assert every field the console reads is present) is the way to check it.
 
 `vite.config.ts` imports `defineConfig` from `vitest/config`, not `vite` — vitest owns the merged config type. Tests need `IS_REACT_ACT_ENVIRONMENT` from `src/test/setup.ts`. Avoid Testing Library's `waitFor` in fake-timer tests: it polls on timers and will hang; advance timers explicitly instead.
+
+### Sweeping the console (`scripts/console_sweep.mjs`)
+
+Opt-in, like the soak: every route, every link, button, tab and summary clicked from a fresh load of its route, with non-2xx responses, console errors, dialogs and overflow recorded — and **every state's text written to `OUT/text/`**, because that is where the defects are. Its first full run logged zero failed requests and zero console errors across 220 clicks, and reading the dumps beside the investigation JSON found eleven false claims; the second found five more, including a node restart reported as a cluster-wide crash loop and citations to records that do not exist. The automated findings are the floor. Lists of like controls are capped at three clicks each; reloading before sixty identical evidence rows took over an hour and found nothing the first three did not.
+
+**Keep its state out of `/tmp`.** The machine restarted mid-session and took the kubeconfig, the dev CA key, the worker scripts and a sweep's output with it — the in-cluster agent survived with a certificate no gateway could verify, and had to be re-enrolled.
 
 ### Operability (`app/core/correlation.py`, `app/core/readiness.py`, M9.2)
 

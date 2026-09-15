@@ -128,13 +128,28 @@ def _claims_to_volumes(data: GraphInput) -> Iterator[Edge]:
             )
 
 
+def _cited(entry: dict[str, Any]) -> tuple[str, ...]:
+    """The evidence record a deep entry came from, or nothing to cite.
+
+    Deep entries carry their record's id under `id`. These rules read
+    `evidence_id`, which no entry has ever had, and fell back to the bare kind
+    — so every edge derived from a pod spec, and every graph signal walking
+    one, cited `k8s.pod.spec`: an id that resolves to no record. The console
+    rendered it as a citation chip with nothing behind it. `tests/test_graph.py`
+    built its fixture with `evidence_id` too, which is how the two agreed.
+    An edge with nothing to cite is not emitted, the same rule as a node.
+    """
+    evidence_id = entry.get("id")
+    return (evidence_id,) if isinstance(evidence_id, str) and evidence_id else ()
+
+
 def _pod_volumes(data: GraphInput) -> Iterator[Edge]:
     """Pod → PersistentVolumeClaim / ConfigMap / Secret, from deep evidence."""
     for entry in data.deep(EvidenceKind.POD_SPEC):
         spec = entry.get("data", {})
-        evidence = (entry.get("evidence_id") or f"{EvidenceKind.POD_SPEC}",)
+        evidence = _cited(entry)
         source = pod(spec.get("namespace", "default"), spec.get("pod", ""))
-        if not source.name:
+        if not source.name or not evidence:
             continue
 
         for volume in spec.get("volumes", []) or []:
@@ -170,11 +185,11 @@ def _pod_owners(data: GraphInput) -> Iterator[Edge]:
     """
     for entry in data.deep(EvidenceKind.POD_SPEC):
         spec = entry.get("data", {})
-        evidence = (entry.get("evidence_id") or f"{EvidenceKind.POD_SPEC}",)
+        evidence = _cited(entry)
         owner = spec.get("owner") or {}
         kind = owner.get("workload_kind") or owner.get("kind") or ""
         name = owner.get("workload_name") or owner.get("name") or ""
-        if not kind or not name:
+        if not kind or not name or not evidence:
             continue
 
         namespace = spec.get("namespace", "default")
@@ -191,14 +206,14 @@ def _pod_service_accounts(data: GraphInput) -> Iterator[Edge]:
     for entry in data.deep(EvidenceKind.POD_SPEC):
         spec = entry.get("data", {})
         account = spec.get("service_account", "")
-        if not account or not spec.get("pod"):
+        if not account or not spec.get("pod") or not _cited(entry):
             continue
         namespace = spec.get("namespace", "default")
         yield Edge(
             source=pod(namespace, spec["pod"]),
             relation=Relation.RUNS_AS,
             target=ResourceRef(kind="ServiceAccount", name=account, namespace=namespace),
-            evidence_ids=(entry.get("evidence_id") or f"{EvidenceKind.POD_SPEC}",),
+            evidence_ids=_cited(entry),
         )
 
 

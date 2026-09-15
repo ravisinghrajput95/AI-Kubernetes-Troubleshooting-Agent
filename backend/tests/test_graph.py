@@ -185,7 +185,7 @@ class TestDerivationFromEvidence:
                 "deep_evidence": {
                     "k8s.pod.spec": [
                         {
-                            "evidence_id": "k8s.pod.spec:pod/prod/web-0",
+                            "id": "k8s.pod.spec:pod/prod/web-0",
                             "data": {
                                 "pod": "web-0",
                                 "namespace": "prod",

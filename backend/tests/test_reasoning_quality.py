@@ -63,23 +63,62 @@ def hypothesis(hid, *, severity, confidence, supporting=(), title=None, pod=None
 
 
 class TestTheOrderingExplainsItself:
-    """Ranking is severity first, confidence second, so the selected
-    explanation can carry *lower* confidence than one listed below it — the
-    audit saw a CRITICAL at 90% chosen over a HIGH at 92%. Correct, and
-    invisible: nothing told the reader severity was the tiebreak."""
+    """A less confident cause can lead, and the report says why — truly.
 
-    def test_it_explains_a_lower_confidence_winner(self):
+    It used to always say severity, "ranked critical rather than critical",
+    which had been false since `rank()` put confidence ahead of severity. The
+    reasons that exist are refutation, the investigation's scope, and a model
+    choosing differently from the deterministic ranking; each names itself.
+    """
+
+    def test_a_refuted_cause_explains_why_it_lost(self):
+        refuted = hypothesis("b", severity=Severity.CRITICAL, confidence=92, title="App fails")
+        refuted = type(refuted)(
+            **{
+                **{f: getattr(refuted, f) for f in refuted.__dataclass_fields__},
+                "refuting_signal_ids": ("config.reference_missing:pod/prod/b",),
+            }
+        )
         ranked = (
             hypothesis("a", severity=Severity.CRITICAL, confidence=90, title="Service is down"),
-            hypothesis("b", severity=Severity.HIGH, confidence=92, title="App fails to start"),
+            refuted,
         )
 
         text = selection_rationale(ranked)
 
-        assert "Service is down" in text
-        assert "App fails to start" in text
+        assert "Service is down" in text and "App fails" in text
         assert "90" in text and "92" in text
-        assert "critical" in text and "high" in text
+        assert "argues against" in text
+        assert "severity" not in text.lower()
+
+    def test_a_scoped_cause_says_it_was_what_was_asked_about(self):
+        ranked = (
+            hypothesis("a", severity=Severity.CRITICAL, confidence=85, title="Checkout fails"),
+            hypothesis("b", severity=Severity.CRITICAL, confidence=92, title="Notifier config"),
+        )
+
+        text = selection_rationale(ranked, scoped_resource="deployment/checkout", scoped_count=1)
+
+        assert "deployment/checkout" in text
+        # The live sentence: two equal severities offered as the reason.
+        assert "critical rather than critical" not in text
+
+    def test_a_model_choice_says_it_was_the_model(self):
+        leader = hypothesis("a", severity=Severity.CRITICAL, confidence=92, title="Leader")
+        chosen = hypothesis("b", severity=Severity.CRITICAL, confidence=80, title="Chosen")
+
+        text = selection_rationale((leader, chosen), selected=chosen)
+
+        assert "model selected it" in text and "Leader" in text
+
+    def test_it_names_no_reason_it_cannot_establish(self):
+        # Neither refuted, scoped nor model-selected: a hand-built ordering rank()
+        # would never produce. Saying nothing beats inventing a rule.
+        ranked = (
+            hypothesis("a", severity=Severity.CRITICAL, confidence=90),
+            hypothesis("b", severity=Severity.HIGH, confidence=92),
+        )
+        assert selection_rationale(ranked) == ""
 
     def test_it_says_nothing_when_the_winner_is_also_the_most_confident(self):
         """The common case. A sentence explaining an ordering that needs no

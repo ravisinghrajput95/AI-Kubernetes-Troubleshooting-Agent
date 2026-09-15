@@ -1060,6 +1060,77 @@ MUTATIONS = [
         new="if not self.enabled or not result.success:",
         tests="tests/test_not_found_parity.py",
     ),
+    Mutation(
+        name="node-restart-read-as-crash-loop",
+        why=(
+            "After a host restart every container's last termination was "
+            "Unknown/255 with one more restart, and the API server, etcd and "
+            "healthy workloads were all reported in CrashLoopBackOff."
+        ),
+        path="app/kubernetes/pod_inspector.py",
+        old='NOT_A_CRASH = frozenset({"Completed", "Unknown"})\n',
+        new='NOT_A_CRASH = frozenset({"Completed"})\n',
+        tests="tests/test_pods_after_node_restart.py",
+    ),
+    Mutation(
+        name="restart-history-never-becomes-history",
+        why=(
+            "A container that crashed four times while its node booted, then ran "
+            "Ready for 23 minutes, was reported in CrashLoopBackOff for as long "
+            "as the pod lived."
+        ),
+        path="app/kubernetes/pod_inspector.py",
+        old="        return started is not None and observed_at - started >= STABLE_AFTER\n",
+        new="        return False  # mutation: stability never proven\n",
+        tests="tests/test_pods_after_node_restart.py",
+    ),
+    Mutation(
+        name="graph-edges-cite-a-kind-not-a-record",
+        why=(
+            "Edge rules read `evidence_id`, a key deep entries never had, and "
+            "cited the bare kind `k8s.pod.spec`; the console showed a citation "
+            "chip with no record behind it."
+        ),
+        path="app/graph/edge_rules.py",
+        old='    evidence_id = entry.get("id")\n',
+        new='    evidence_id = entry.get("evidence_id") or "k8s.pod.spec"  # mutation\n',
+        tests="tests/test_citations_resolve.py",
+    ),
+    Mutation(
+        name="collected-evidence-reported-missing",
+        why=(
+            "Lessons Learned listed 'Container exit code and termination reason' "
+            "as missing on a page showing the exit code from the pod spec the "
+            "playbook round had collected."
+        ),
+        path="app/ai/root_cause_analyzer.py",
+        old="            gaps.extend(item for item in outstanding(selected, investigation) if item not in gaps)\n",
+        new="            gaps.extend(item for item in selected.missing_evidence if item not in gaps)\n",
+        tests="tests/test_scoped_diagnosis.py",
+    ),
+    Mutation(
+        name="rationale-names-a-reason-that-did-not-apply",
+        why=(
+            "The rationale always cited severity — 'ranked critical rather than "
+            "critical' — for a cause the investigation's scope put first."
+        ),
+        path="app/analysis/incidents.py",
+        old="    if scoped_resource and top.id in scoped and most_confident.id not in scoped:\n",
+        new="    if False:  # mutation: scope never explains\n",
+        tests="tests/test_scoped_diagnosis.py tests/test_reasoning_quality.py",
+    ),
+    Mutation(
+        name="refutation-across-unrelated-resources",
+        why=(
+            "Refuting signals matched by type anywhere in the namespace, so "
+            "notifier's missing ConfigMap was reported as evidence against "
+            "checkout failing on startup."
+        ),
+        path="app/analysis/hypothesis_rules.py",
+        old="            if signal.type in self.refuting and signal.target.key in triggered\n",
+        new="            if signal.type in self.refuting\n",
+        tests="tests/test_analysis_engine.py",
+    ),
 ]
 
 

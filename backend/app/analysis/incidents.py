@@ -137,31 +137,55 @@ def _workload_key(target: ResourceRef) -> str:
     return f"workload/{namespace}/{'-'.join(parts) or target.name}"
 
 
-def selection_rationale(hypotheses: tuple[Hypothesis, ...]) -> str:
-    """Why the leading hypothesis leads, in a sentence.
+def selection_rationale(
+    hypotheses: tuple[Hypothesis, ...],
+    selected: Hypothesis | None = None,
+    scoped_resource: str | None = None,
+    scoped_count: int = 0,
+) -> str:
+    """Why the selected hypothesis leads when a more confident one does not.
 
-    Ranking is by severity first and confidence second, so the selected
-    explanation can carry *lower* confidence than one listed below it — the
-    audit saw a CRITICAL at 90% chosen over a HIGH at 92%. That is deliberate
-    and defensible, and it was invisible: a reader saw the higher number not
-    win and had no way to know severity was the tiebreak. An unexplained
-    ordering costs more credibility than the ordering gains.
+    This used to say one thing whatever happened — "because it is ranked
+    critical rather than critical. Severity is ordered before confidence" — and
+    it had been false since `rank()` moved confidence ahead of severity. Live,
+    on a deployment-scoped investigation, it explained an 85% cause chosen over
+    a 92% one with two severities that were the same word. An explanation that
+    names the wrong reason is worse than none: it teaches the reader a ranking
+    rule the platform does not use.
 
-    Returns an empty string when the leader is also the most confident, because
-    there is nothing to explain in that case and a sentence saying so is noise.
+    So it names whichever reason actually applies, and says nothing when it
+    cannot tell: the scope put the cause first, the more confident cause has
+    evidence against it (refutation sorts before confidence in `rank()`), or a
+    model selected a cause the deterministic ranking did not lead with.
     """
     if not hypotheses:
         return ""
 
-    top = hypotheses[0]
+    leader = hypotheses[0]
+    top = selected or leader
     most_confident = max(hypotheses, key=lambda item: item.confidence)
     if most_confident.confidence <= top.confidence:
         return ""
 
-    return (
+    lead = (
         f"'{top.title}' was selected over '{most_confident.title}' despite lower "
         f"confidence ({top.confidence}% against {most_confident.confidence}%), because "
-        f"it is ranked {top.severity} rather than {most_confident.severity}. "
-        f"Severity is ordered before confidence: a more serious explanation is "
-        f"investigated first even when a less serious one is marginally more likely."
     )
+    scoped = {item.id for item in hypotheses[:scoped_count]}
+
+    if selected is not None and selected.id != leader.id:
+        return (
+            f"{lead}the model selected it; the deterministic ranking placed '{leader.title}' first."
+        )
+    if scoped_resource and top.id in scoped and most_confident.id not in scoped:
+        return (
+            f"{lead}it is about {scoped_resource}, which this investigation was asked "
+            f"about, and '{most_confident.title}' is not."
+        )
+    if most_confident.refuting_signal_ids and not top.refuting_signal_ids:
+        return (
+            f"{lead}collected evidence argues against '{most_confident.title}' "
+            f"({len(most_confident.refuting_signal_ids)} refuting signal(s)). A contradicted "
+            f"explanation ranks below an uncontradicted one whatever its confidence."
+        )
+    return ""

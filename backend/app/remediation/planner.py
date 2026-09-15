@@ -3,6 +3,7 @@ from typing import Any
 
 from loguru import logger
 
+from app.analysis.evidence_gaps import outstanding
 from app.analysis.models import AnalysisResult, Hypothesis
 from app.remediation.context import RemediationContext
 from app.remediation.models import (
@@ -63,7 +64,7 @@ class RemediationPlanner:
 
         investigate = [
             RemediationStep(f"Establish: {item}", None, manual=True)
-            for item in hypothesis.missing_evidence
+            for item in outstanding(hypothesis, context.investigation)
         ] or [
             RemediationStep(
                 "Review the collected evidence for the affected resource.",
