@@ -97,10 +97,15 @@ export function EvidenceInspector({
           </>
         ) : null}
 
+        {/* `redacted` means the record went through the redactor, not that it
+            held a secret, and redaction is pattern-based: "Secrets were
+            scrubbed" claimed both on every node list. */}
         {evidence.redacted ? (
-          <p className="mt-4 text-sm leading-6 text-warning">
-            Secrets were scrubbed from this record at collection, before it
-            reached storage, the API or the model.
+          <p className="mt-4 text-sm leading-6 text-ink-3">
+            Redacted at collection, before it reached storage, the API or the
+            model: values under sensitive keys and known secret patterns are
+            replaced. Free text is matched by pattern and may not catch
+            everything.
           </p>
         ) : null}
 
