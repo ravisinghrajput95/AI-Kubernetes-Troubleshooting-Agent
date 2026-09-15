@@ -1048,7 +1048,6 @@ MUTATIONS = [
         new='        "scope": "worker",\n',
         tests="tests/test_agent_presence.py",
     ),
-
     Mutation(
         name="cache-stores-absence",
         why=(
@@ -1061,7 +1060,6 @@ MUTATIONS = [
         new="if not self.enabled or not result.success:",
         tests="tests/test_not_found_parity.py",
     ),
-
 ]
 
 
