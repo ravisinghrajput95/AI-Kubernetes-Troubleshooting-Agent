@@ -232,7 +232,8 @@ function ConnectedAgents() {
   });
 
   const items = agents.data?.items ?? [];
-  if (items.length === 0) {
+  const partial = agents.data?.complete === false;
+  if (items.length === 0 && !partial) {
     return null;
   }
 
@@ -240,8 +241,9 @@ function ConnectedAgents() {
     <section className="mt-8">
       <h2 className="text-h2">Connected agents</h2>
       <p className="mt-1 max-w-measure text-sm text-ink-2">
-        Every agent connected to this platform, whichever worker holds its
-        stream.
+        {partial
+          ? "The shared agent index cannot be read right now, so this lists only the agents attached to the worker that answered."
+          : "Every agent connected to this platform, whichever worker holds its stream."}
       </p>
       <ul className="mt-3 grid gap-2">
         {items.map((agent) => (

@@ -1193,6 +1193,36 @@ MUTATIONS = [
         new="",
         tests="tests/test_job_store_contract.py",
     ),
+    Mutation(
+        name="hung-redis-takes-the-fleet-out-of-rotation",
+        why=(
+            "A paused Redis accepted the connection and never answered; the "
+            "whole readiness check timed out and every worker reported the store "
+            "unavailable, a fleet-wide outage for a degradation."
+        ),
+        path="app/jobs/distributed.py",
+        old="    thread.join(PROBE_DEADLINE_SECONDS)\n",
+        new="    thread.join()  # mutation: wait for a hung dependency\n",
+        tests="tests/test_operability.py",
+    ),
+    Mutation(
+        name="unreadable-agent-index-reads-as-no-agents",
+        why=(
+            "With Redis paused GET /agents answered items: [] on the worker "
+            "holding an agent's stream, and the console said no agent had "
+            "connected."
+        ),
+        path="app/gateway/presence.py",
+        old=(
+            '            logger.warning("Could not read agent presence: {error}", error=exc)\n'
+            "            return None\n"
+        ),
+        new=(
+            '            logger.warning("Could not read agent presence: {error}", error=exc)\n'
+            "            return []\n"
+        ),
+        tests="tests/test_agent_presence.py",
+    ),
 ]
 
 

@@ -297,28 +297,28 @@ class PostgresRedisJobStore:
         different responses. Failing the whole check on the first exception
         would hide which.
         """
-        checks: dict[str, str] = {}
 
-        try:
+        def postgres() -> None:
             with self._db.cursor() as cursor:
                 cursor.execute("SELECT 1")
-            checks["postgres"] = "ok"
-        except Exception as exc:
-            logger.warning("Readiness: Postgres unreachable: {error}", error=str(exc))
-            checks["postgres"] = "unavailable"
 
-        try:
-            self._bus.ping()
-            checks["redis"] = "ok"
-        except Exception as exc:
-            logger.warning(
-                "Redis unreachable: this worker stays in rotation and serves reads, "
-                "but cannot claim queued work. {error}",
-                error=str(exc),
-            )
-            checks["redis"] = "degraded"
-
-        return checks
+        # **Each under its own deadline, and a hang is judged like a refusal.**
+        # A stopped Redis refuses a connection in milliseconds and read as
+        # degraded; a *paused* one accepts it and never answers, the ping
+        # outlived the readiness handler's single timeout for the whole check,
+        # and the handler replaced every result — a healthy Postgres included
+        # — with `store: unavailable`. So a hung Redis took every worker out of
+        # rotation, the exact inversion this docstring exists to prevent, and
+        # only through the unclean shape. Found with `docker pause`.
+        return {
+            "postgres": _probe("Postgres", postgres, failed="unavailable"),
+            "redis": _probe(
+                "Redis",
+                self._bus.ping,
+                failed="degraded",
+                note="this worker stays in rotation and serves reads, but cannot claim queued work",
+            ),
+        }
 
     def claim(self, job_id: str, worker: str, lease_seconds: int) -> InvestigationJob | None:
         """Take ownership of a pending job, or return None if someone else did.
@@ -545,3 +545,48 @@ _TERMINAL_EVENTS = {
     JobEventType.FAILED,
     JobEventType.CANCELLED,
 }
+
+
+# Below the readiness handler's own timeout (`app/api/health.py`), so the
+# handler always receives per-dependency answers rather than timing out the
+# whole check.
+PROBE_DEADLINE_SECONDS = 1.5
+
+
+def _probe(name: str, check, failed: str, note: str = "") -> str:
+    """Run one dependency check with a deadline; report, never raise or hang.
+
+    A daemon thread rather than a pool: a hung check must not hold up the
+    answer, and a pool's shutdown would wait for it. The thread ends when the
+    client's own socket timeout does.
+    """
+    import threading
+
+    outcome: dict[str, BaseException | None] = {}
+
+    def run() -> None:
+        try:
+            check()
+            outcome["error"] = None
+        except BaseException as exc:  # reported, not raised
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=run, name=f"readiness-{name.lower()}", daemon=True)
+    thread.start()
+    thread.join(PROBE_DEADLINE_SECONDS)
+
+    if "error" in outcome and outcome["error"] is None:
+        return "ok"
+    reason = (
+        f"no answer within {PROBE_DEADLINE_SECONDS}s"
+        if "error" not in outcome
+        else str(outcome["error"])
+    )
+    logger.warning(
+        "Readiness: {name} {status}{note}: {reason}",
+        name=name,
+        status=failed,
+        note=f" — {note}" if note else "",
+        reason=reason,
+    )
+    return failed

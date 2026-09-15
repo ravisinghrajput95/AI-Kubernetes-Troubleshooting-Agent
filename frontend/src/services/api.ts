@@ -116,6 +116,11 @@ export interface AgentFleet {
   trust_domain: string;
   /** "fleet": every agent in the tenant, whichever worker holds its stream. */
   scope: string;
+  /**
+   * False when the shared index could not be read, and `items` holds only the
+   * agents attached to the worker that answered. Absent from older backends.
+   */
+  complete?: boolean;
 }
 
 export function getAgents(): Promise<AgentFleet> {

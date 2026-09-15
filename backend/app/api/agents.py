@@ -75,9 +75,9 @@ def _require_authentication(principal: Principal) -> None:
 @router.get("/agents")
 def list_agents(principal: Principal = Depends(require_principal)) -> dict[str, Any]:
     """Every agent in this tenant's fleet, and what each can do."""
-    from app.api.investigate import connected_agents
+    from app.api.investigate import fleet_view
 
-    agents = connected_agents()
+    agents, complete = fleet_view()
     return {
         "items": agents,
         "gateway_enabled": settings.agent_gateway_enabled,
@@ -89,6 +89,9 @@ def list_agents(principal: Principal = Depends(require_principal)) -> dict[str, 
         # only its own until requests are routed by stream ownership", above a
         # list that included an agent held by the other worker.
         "scope": "fleet",
+        # False when the shared index could not be read and `items` holds only
+        # the agents attached to the worker that answered.
+        "complete": complete,
     }
 
 

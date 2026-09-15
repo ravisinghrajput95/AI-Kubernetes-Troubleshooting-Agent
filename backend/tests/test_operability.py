@@ -242,6 +242,44 @@ class TestLivenessAndReadinessAreDifferentQuestions:
         redis_only = PostgresRedisJobStore(LiveDatabase(), DeadBus()).check_health()
         assert redis_only == {"postgres": "ok", "redis": "degraded"}
 
+    async def test_a_hung_redis_is_degraded_not_a_fleet_outage(self, monkeypatch):
+        """`docker pause` on Redis, not `docker stop`: the connection is
+        accepted and the ping never answers. The whole check outlived the
+        handler's timeout and every worker reported `store: unavailable`,
+        Postgres included — the fleet out of rotation for a degradation."""
+        import time
+
+        from app.api import health
+        from app.jobs import store as store_module
+        from app.jobs.distributed import PostgresRedisJobStore
+
+        class LiveDatabase:
+            def cursor(self):
+                import contextlib
+
+                @contextlib.contextmanager
+                def _cursor():
+                    class Cursor:
+                        def execute(self, *args):
+                            return None
+
+                    yield Cursor()
+
+                return _cursor()
+
+        class HungBus:
+            def ping(self):
+                time.sleep(5)
+
+        store = PostgresRedisJobStore(LiveDatabase(), HungBus())
+        monkeypatch.setattr(store_module, "get_job_store", lambda: store)
+
+        started = time.monotonic()
+        checks = await health._dependency_checks()
+
+        assert checks == {"postgres": "ok", "redis": "degraded"}, checks
+        assert time.monotonic() - started < 2.0
+
     def test_the_single_process_deployment_has_nothing_to_be_unready_about(self):
         """The supported default must not be permanently unready.
 

@@ -79,6 +79,23 @@ describe("settings", () => {
     expect(screen.getByText(/AUTH_MODE=token/)).toBeInTheDocument();
   });
 
+  it("never says no agent connected when the fleet index could not be read", async () => {
+    // Redis paused: every worker answered an empty list, and Settings said
+    // "The gateway is listening and no agent has connected yet".
+    vi.spyOn(api, "getAgents").mockResolvedValue({
+      items: [],
+      gateway_enabled: true,
+      trust_domain: "k8s-agent.local",
+      scope: "fleet",
+      complete: false,
+    });
+    renderPage(<SettingsPage />);
+
+    expect(await screen.findByText(/agent index cannot be read/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no agent has connected yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("None connected")).not.toBeInTheDocument();
+  });
+
   it("shows whether any cluster agent is answering", async () => {
     vi.spyOn(api, "getAgents").mockResolvedValue({
       items: [

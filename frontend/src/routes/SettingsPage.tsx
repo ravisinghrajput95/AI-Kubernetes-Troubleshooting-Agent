@@ -99,9 +99,11 @@ export function SettingsPage() {
         <div className="flex items-baseline justify-between gap-4 border-b border-line-muted px-4 py-3">
           <h2 className="text-h2">Cluster agents</h2>
           <span className="text-sm text-ink-3">
-            {connected.length === 0
-              ? "None connected"
-              : `${online} of ${connected.length} online`}
+            {agents.data?.complete === false
+              ? `${connected.length} on this worker; the fleet index is unavailable`
+              : connected.length === 0
+                ? "None connected"
+                : `${online} of ${connected.length} online`}
           </span>
         </div>
 
@@ -111,6 +113,13 @@ export function SettingsPage() {
             <code className="font-mono text-sm">AGENT_GATEWAY_PORT</code> to let
             clusters dial in; without it every cluster is read with the
             platform&apos;s own kubeconfig.
+          </p>
+        ) : agents.data?.complete === false && connected.length === 0 ? (
+          // With Redis unreachable every worker answered an empty list, and
+          // this said "no agent has connected yet" about connected agents.
+          <p className="max-w-measure px-4 py-3 text-sm leading-6 text-ink-2">
+            The shared agent index cannot be read right now, so agents attached
+            to other workers are not visible. This worker holds none.
           </p>
         ) : connected.length === 0 ? (
           <p className="max-w-measure px-4 py-3 text-sm leading-6 text-ink-2">

@@ -1934,6 +1934,8 @@ every read still resolves from Postgres. That inverts "if Redis drops
 everything the system is slower, never wrong". The first implementation got
 this wrong and `scripts/chaos_bench.py redis-loss` is what caught it.
 
+**A hung dependency is judged like a refused one** (`_probe` in `app/jobs/distributed.py`). `chaos_bench redis-loss` stops Redis, which refuses connections in milliseconds and reads as degraded. `docker pause` accepts the connection and never answers: the ping outlived the handler's single timeout for the whole check, the handler replaced every result — a healthy Postgres included — with `store: unavailable`, and every worker left rotation together. Each dependency now has its own deadline below the handler's. The same pause made `GET /agents` answer `items: []` on the worker holding an agent's stream, because `presence.fleet()` degraded an unreadable index to an empty list; it returns `None`, the API falls back to this worker's own agents with `complete: false`, and the console says the list is partial instead of "no agent has connected yet".
+
 **Shutdown order is the whole of graceful shutdown** (`StateBackend.shutdown`):
 readiness false → consumer stops claiming → drain up to
 `SHUTDOWN_DRAIN_SECONDS` (30) → cancel the rest. Each is wrong without the

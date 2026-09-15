@@ -104,20 +104,35 @@ def connected_agents() -> list[dict]:
 
     Imported lazily so a deployment with no gateway never loads grpc.
     """
+    return fleet_view()[0]
+
+
+def fleet_view() -> tuple[list[dict], bool]:
+    """The fleet, and whether it is the whole fleet.
+
+    With the shared index unreadable, this worker still knows its own agents —
+    they are attached to it — so those are returned and marked incomplete,
+    rather than an empty list that reads as "none".
+    """
     from app.core.config import settings
 
     if not settings.agent_gateway_enabled:
-        return []
+        return [], True
 
     from app.gateway.presence import get_agent_presence
     from app.gateway.session import get_agent_registry
     from app.tenancy import current_tenant
 
+    # `clusters()` is already scoped to the caller's tenant.
+    local = [{**item, "local": True, "worker": ""} for item in get_agent_registry().clusters()]
     presence = get_agent_presence()
     if presence is None:
-        return [{**item, "local": True, "worker": ""} for item in get_agent_registry().clusters()]
+        return local, True
 
-    return presence.fleet(current_tenant())
+    fleet = presence.fleet(current_tenant())
+    if fleet is None:
+        return local, False
+    return fleet, True
 
 
 @router.post("/investigate", response_model=InvestigationResponse)

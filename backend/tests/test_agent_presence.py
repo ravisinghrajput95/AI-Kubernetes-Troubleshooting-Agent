@@ -128,9 +128,11 @@ class TestADeadWorkerLeavesNoPhantoms:
 
 
 class TestVisibilityNeverBreaksCollection:
-    def test_an_unreachable_index_degrades_to_empty_rather_than_raising(self):
+    def test_an_unreachable_index_is_reported_unreadable_rather_than_raising(self):
         """A console that under-reports is bad; an investigation that fails
-        because the console's index was down is worse."""
+        because the console's index was down is worse. This asserted `[]`,
+        which is how a paused Redis made `/agents` say there were no agents on
+        the worker holding one."""
 
         class BrokenBus:
             prefix = "test"
@@ -148,7 +150,7 @@ class TestVisibilityNeverBreaksCollection:
 
         presence.announce(FakeSession("prod-eu"))
         presence.withdraw(FakeSession("prod-eu"))
-        assert presence.fleet("default") == []
+        assert presence.fleet("default") is None
 
     def test_a_corrupt_record_is_skipped_not_fatal(self, bus):
         AgentPresence(bus, "worker-a").announce(FakeSession("prod-eu"))
@@ -276,3 +278,36 @@ def test_the_api_says_it_answers_for_the_fleet_and_does(bus, monkeypatch):
     held_elsewhere = [item for item in answer["items"] if item["worker"] == "worker-a"]
     assert held_elsewhere and held_elsewhere[0]["local"] is False
     assert answer["scope"] == "fleet"
+
+
+def test_with_the_index_unreadable_the_api_shows_this_workers_agents_as_partial(monkeypatch):
+    """Redis paused: `GET /agents` answered `items: []` on the worker holding
+    an agent's stream. It knows its own agents without the index."""
+    from app.api.agents import list_agents
+    from app.core.config import settings
+    from app.gateway import session as session_module
+    from app.gateway.presence import set_agent_presence
+
+    class UnreadableBus:
+        prefix = "test"
+
+        def scan_values(self, *args):
+            raise ConnectionError("Timeout reading from socket")
+
+    monkeypatch.setattr(settings, "agent_gateway_port", 5551)
+    registry = session_module.AgentRegistry()
+    monkeypatch.setattr(session_module, "_registry", registry)
+    registry.register(
+        session_module.AgentSession(
+            AgentIdentity(cluster_id="prod-eu", tenant="default"),
+            session_module.agent_pb2.AgentHello(cluster_id="prod-eu"),
+        )
+    )
+    set_agent_presence(AgentPresence(UnreadableBus(), "worker-a"))
+    try:
+        answer = list_agents(principal=None)
+    finally:
+        set_agent_presence(None)
+
+    assert [item["cluster_id"] for item in answer["items"]] == ["prod-eu"]
+    assert answer["complete"] is False

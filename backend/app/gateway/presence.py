@@ -128,13 +128,21 @@ class AgentPresence:
             return None
         return worker
 
-    def fleet(self, tenant: str) -> list[dict[str, Any]]:
-        """Every agent this tenant has, across every worker."""
+    def fleet(self, tenant: str) -> list[dict[str, Any]] | None:
+        """Every agent this tenant has, across every worker — or `None`.
+
+        `None` when the index cannot be read, never `[]`. It returned an empty
+        list, and with Redis paused `GET /agents` answered `items: []` on the
+        very worker holding an agent's stream — so the console said "no agent
+        has connected yet" about a connected, serving agent. Still never
+        raises: a console that under-reports is bad, an investigation failed
+        by its index is worse.
+        """
         try:
             raw = self._bus.scan_values(f"{self._bus.prefix}:agents:{tenant}:*")
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             logger.warning("Could not read agent presence: {error}", error=exc)
-            return []
+            return None
 
         records = []
         now = datetime.now(UTC)
