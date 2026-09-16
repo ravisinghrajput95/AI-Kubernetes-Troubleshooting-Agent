@@ -287,6 +287,47 @@ class TestContent:
         )
         assert payload["report_metadata"]["confidence_breakdown"] == []
 
+    def test_the_evidence_matrix_reports_only_checks_that_ran(self):
+        """It carried a "Port 6443" row — Closed or Unverified — for a probe
+        this platform does not perform, and an "API Connectivity" row inferred
+        by matching kubectl's prose. The evidence store already counts what
+        happened."""
+        import json as _json
+
+        def matrix(investigation):
+            payload = _json.loads(
+                ReportRenderer().render_json(
+                    DIAGNOSIS, investigation, "2026-09-14T00:00:00Z", "prod", "success", "INC-1"
+                )
+            )
+            return {
+                row["source"]: row["status"]
+                for row in payload["report_metadata"]["evidence_matrix"]
+            }
+
+        rows = matrix(
+            {
+                **INVESTIGATION,
+                "evidence_coverage": {"total": 64, "usable": 53, "not_applicable": 11},
+            }
+        )
+        assert "Port 6443" not in rows
+        assert "API Connectivity" not in rows
+        assert rows["Cluster reads"] == "All succeeded"
+
+        partial = matrix(
+            {
+                **INVESTIGATION,
+                "evidence_coverage": {"total": 64, "usable": 40, "not_applicable": 11},
+            }
+        )
+        assert partial["Cluster reads"] == "40 of 53 succeeded"
+
+        nothing = matrix(
+            {**INVESTIGATION, "evidence_coverage": {"total": 12, "usable": 0, "not_applicable": 0}}
+        )
+        assert nothing["Cluster reads"] == "None succeeded"
+
     def test_appendix_notes_that_all_commands_were_read_only(self):
         section = compose().section("Appendix: Commands Executed")
 

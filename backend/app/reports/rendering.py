@@ -328,13 +328,33 @@ class ReportRenderer:
             ("Services", self._evidence_status(investigation.get("network", {}))),
             ("Storage", self._evidence_status(investigation.get("storage", {}))),
             ("Extended Workloads", self._evidence_status(investigation.get("workloads", {}))),
-            ("API Connectivity", self._api_status(investigation)),
-            (
-                "Port 6443",
-                "Closed" if self._api_connection_refused(investigation) else "Unverified",
-            ),
+            ("Cluster reads", self._read_outcome(investigation)),
         ]
         return rows
+
+    def _read_outcome(self, investigation: dict[str, Any]) -> str:
+        """What the collected evidence says about reaching the cluster.
+
+        Two rows here were not evidence. **"Port 6443"** reported `Closed` or
+        `Unverified` for a probe this platform does not perform — it has no
+        port check, and on the agent path there is no connection to 6443 from
+        here at all — so every healthy report carried a row for a test that
+        never ran. **"API Connectivity"** was substring-matching kubectl's
+        prose ("connection refused", "couldn't get current server api group
+        list"), which is the classifier defect `app/kubernetes/errors.py`
+        already had: an agent's `dial tcp …:6443: i/o timeout` matched by
+        luck of the digits. The evidence store already counts what happened.
+        """
+        coverage = investigation.get("evidence_coverage") or {}
+        applicable = int(coverage.get("total", 0)) - int(coverage.get("not_applicable", 0))
+        usable = int(coverage.get("usable", 0))
+        if applicable <= 0:
+            return "Not Available"
+        if usable == 0:
+            return "None succeeded"
+        if usable < applicable:
+            return f"{usable} of {applicable} succeeded"
+        return "All succeeded"
 
     def _evidence_status(self, section: dict[str, Any]) -> str:
         if section.get("error"):
@@ -384,27 +404,6 @@ class ReportRenderer:
             investigation.get(key, {}).get("error")
             for key in ("pods", "events", "deployments", "network", "nodes", "storage", "workloads")
         )
-
-    def _api_connection_refused(self, investigation: dict[str, Any]) -> bool:
-        text = self._combined_error_text(investigation)
-        return "connection refused" in text or "port 6443" in text
-
-    def _api_status(self, investigation: dict[str, Any]) -> str:
-        text = self._combined_error_text(investigation)
-        if "invalidclienttokenid" in text or "getting credentials" in text:
-            return "Authentication Failed"
-        if self._api_connection_refused(investigation):
-            return "Refused"
-        if "unable to connect" in text or "couldn't get current server api group list" in text:
-            return "Unavailable"
-        return "Available"
-
-    def _combined_error_text(self, investigation: dict[str, Any]) -> str:
-        text = " ".join(
-            str(investigation.get(key, {}).get("error", ""))
-            for key in ("pods", "events", "deployments", "network", "nodes", "storage", "workloads")
-        ).lower()
-        return text
 
     def _summary(self, investigation: dict[str, Any]) -> dict[str, Any]:
         return {

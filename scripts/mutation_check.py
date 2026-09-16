@@ -1306,6 +1306,17 @@ MUTATIONS = [
         tests="tests/test_reports.py",
     ),
     Mutation(
+        name="evidence-matrix-row-for-a-check-that-never-ran",
+        why=(
+            "The matrix reported 'Port 6443: Unverified' for a probe the platform does "
+            "not perform, beside an API row inferred from kubectl's prose."
+        ),
+        path="app/reports/rendering.py",
+        old='            ("Cluster reads", self._read_outcome(investigation)),\n',
+        new='            ("Port 6443", "Unverified"),  # mutation: a check that never ran\n',
+        tests="tests/test_reports.py",
+    ),
+    Mutation(
         name="refutation-across-unrelated-resources",
         why=(
             "Refuting signals matched by type anywhere in the namespace, so "
