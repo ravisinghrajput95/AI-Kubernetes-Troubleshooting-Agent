@@ -1749,6 +1749,18 @@ MUTATIONS = [
         tests="tests/test_agent_reconnect_grace.py",
     ),
     Mutation(
+        name="live-eval-scores-unset-as-an-expectation",
+        why=(
+            "evals.live kept the truthy '<unset>' sentinel as an expected cause, so "
+            "seven corpus cases were disagreements whatever the model chose and a "
+            "real model's 10-of-12 agreement was reported as 53%."
+        ),
+        path="evals/live.py",
+        old="        result = LiveCase(id=case.id, expected=None if expected is UNSET else expected)\n",
+        new="        result = LiveCase(id=case.id, expected=expected or None)  # mutation\n",
+        tests="tests/test_live_evals.py",
+    ),
+    Mutation(
         name="stream-request-carries-no-credential",
         why=(
             "F29: the progress stream was an EventSource, which cannot send an "

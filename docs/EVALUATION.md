@@ -66,6 +66,35 @@ model is asked to select and explain; a defensible disagreement is not a
 defect, and the fallback exists precisely because the two can differ. Gating it
 would train people to edit the corpus instead of the prompt.
 
+### The first measured runs (2026-09-16)
+
+CI has no model key, so the gate had never scored anything. Run locally against
+**gemma4 through Ollama's OpenAI-compatible endpoint** — a small local model,
+which makes this a floor rather than a figure for a hosted one:
+
+```bash
+OPENAI_API_KEY=ollama LLM_BASE_URL=http://localhost:11434/v1/chat/completions \
+  OPENAI_MODEL=gemma4:latest LLM_TIMEOUT_SECONDS=300 python -m evals.live
+```
+
+| Code | Answered | Survived grounding | Agreed (real expectations) |
+|---|---|---|---|
+| before per-workload hypothesis scoring (`1f1f874`) | 20/20 | 19/20 — one invented `network/registry` | — |
+| after (`05d7b26`, run twice) | 20/20 | 20/20, 20/20 | 10/12 |
+
+One run each on a nondeterministic model: the narrower hypothesis citations did
+not reduce survival, and nothing here says they improved it. **`LLM_BASE_URL`
+is the full endpoint URL**, not the `/v1` base; the first attempt got 404 on
+every call and the program refused rather than reporting zero rejections.
+
+**The agreement column was wrong before it was right.** The summary printed
+"53%" and nothing else; naming each disagreement showed seven of nine were
+against `<unset>` — a case stating no expected cause, whose sentinel is a
+truthy string that `or None` kept. Scored on the twelve cases that do state
+one, the model agreed on ten, and both remaining choices are defensible readings
+of multi-cause cases: the node three failing pods share, and the crashing
+workload behind a Service with no healthy backend.
+
 ### It cannot pass without calling anything
 
 The easiest live suite to write is one that skips when the key is absent and

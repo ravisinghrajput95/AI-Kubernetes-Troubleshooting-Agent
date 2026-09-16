@@ -62,6 +62,8 @@ python -m evals.live    # the same corpus, scored against the configured model
 
 **It refuses rather than skips.** No configured model is exit 2, never exit 0, and a run where every call failed is refused rather than reported as zero rejections — which is what it looks like. Both guards are unit-tested against a local HTTP stub speaking the chat-completions shape, reached through `LLM_BASE_URL`, so the gate is exercised on every CI run whether or not a key is set. The workflow decides whether the job runs; the program decides whether it passed.
 
+**First measured 2026-09-16** against a local gemma4 through Ollama (`LLM_BASE_URL` is the full `/v1/chat/completions` URL): 20/20 answered, 20/20 grounded, agreement 10 of 12 — reported as 53% until the summary named each disagreement and seven were against the truthy `<unset>` sentinel. See `docs/EVALUATION.md`.
+
 Two values must be read at their seams rather than from the diagnosis, and both were wrong first: a failed call and a rejected answer both return `ai_generated: false` carrying the *deterministic fallback's own* grounding block, so the payload cannot tell an outage from a reasoning regression — the first version scored a total provider outage as twenty perfectly grounded answers.
 
 Docker: `docker compose up --build` starts the backend, console, Postgres and Redis. The image installs a pinned `kubectl` and compose mounts `~/.kube/config` read-only (override with `KUBECONFIG_FILE`). The backend is published on a **fixed** `8000:8000`, because the console's bundle hardcodes that address and Docker's port allocator walks a range rather than handing out its low end — as a range this worked on the first `up` after a daemon start and drifted on every recreate afterwards. `docker compose -f docker-compose.yml -f docker-compose.scale.yml up --scale backend=3` is the multi-worker demonstration; it restores the range, and that file documents how to find the port a replica actually got. Local processes remain the getting-started path and need none of it.
@@ -2240,7 +2242,7 @@ It is also the discipline that decays first: a passing suite feels like
 evidence, and a mutation not run leaves no trace.
 
 ```bash
-python scripts/mutation_check.py                   # 127 mutations
+python scripts/mutation_check.py                   # 128 mutations
 python scripts/mutation_check.py --suite frontend  # the console's, under vitest
 python scripts/mutation_check.py --suite terraform # `terraform test`, its own CI job
 python scripts/mutation_check.py --list

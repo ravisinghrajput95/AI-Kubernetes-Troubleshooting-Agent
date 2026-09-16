@@ -50,6 +50,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 
+from evals.models import UNSET
 from evals.runner import load_investigation_cases
 
 # The corpus is small and every case is one model call. A floor well below its
@@ -197,7 +198,12 @@ def run(limit: int = 0) -> LiveReport:
     report = LiveReport(provider=provider, model=model)
 
     for case in cases:
-        result = LiveCase(id=case.id, expected=case.expect.top_hypothesis or None)
+        # `UNSET` is the string "<unset>", which is truthy: `or None` kept it,
+        # so every case that states no expected cause was scored as a
+        # disagreement. The first run to name its disagreements showed seven of
+        # nine against "<unset>", and the reported 53% agreement was 10 of 12.
+        expected = case.expect.top_hypothesis
+        result = LiveCase(id=case.id, expected=None if expected is UNSET else expected)
         observed.reset()
         started = time.perf_counter()
         diagnosis = analyzer.analyze(case.investigation)

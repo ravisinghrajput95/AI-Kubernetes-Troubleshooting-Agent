@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 
 from evals import live
+from evals.models import UNSET
 from evals.runner import load_investigation_cases
 
 GROUNDABLE = {
@@ -188,6 +189,20 @@ class TestItScoresWhatTheModelActuallySaid:
         # "no model output was used" — which is what the first version reported
         # for a total outage, scoring twenty failures as twenty clean answers.
         assert not any("no model output was used" in case.rejection for case in report.cases)
+
+    def test_a_case_with_no_expected_cause_is_not_scored_as_a_disagreement(self, stub_model):
+        """`UNSET` is a truthy string. Kept as an expectation, it made seven of
+        the corpus's cases disagreements whatever the model chose, and a real
+        model's 10-of-12 agreement was reported as 53%."""
+        report = live.run()
+        unset = {
+            case.id for case in load_investigation_cases() if case.expect.top_hypothesis is UNSET
+        }
+
+        assert unset, "vacuous: the corpus has no case without an expected cause"
+        scored = {case.id: case.expected for case in report.cases}
+        assert all(scored[case_id] is None for case_id in unset)
+        assert "<unset>" not in report.summary()
 
     def test_the_corpus_is_the_one_the_offline_evals_use(self):
         """Not a second, friendlier set of cases.
