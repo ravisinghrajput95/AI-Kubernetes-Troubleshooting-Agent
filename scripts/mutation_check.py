@@ -1235,11 +1235,24 @@ MUTATIONS = [
         name="one-refuted-pod-refutes-the-pool",
         why=(
             "fraud-scorer's OOM kill 'argued against' checkout failing on startup, "
-            "because the rule pooled every pod with a BackOff event."
+            "because the rule pooled every pod with a BackOff event. Workloads are "
+            "scored apart now, so this is the same rule between replicas of one."
         ),
         path="app/analysis/hypothesis_rules.py",
         old="        if standing:\n",
         new="        if False:  # mutation: refute the pool\n",
+        tests="tests/test_analysis_engine.py",
+    ),
+    Mutation(
+        name="refuted-workload-chosen-over-unrefuted",
+        why=(
+            "Once workloads were scored apart, a refuted workload whose own support "
+            "outweighed its penalty could become the hypothesis — reporting it "
+            "refuted while another workload had nothing against it."
+        ),
+        path="app/analysis/hypothesis_rules.py",
+        old="                not item.refuting,\n                item.confidence,\n",
+        new="                item.confidence,\n",
         tests="tests/test_analysis_engine.py",
     ),
     Mutation(
@@ -1265,8 +1278,8 @@ MUTATIONS = [
             "replicas too, and that count broke a three-way tie."
         ),
         path="app/analysis/hypothesis_rules.py",
-        old="        supporting = [signal for signal in supporting if _about(signal, triggering, signals)]\n",
-        new="",
+        old="            if signal.type in self.supporting and _about(signal, triggering, signals)\n",
+        new="            if signal.type in self.supporting\n",
         tests="tests/test_analysis_engine.py",
     ),
     Mutation(
@@ -1516,6 +1529,66 @@ MUTATIONS = [
         old="    if written is not None and elapsed_since_write is not None:\n",
         new="    if False:  # mutation: reader clock against writer clock\n",
         tests="tests/test_agent_presence.py",
+    ),
+    Mutation(
+        name="hypothesis-scored-on-the-pool",
+        why=(
+            "A rule scored every resource its triggers fired on as one: after a node "
+            "restart the in-cluster agent pod, Ready for nine minutes, was reported "
+            "'fails on startup' at 92% on checkout's FATAL log and metrics-server's "
+            "probe, and the tie rationale quoted the pool (21 against 9)."
+        ),
+        path="app/analysis/hypothesis_rules.py",
+        old="            instances.setdefault(_instance(signal), []).append(signal)\n",
+        new='            instances.setdefault(("pool",), []).append(signal)  # mutation\n',
+        tests="tests/test_hypothesis_scoring_per_workload.py",
+    ),
+    Mutation(
+        name="statefulset-replicas-scored-apart",
+        why=(
+            "Replicas of one workload failing alike are convergence. Grouping only "
+            "`<deployment>-<hash>-<id>` pods split a StatefulSet's api-0/1/2 into "
+            "three uncorroborated observations and moved the graph-node golden case."
+        ),
+        path="app/analysis/hypothesis_rules.py",
+        old="        for pattern in (_REPLICA_POD, _ORDINAL_POD):\n",
+        new="        for pattern in (_REPLICA_POD,):  # mutation\n",
+        tests="tests/test_reasoning_quality.py tests/test_evals.py",
+    ),
+    Mutation(
+        name="service-hypothesis-supported-by-every-pod",
+        why=(
+            "metrics-server's Service read 'no healthy backend' at 92%, supported by "
+            "checkout-svc's missing endpoints, ledger's image pull and crash loops "
+            "in every namespace — six workloads it does not select."
+        ),
+        path="app/analysis/hypothesis_rules.py",
+        old="    if services and len(services) == len(triggering):\n",
+        new="    if False:  # mutation: unscoped service support\n",
+        tests="tests/test_hypothesis_scoring_per_workload.py",
+    ),
+    Mutation(
+        name="namespaced-hypothesis-supported-from-elsewhere",
+        why=(
+            "payments' default-deny NetworkPolicy was 'supported' by readiness "
+            "probes failing in kube-system, which no policy in payments can affect."
+        ),
+        path="app/analysis/hypothesis_rules.py",
+        old="        not workloads_only\n        and signal.target.namespace\n",
+        new="        False  # mutation\n        and signal.target.namespace\n",
+        tests="tests/test_hypothesis_scoring_per_workload.py",
+    ),
+    Mutation(
+        name="restart-history-read-as-failing-backend",
+        why=(
+            "A pod listed only for its restart history — running and Ready — made "
+            "its Service read 'all 1 pods it selects are failing' at critical, "
+            "and that became the cluster's second-ranked root cause."
+        ),
+        path="app/analysis/graph_signal_rules.py",
+        old='        if entry.get("reported_now", True) is not False\n',
+        new="",
+        tests="tests/test_hypothesis_scoring_per_workload.py",
     ),
     Mutation(
         name="stream-request-carries-no-credential",

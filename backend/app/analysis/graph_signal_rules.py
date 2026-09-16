@@ -185,10 +185,7 @@ class NodeCarryingFailures:
         if not graph.edges:
             return ()
 
-        problematic = {
-            f"pod/{entry.get('namespace', 'default')}/{entry.get('name', '')}"
-            for entry in data.section("pods").get("problematic_pods", []) or []
-        }
+        problematic = _failing_now(data)
         if len(problematic) < 2:
             return ()
 
@@ -229,6 +226,22 @@ class NodeCarryingFailures:
         return tuple(signals)
 
 
+def _failing_now(data) -> set[str]:
+    """Pods the kubelet reports failing now, as graph keys.
+
+    A pod listed only for its restart history — `reported_now: false`, running
+    and Ready — is not failing, and both rules below make a present-tense claim
+    from this set. After a node restart the metrics-server pod, Ready for nine
+    minutes, made its Service read "no healthy backend: all 1 pods it selects
+    are failing" at critical, and that became the cluster's root cause.
+    """
+    return {
+        f"pod/{entry.get('namespace', 'default')}/{entry.get('name', '')}"
+        for entry in data.section("pods").get("problematic_pods", []) or []
+        if entry.get("reported_now", True) is not False
+    }
+
+
 class ServiceSelectingOnlyBrokenPods:
     """A service whose every backing pod is failing.
 
@@ -244,10 +257,7 @@ class ServiceSelectingOnlyBrokenPods:
         if not graph.edges:
             return ()
 
-        problematic = {
-            f"pod/{entry.get('namespace', 'default')}/{entry.get('name', '')}"
-            for entry in data.section("pods").get("problematic_pods", []) or []
-        }
+        problematic = _failing_now(data)
         if not problematic:
             return ()
 

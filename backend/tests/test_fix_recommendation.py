@@ -67,9 +67,9 @@ def investigation() -> dict[str, Any]:
         "deployments": {
             "unhealthy_deployments": [
                 {
-                    "name": "checkout",
+                    "name": "gateway",
                     "namespace": "payments",
-                    "desired_replicas": 2,
+                    "desired_replicas": 1,
                     "available_replicas": 0,
                 },
             ]
@@ -119,9 +119,13 @@ class TestTheDeterministicPath:
         # Vacuity: if the leader were about `checkout`, the heuristic and the
         # rule would agree and nothing below could fail.
         # Which of the fixture's tied faults leads is not the point, and moved
-        # when support was scoped to the workloads a hypothesis is about.
+        # when support was scoped to the workloads a hypothesis is about, and
+        # again when each workload was scored on its own evidence — which is
+        # why the planted first deployment is now `gateway`, a genuine
+        # fault that leads nothing.
         assert diagnosis["ai_generated"] is False
-        assert "checkout" not in about(diagnosis)
+        first = investigation["deployments"]["unhealthy_deployments"][0]["name"]
+        assert first not in about(diagnosis)
         assert len(investigation["pods"]["problematic_pods"]) > 3
 
     def test_no_command_or_step_names_a_workload_the_diagnosis_is_not_about(

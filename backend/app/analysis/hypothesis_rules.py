@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from app.analysis.models import Hypothesis, Signal, SignalType
+from app.analysis.models import Hypothesis, Severity, Signal, SignalType
 
 SUPPORT_BONUS = 10
 REFUTE_PENALTY = 20
@@ -36,6 +36,18 @@ class HypothesisRule(Protocol):
 
 
 @dataclass(frozen=True)
+class _Scored:
+    """One resource's evidence for a hypothesis."""
+
+    triggering: list[Signal]
+    supporting: list[Signal]
+    refuting: list[Signal]
+    confidence: int
+    severity: Severity
+    primary: Signal
+
+
+@dataclass(frozen=True)
 class SignalPatternRule:
     """Hypothesis triggered by the presence of any of a set of signal types."""
 
@@ -55,39 +67,78 @@ class SignalPatternRule:
         if not triggering:
             return None
 
-        supporting = [signal for signal in signals if signal.type in self.supporting]
+        # **A hypothesis names one resource, so it is scored on that resource's
+        # evidence.** A rule fires on every resource its triggers match — every
+        # pod with a BackOff event — and was scored on the pool: a kind cluster
+        # after a node restart reported "Application fails on startup" about
+        # the in-cluster agent, a pod Ready for nine minutes, at 92%, because
+        # checkout's FATAL log line, checkout's unavailable replicas and
+        # metrics-server's failing probe were all counted as support for it.
+        # Its own evidence was one exit code. The tie rationale then quoted the
+        # pool, "rests on more signals (21 against 9)". Each workload is now
+        # scored alone and the best-evidenced one is the hypothesis — which is
+        # also what stops churn on an unrelated pod moving the confidence of
+        # the one named.
+        instances: dict[tuple[str, ...], list[Signal]] = {}
+        for signal in triggering:
+            instances.setdefault(_instance(signal), []).append(signal)
+        scored = [self._score(group, signals) for group in instances.values()]
+        # Insertion order breaks a full tie, as signal order always did.
+        best = max(
+            scored,
+            key=lambda item: (
+                not item.refuting,
+                item.confidence,
+                item.severity.weight,
+                len(item.triggering) + len(item.supporting),
+            ),
+        )
+
+        return Hypothesis(
+            id=self.id,
+            title=self.title,
+            category=self.category,
+            severity=best.severity,
+            confidence=best.confidence,
+            rationale=self.rationale,
+            target=best.primary.target,
+            supporting_signal_ids=tuple(
+                signal.id for signal in [*best.triggering, *best.supporting]
+            ),
+            refuting_signal_ids=tuple(signal.id for signal in best.refuting),
+            missing_evidence=self.missing_evidence,
+            remediation_hint=self.remediation_hint,
+        )
+
+    def _score(self, triggering: list[Signal], signals: Sequence[Signal]) -> _Scored:
         # Refutation is about the resources the hypothesis rests on. Matched by
         # type alone, `notifier`'s missing ConfigMap "argued against" checkout
         # failing on startup, and the report listed that under "Alternatives
         # the evidence argued against" — evidence about one pod counted as
-        # evidence about another.
+        # evidence about another. Scoring per workload is the same rule applied
+        # to support, which pooling across workloads had left out.
         triggered = {signal.target.key for signal in triggering}
         refuting = [
             signal
             for signal in signals
             if signal.type in self.refuting and signal.target.key in triggered
         ]
-        # **And a refutation of one resource is not a refutation of the rest.**
-        # A rule pools every resource its triggers fire on — every pod with a
-        # BackOff event — so fraud-scorer's OOM kill and ledger's image pull
-        # "argued against" checkout failing on startup, a pod whose own log read
-        # `FATAL: config key DB_HOST is not set`, and the report listed that
-        # cause under "Alternatives the evidence argued against". While any
-        # triggered resource has nothing against it, the hypothesis rests on
-        # those; it is refuted only when every one of them is.
+        # Within one workload, a refuted pod does not refute its sibling: while
+        # any triggered resource has nothing against it, the instance rests on
+        # those.
         refuted = {signal.target.key for signal in refuting}
         standing = [signal for signal in triggering if signal.target.key not in refuted]
         if standing:
             triggering, refuting = standing, []
-        # Support is scoped the same way, for the workloads it can be scoped
-        # for. Checkout's startup failure was "supported" by archiver's and
-        # ledger's unavailable replicas and gateway's failing probe — twenty
-        # signals, most about other workloads, which is what then decided a
-        # three-way tie "because it rests on more signals". A supporting Pod
-        # or Deployment signal counts only when it is about a triggered pod or
-        # the Deployment that owns one; other kinds (a claim, a node, a class)
-        # relate through references this rule cannot see, and stay unscoped.
-        supporting = [signal for signal in supporting if _about(signal, triggering, signals)]
+        # A supporting Pod or Deployment signal counts only when it is about a
+        # triggered pod or the Deployment that owns one; other kinds (a claim, a
+        # node, a class) relate through references this rule cannot see, and
+        # stay unscoped.
+        supporting = [
+            signal
+            for signal in signals
+            if signal.type in self.supporting and _about(signal, triggering, signals)
+        ]
 
         confidence = self.base_confidence
         confidence += SUPPORT_BONUS * len({signal.type for signal in supporting})
@@ -99,24 +150,47 @@ class SignalPatternRule:
         confidence = max(MIN_CONFIDENCE, min(confidence, MAX_CONFIDENCE))
 
         primary = max(triggering, key=lambda signal: signal.severity.weight)
-        severity = max(
-            (signal.severity for signal in triggering),
-            key=lambda value: value.weight,
+        return _Scored(
+            triggering=triggering,
+            supporting=supporting,
+            refuting=refuting,
+            confidence=confidence,
+            severity=primary.severity,
+            primary=primary,
         )
 
-        return Hypothesis(
-            id=self.id,
-            title=self.title,
-            category=self.category,
-            severity=severity,
-            confidence=confidence,
-            rationale=self.rationale,
-            target=primary.target,
-            supporting_signal_ids=tuple(signal.id for signal in [*triggering, *supporting]),
-            refuting_signal_ids=tuple(signal.id for signal in refuting),
-            missing_evidence=self.missing_evidence,
-            remediation_hint=self.remediation_hint,
-        )
+
+_REPLICA_POD = re.compile(r"^(?P<owner>.+)-[a-z0-9]{1,10}-[a-z0-9]{5}$")
+
+
+def _owned_by(pod: str, deployment: str) -> bool:
+    match = _REPLICA_POD.match(pod)
+    return bool(match) and match.group("owner") == deployment
+
+
+_ORDINAL_POD = re.compile(r"^(?P<owner>.+)-\d+$")
+
+
+def _instance(signal: Signal) -> tuple[str, ...]:
+    """The workload a triggering signal is about: a controller and its pods are one.
+
+    Replicas of one workload failing alike are convergence — the same image,
+    the same configuration, the same fault seen more than once. Two unrelated
+    workloads failing alike are two faults. Ownership is read off the pod name
+    (`<deployment>-<hash>-<id>`, `<statefulset>-<ordinal>`), the same inference
+    `_about` and the remediation layer already make, because the signal carries
+    no owner reference.
+    """
+    target = signal.target
+    namespace = target.namespace or ""
+    if target.kind in {"Deployment", "StatefulSet"}:
+        return ("workload", namespace, target.name)
+    if target.kind == "Pod":
+        for pattern in (_REPLICA_POD, _ORDINAL_POD):
+            match = pattern.match(target.name)
+            if match:
+                return ("workload", namespace, match.group("owner"))
+    return (target.kind, target.key)
 
 
 def _about(signal: Signal, triggering: Sequence[Signal], signals: Sequence[Signal]) -> bool:
@@ -128,12 +202,52 @@ def _about(signal: Signal, triggering: Sequence[Signal], signals: Sequence[Signa
     # decided a three-way tie on breadth.
     if workloads_only and signal.type.startswith("event.") and kind not in {"Pod", "Deployment"}:
         return False
+    # A namespaced object's reach ends at its namespace — a Service selects and
+    # a NetworkPolicy applies only within its own. payments' default-deny
+    # policy was "supported" by readiness probes failing in kube-system.
+    # Cluster-scoped triggers (a node, a class) carry no namespace and are left
+    # alone, as are workload triggers, which are scoped below by name.
+    if (
+        not workloads_only
+        and signal.target.namespace
+        and all(item.target.namespace for item in triggering)
+        and signal.target.namespace not in {item.target.namespace for item in triggering}
+    ):
+        return False
+    services = {item.target.key for item in triggering if item.target.kind == "Service"}
+    # **A hypothesis about a Service rests on that Service and what it selects.**
+    # Everything else was unscoped support, so a kind cluster's metrics-server
+    # Service read "no healthy backend" at 92% on the strength of checkout-svc's
+    # missing endpoints, ledger's image pull and a crash loop in every
+    # namespace — the leading cause, supported by six workloads it does not
+    # select. A Service's selector is namespaced, so a pod elsewhere cannot be
+    # a backend; where the trigger names the pods it selects, only those are.
+    if services and len(services) == len(triggering):
+        if kind == "Service":
+            return signal.target.key in services
+        if kind in {"Pod", "Deployment"}:
+            namespaces = {item.target.namespace for item in triggering}
+            if signal.target.namespace not in namespaces:
+                return False
+            selected = {
+                (item.target.namespace, pod)
+                for item in triggering
+                for pod in item.attributes.get("pods", ()) or ()
+            }
+            if selected:
+                return any(
+                    namespace == signal.target.namespace
+                    and (
+                        pod == signal.target.name
+                        or (kind == "Deployment" and _owned_by(pod, signal.target.name))
+                    )
+                    for namespace, pod in selected
+                )
     if kind not in {"Pod", "Deployment"}:
         return True
     # A Service whose selector is known to match no pod has no backends, so no
     # pod's state bears on it: checkout-svc selects `app=checkout-api`, and
     # was "supported" by archiver's pending pod and gateway's failing probe.
-    services = {item.target.key for item in triggering if item.target.kind == "Service"}
     if services and services <= {
         item.target.key
         for item in signals

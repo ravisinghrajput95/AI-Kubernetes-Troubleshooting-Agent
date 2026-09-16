@@ -172,6 +172,65 @@ def test_a_refuted_pod_does_not_refute_the_pods_nothing_argued_against():
     assert not any("scorer-0" in signal_id for signal_id in hypothesis.supporting_signal_ids)
 
 
+def test_a_refuted_replica_does_not_refute_its_sibling():
+    """Within one workload the same rule holds: `web-1` OOM-killed does not
+    argue against `web-0` failing on startup. Different workloads are scored
+    apart entirely now, so the test above no longer reaches this branch."""
+    hypothesis = _startup_failure(
+        CRASHING,
+        {"name": "web-1", "namespace": "prod", "status": "CrashLoopBackOff"},
+        {"name": "web-1", "namespace": "prod", "status": "OOMKilled"},
+    )
+    assert not hypothesis.refuting_signal_ids
+    assert hypothesis.target.name == "web-0"
+
+
+def test_an_unrefuted_workload_is_preferred_to_a_better_supported_refuted_one():
+    """A refuted workload's own support can outweigh its penalty. It still does
+    not become the hypothesis while another workload has nothing against it."""
+    result = ENGINE.analyze(
+        investigation(
+            pods={
+                "problematic_pods": [
+                    {
+                        "name": "api-7d9f8b6c4-abcde",
+                        "namespace": "prod",
+                        "status": "CrashLoopBackOff",
+                    },
+                    {
+                        "name": "scorer-5c6d7e8f9-klmno",
+                        "namespace": "prod",
+                        "status": "CrashLoopBackOff",
+                    },
+                    {"name": "scorer-5c6d7e8f9-klmno", "namespace": "prod", "status": "OOMKilled"},
+                ]
+            },
+            deployments={
+                "unhealthy_deployments": [
+                    {
+                        "name": "scorer",
+                        "namespace": "prod",
+                        "desired_replicas": 1,
+                        "available_replicas": 0,
+                    }
+                ]
+            },
+            logs={
+                "pod_logs": [
+                    {
+                        "pod": "scorer-5c6d7e8f9-klmno",
+                        "namespace": "prod",
+                        "relevant_lines": ["FATAL: cannot load model"],
+                    }
+                ]
+            },
+        )
+    )
+    hypothesis = result.hypothesis("workload.application_startup_failure")
+    assert hypothesis.target.name == "api-7d9f8b6c4-abcde"
+    assert not hypothesis.refuting_signal_ids
+
+
 def test_a_hypothesis_every_resource_of_which_is_refuted_stays_refuted():
     only_oom = _startup_failure(
         {**CRASHING, "status": "CrashLoopBackOff"}, {**CRASHING, "status": "OOMKilled"}
