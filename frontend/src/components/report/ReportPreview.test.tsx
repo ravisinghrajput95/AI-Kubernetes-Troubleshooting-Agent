@@ -49,3 +49,11 @@ describe("the confidence breakdown", () => {
     expect(screen.queryByText(/how the confidence was reached/i)).not.toBeInTheDocument();
   });
 });
+
+describe("what is affected", () => {
+  it("does not claim to know a business consequence", () => {
+    render(<ReportPreview report={report([])} onClose={() => {}} />);
+    expect(screen.queryByText(/business impact/i)).not.toBeInTheDocument();
+    expect(screen.getByText("What is affected")).toBeInTheDocument();
+  });
+});

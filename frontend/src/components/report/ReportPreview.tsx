@@ -58,11 +58,14 @@ export function ReportPreview({
           <p className="mt-3 text-sm leading-6 text-slate-300">
             {report.diagnosis.root_cause}
           </p>
+          {/* Not "Business Impact": the platform cannot know a business
+              consequence, and the lines under that heading were hedges picked
+              by which sections had findings. They name what was observed. */}
           <h3 className="mt-5 text-sm font-semibold text-slate-100">
-            Business Impact
+            What is affected
           </h3>
           <div className="mt-3 grid gap-2">
-            {(impact.length ? impact : ["No business impact recorded."]).map((item) => (
+            {(impact.length ? impact : ["Not recorded for this report."]).map((item) => (
               <p key={item} className="text-sm leading-6 text-slate-400">
                 {item}
               </p>

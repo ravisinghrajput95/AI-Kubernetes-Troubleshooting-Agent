@@ -38,6 +38,21 @@ _FINDING_STATUS = {
 }
 
 
+NAMED_LIMIT = 5
+
+
+def _count(items: list, noun: str) -> str:
+    return f"{len(items)} {noun}" + ("" if len(items) == 1 else "s")
+
+
+def _named(names) -> str:
+    """The first few names and how many more, so a line stays a line."""
+    names = list(names)
+    shown = ", ".join(names[:NAMED_LIMIT])
+    rest = len(names) - NAMED_LIMIT
+    return f"{shown}, and {rest} more." if rest > 0 else f"{shown}."
+
+
 class ReportRenderer:
     """One composition, three renderings, so the formats cannot disagree.
 
@@ -268,29 +283,72 @@ class ReportRenderer:
         return severity
 
     def _business_impact(self, investigation: dict[str, Any]) -> list[str]:
-        if investigation.get("health", {}).get("status") == "healthy":
-            return ["No active business impact detected."]
+        """What the collected evidence shows is affected, by name.
 
-        impact = []
-        if self._has_failed_evidence(investigation):
-            impact.extend(
-                [
-                    "Unable to retrieve one or more Kubernetes resource groups.",
-                    "Monitoring and troubleshooting visibility are degraded.",
-                    "New deployments may be blocked until cluster access is restored.",
-                ]
+        It printed hedges chosen by which sections had findings — "Affected
+        workloads may be unavailable or unstable", "New deployments may be
+        blocked until cluster access is restored" — under a heading that
+        claimed business consequences the platform has no way to know. The
+        same three sentences headed every report of a namespace with nine
+        different faults. Each line now names what was observed, says when a
+        read failed or a list was cut, and keeps a pod listed only for its
+        restart history apart from one failing now.
+        """
+        lines = []
+        unread = [
+            key
+            for key in ("pods", "events", "deployments", "network", "nodes", "storage", "workloads")
+            if investigation.get(key, {}).get("error")
+        ]
+        if unread:
+            lines.append(
+                f"Could not read {', '.join(unread)}, so this may not be everything affected."
             )
 
-        if investigation.get("pods", {}).get("problematic_pods"):
-            impact.append("Affected workloads may be unavailable or unstable.")
-        if investigation.get("network", {}).get("findings"):
-            impact.append("Service routing or in-cluster connectivity may be impacted.")
-        if investigation.get("storage", {}).get("findings"):
-            impact.append("Persistent workloads may be blocked by storage issues.")
-        if investigation.get("nodes", {}).get("findings"):
-            impact.append("Node health issues may reduce available capacity.")
+        pods = investigation.get("pods", {}).get("problematic_pods") or []
+        failing = [pod for pod in pods if pod.get("reported_now", True) is not False]
+        restarted = [pod for pod in pods if pod.get("reported_now", True) is False]
+        if failing:
+            lines.append(
+                f"{_count(failing, 'pod')} failing now: "
+                + _named(
+                    f"{pod.get('namespace')}/{pod.get('name')} ({pod.get('status')})"
+                    for pod in failing
+                )
+            )
+        if restarted:
+            lines.append(
+                f"{_count(restarted, 'pod')} running, but restarted recently: "
+                + _named(f"{pod.get('namespace')}/{pod.get('name')}" for pod in restarted)
+            )
+        for finding in (investigation.get("network", {}).get("findings") or [])[:NAMED_LIMIT]:
+            lines.append(
+                f"Service {finding.get('namespace')}/{finding.get('service')}: {finding.get('issue')}."
+            )
+        for finding in (investigation.get("storage", {}).get("findings") or [])[:NAMED_LIMIT]:
+            lines.append(
+                f"PersistentVolumeClaim {finding.get('namespace')}/{finding.get('name')}: "
+                f"{finding.get('issue')}."
+            )
+        for finding in (investigation.get("nodes", {}).get("findings") or [])[:NAMED_LIMIT]:
+            reason = f" ({finding['reason']})" if finding.get("reason") else ""
+            lines.append(
+                f"Node {finding.get('node')}: {finding.get('type')} is {finding.get('status')}{reason}."
+            )
 
-        return impact or ["Operational impact requires SRE review based on collected evidence."]
+        limits = investigation.get("collection_limits") or {}
+        if limits.get("truncated"):
+            lines.append(
+                f"Lists were cut at {limits.get('max_list_items')} items, so there may be more."
+            )
+
+        if len(lines) == len(unread) + bool(limits.get("truncated")):
+            lines.append(
+                "Nothing failing was observed in what was collected."
+                if not unread
+                else "Nothing failing was observed in what could be read."
+            )
+        return lines
 
     def _confidence_breakdown(self, diagnosis: dict[str, Any]) -> list[dict[str, Any]]:
         """The composition `app/analysis/confidence.py` actually computed.

@@ -1591,6 +1591,31 @@ MUTATIONS = [
         tests="tests/test_hypothesis_scoring_per_workload.py",
     ),
     Mutation(
+        name="report-impact-calls-restart-history-failing",
+        why=(
+            "A report's affected-resources list would call a pod that is running "
+            "and Ready 'failing now' because it restarted during a node restart — "
+            "the same present-tense claim the pod signal was corrected for."
+        ),
+        path="app/reports/rendering.py",
+        old='        failing = [pod for pod in pods if pod.get("reported_now", True) is not False]\n',
+        new="        failing = list(pods)  # mutation\n",
+        tests="tests/test_report_metadata.py",
+    ),
+    Mutation(
+        name="report-preview-claims-business-impact",
+        why=(
+            "The report preview headed its lines 'Business Impact', a consequence "
+            "the platform cannot know, over hedges chosen by which sections had "
+            "findings."
+        ),
+        suite="frontend",
+        path="src/components/report/ReportPreview.tsx",
+        old="            What is affected\n",
+        new="            Business Impact\n",
+        tests="src/components/report/ReportPreview.test.tsx",
+    ),
+    Mutation(
         name="stream-request-carries-no-credential",
         why=(
             "F29: the progress stream was an EventSource, which cannot send an "
