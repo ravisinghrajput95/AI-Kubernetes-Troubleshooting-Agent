@@ -1317,6 +1317,17 @@ MUTATIONS = [
         tests="tests/test_reports.py",
     ),
     Mutation(
+        name="timeline-in-collector-order",
+        why=(
+            "Under a TIME column, a report read 'Read Pod Logs 11:49:35' above "
+            "'Retrieved Events 11:49:34' — a timeline running backwards."
+        ),
+        path="app/services/investigation_service.py",
+        old="        for completed, message in sorted(baseline, key=lambda item: item[0]):\n",
+        new="        for completed, message in baseline:  # mutation: declaration order\n",
+        tests="tests/test_investigation_service.py",
+    ),
+    Mutation(
         name="refutation-across-unrelated-resources",
         why=(
             "Refuting signals matched by type anywhere in the namespace, so "

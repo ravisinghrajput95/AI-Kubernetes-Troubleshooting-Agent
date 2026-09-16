@@ -617,12 +617,22 @@ class InvestigationService:
         timeline = [{"time": started_at.strftime("%H:%M:%S"), "message": "Investigation Started"}]
 
         latest = started_at
+        # Chronological, because it is printed under a TIME column and headed
+        # "Investigation Timeline". These were emitted in `TIMELINE_LABELS`
+        # order — the order collectors are declared in, not the order they
+        # finished — so a report read "Read Pod Logs 11:49:35" above
+        # "Retrieved Events 11:49:34": a timeline running backwards. The deep
+        # steps below were already sorted. Sorting is stable, so steps that
+        # completed in the same second keep the declared order.
+        baseline = []
         for kind, message in TIMELINE_LABELS:
             evidence = store.first(kind)
             if evidence is None:
                 continue
             completed = evidence.collected_at.astimezone()
             latest = max(latest, completed.replace(tzinfo=None))
+            baseline.append((completed, message))
+        for completed, message in sorted(baseline, key=lambda item: item[0]):
             timeline.append({"time": completed.strftime("%H:%M:%S"), "message": message})
 
         deep_steps = []

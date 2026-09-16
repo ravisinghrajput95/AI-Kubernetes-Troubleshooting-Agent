@@ -598,3 +598,60 @@ async def test_a_report_of_a_run_that_collected_nothing_does_not_say_success(mon
 
     assert investigation_runner.collection_failure(result["investigation"])  # vacuity
     assert result["history_item"]["status"] == "failed"
+
+
+def test_the_timeline_runs_forwards():
+    """It was emitted in collector-declaration order under a TIME column, so a
+    live report read "Read Pod Logs 11:49:35" above "Retrieved Events
+    11:49:34" — a timeline running backwards. Logs are a second wave and
+    finish after the events read that was issued before them, which a fake
+    cluster completing everything in one millisecond cannot show.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from app.evidence.models import (
+        Evidence,
+        EvidenceKind,
+        EvidenceSource,
+        EvidenceStatus,
+        ResourceRef,
+    )
+    from app.services.investigation_service import InvestigationService
+
+    started = datetime(2026, 9, 16, 11, 49, 34, tzinfo=UTC)
+    # Logs are a second wave: they finish after everything issued before them.
+    finished = {
+        EvidenceKind.PODS: 0,
+        EvidenceKind.EVENTS: 0,
+        EvidenceKind.DEPLOYMENTS: 0,
+        EvidenceKind.NETWORK: 0,
+        EvidenceKind.NODES: 0,
+        EvidenceKind.STORAGE: 0,
+        EvidenceKind.WORKLOADS: 1,
+        EvidenceKind.METRICS_NODES: 2,
+        EvidenceKind.POD_LOGS: 3,
+    }
+
+    class Store:
+        def first(self, kind):
+            if kind not in finished:
+                return None
+            return Evidence(
+                id=f"{kind}:cluster/x",
+                kind=kind,
+                status=EvidenceStatus.OK,
+                source=EvidenceSource.KUBECTL,
+                target=ResourceRef(kind="Cluster", name="x"),
+                collected_at=started + timedelta(seconds=finished[kind]),
+            )
+
+    timeline = InvestigationService._timeline(
+        InvestigationService.__new__(InvestigationService), Store(), started.replace(tzinfo=None)
+    )
+
+    times = [row["time"] for row in timeline]
+    assert times == sorted(times), timeline
+    steps = [row["message"] for row in timeline]
+    assert steps[0] == "Investigation Started"
+    assert steps[-1] == "Evidence Collection Complete"
+    assert steps.index("Read Pod Logs") > steps.index("Retrieved Events")
