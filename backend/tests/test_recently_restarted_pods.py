@@ -64,6 +64,7 @@ def test_a_pod_running_again_is_not_said_to_be_in_crashloopbackoff():
     (signal,) = result.by_type(SignalType.POD_CRASH_LOOP)
     assert "is in CrashLoopBackOff" not in signal.summary
     assert "restarted recently" in signal.summary
+    assert "too recently to rule out CrashLoopBackOff" in signal.summary
 
 
 def test_a_pod_the_kubelet_is_backing_off_is_still_said_plainly():

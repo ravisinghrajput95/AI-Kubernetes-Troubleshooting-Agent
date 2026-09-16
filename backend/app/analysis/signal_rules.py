@@ -128,9 +128,8 @@ class PodStatusRule:
                 f"Pod {namespace}/{name} is in {status}."
                 if reported_now
                 else (
-                    f"Pod {namespace}/{name} is running now, but restarted recently: "
-                    f"its last exit is what {status} is made of, and it has not been "
-                    f"up long enough to rule out another."
+                    f"Pod {namespace}/{name} is running now, but restarted recently — "
+                    f"too recently to rule out {status}."
                 )
             )
             signals.append(
