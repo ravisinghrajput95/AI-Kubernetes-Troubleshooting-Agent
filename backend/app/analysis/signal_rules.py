@@ -115,14 +115,37 @@ class PodStatusRule:
             signal_type, severity = mapped
             namespace = pod.get("namespace", "default")
             name = pod.get("name", "unknown")
+            # Said in the tense it is known in. A status the kubelet is
+            # reporting now is a state the pod is in; one derived from restart
+            # history is not, and minutes after a node came back three pods
+            # that kubectl printed Running and Ready were reported "in
+            # CrashLoopBackOff" — one of them as the cluster's root cause. The
+            # finding still stands, because a container that exited twice in
+            # the last few minutes is worth looking at; the claim about *now*
+            # does not.
+            reported_now = pod.get("reported_now", True)
+            summary = (
+                f"Pod {namespace}/{name} is in {status}."
+                if reported_now
+                else (
+                    f"Pod {namespace}/{name} is running now, but restarted recently: "
+                    f"its last exit is what {status} is made of, and it has not been "
+                    f"up long enough to rule out another."
+                )
+            )
             signals.append(
                 Signal.create(
                     signal_type,
                     severity,
-                    f"Pod {namespace}/{name} is in {status}.",
+                    summary,
                     _pod_ref(namespace, name),
                     evidence,
-                    {"status": status, "namespace": namespace, "pod": name},
+                    {
+                        "status": status,
+                        "namespace": namespace,
+                        "pod": name,
+                        "reported_now": reported_now,
+                    },
                 )
             )
 

@@ -1275,6 +1275,25 @@ MUTATIONS = [
         tests="tests/test_analysis_engine.py",
     ),
     Mutation(
+        name="restart-history-said-in-the-present-tense",
+        why=(
+            "Minutes after a node came back, three pods kubectl printed Running and "
+            "Ready were reported 'in CrashLoopBackOff', one as the root cause."
+        ),
+        path="app/kubernetes/pod_inspector.py",
+        old="            return reason, any(now for found, now in candidates if found == reason)\n",
+        new="            return reason, True  # mutation: history reads as now\n",
+        tests="tests/test_recently_restarted_pods.py",
+    ),
+    Mutation(
+        name="pod-status-tense-ignored-by-the-signal",
+        why="The inspector recorded which tense applied and the signal said 'is in' regardless.",
+        path="app/analysis/signal_rules.py",
+        old='            reported_now = pod.get("reported_now", True)\n',
+        new="            reported_now = True  # mutation: always the present tense\n",
+        tests="tests/test_recently_restarted_pods.py",
+    ),
+    Mutation(
         name="refutation-across-unrelated-resources",
         why=(
             "Refuting signals matched by type anywhere in the namespace, so "

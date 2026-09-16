@@ -149,13 +149,16 @@ class PodInspector:
             metadata = pod.get("metadata", {})
             if pod.get("status", {}).get("phase") == "Running":
                 running_pods += 1
-            pod_status = self._detect_pod_status(pod, observed_at)
+            pod_status, reported_now = self._detect(pod, observed_at)
             if pod_status:
                 problematic_pods.append(
                     {
                         "name": metadata.get("name", "unknown"),
                         "namespace": metadata.get("namespace", "default"),
                         "status": pod_status,
+                        # Whether the kubelet is reporting this state *now*, or
+                        # it was derived from restart history. See `_detect`.
+                        "reported_now": reported_now,
                     }
                 )
             pod_inventory.append(self._pod_summary(pod))
@@ -257,6 +260,11 @@ class PodInspector:
     def _detect_pod_status(
         self, pod: dict[str, Any], observed_at: datetime | None = None
     ) -> str | None:
+        return self._detect(pod, observed_at)[0]
+
+    def _detect(
+        self, pod: dict[str, Any], observed_at: datetime | None = None
+    ) -> tuple[str | None, bool]:
         """The most specific reason this pod is unhealthy, or `None`.
 
         **Container reasons are read before the phase, and the order is the
@@ -283,14 +291,21 @@ class PodInspector:
         # Eviction first: the kubelet removed this pod, and its containers
         # frequently report nothing that would explain why.
         if status.get("reason") == EVICTED:
-            return EVICTED
+            return EVICTED, True
 
         # Init containers before app containers. An init container that cannot
         # start blocks every container behind it, so its reason is the
         # actionable one — the app containers are merely waiting, and reporting
         # `PodInitializing` would name the symptom. These were not read at all
         # before, so such a pod reported the bare phase.
-        candidates = set()
+        # `(reason, the kubelet is reporting it now)`. A reason read from
+        # `state.waiting` or `state.terminated` is the container's current
+        # state; one derived from `lastState` or the restart count describes
+        # what already happened, and the two must not be said in the same
+        # words. Minutes after a node came back, three pods that kubectl
+        # printed as Running and Ready were reported "in CrashLoopBackOff",
+        # and one of them became the cluster's root cause.
+        candidates: set[tuple[str, bool]] = set()
         for container_status in [
             *(status.get("initContainerStatuses") or []),
             *(status.get("containerStatuses") or []),
@@ -305,28 +320,32 @@ class PodInspector:
                     self._restart_candidate(container_status),
                 )
             )
-            for reason in (
+            current = (
                 (state.get("waiting") or {}).get("reason"),
                 (state.get("terminated") or {}).get("reason"),
-                *history,
+            )
+            for reason, now in (
+                *((reason, True) for reason in current),
+                *((reason, False) for reason in history),
             ):
                 if reason in CONTAINER_PROBLEM_REASONS:
-                    candidates.add(reason)
+                    candidates.add((reason, now))
 
         if candidates:
-            return min(candidates, key=REASON_PRECEDENCE.index)
+            reason = min((item[0] for item in candidates), key=REASON_PRECEDENCE.index)
+            return reason, any(now for found, now in candidates if found == reason)
 
         # Only now the phase, which is what `Pending` on an unscheduled pod
         # legitimately is: there are no container statuses to be more specific
         # with, because no kubelet has accepted it yet.
         phase = status.get("phase")
         if phase in PROBLEM_STATUSES:
-            return phase
+            return phase, True
 
         conditions = status.get("conditions", []) or []
         for condition in conditions:
             if condition.get("type") == "PodScheduled" and condition.get("status") == "False":
-                return condition.get("reason", "Pending")
+                return condition.get("reason", "Pending"), True
 
         # Running, nothing wrong with any container, and still not Ready. The
         # `gateway` case from the audit: a readiness probe that never passes, so
@@ -345,9 +364,9 @@ class PodInspector:
         if phase == "Running":
             ready = next((c for c in conditions if c.get("type") == "Ready"), None)
             if ready is not None and ready.get("status") == "False":
-                return NOT_READY
+                return NOT_READY, True
 
-        return None
+        return None, True
 
 
 def _parse(value: Any) -> datetime | None:
