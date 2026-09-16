@@ -47,7 +47,12 @@ def api(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "rbac_default_role", "admin")
     monkeypatch.setattr(settings, "rate_limit_per_minute", 3)
     monkeypatch.setattr(settings, "rate_limit_tenant_per_minute", 0)
-    set_rate_limiter(InMemoryRateLimiter())
+    # Held still: the window is aligned to the wall clock, so a test issuing
+    # four requests across a minute boundary spends two windows and the fourth
+    # is allowed. That is the limiter behaving as designed and the test failing
+    # for a reason unrelated to what it asserts; it happened once in CI, on one
+    # Python version, on an unrelated commit.
+    set_rate_limiter(InMemoryRateLimiter(clock=lambda: 1_700_000_040.0))
     reset_authenticator()
 
     with TestClient(app) as client:
@@ -141,7 +146,7 @@ class TestBucketsAreIndependent:
         """The fairness case: two callers, one customer, one budget."""
         monkeypatch.setattr(settings, "rate_limit_per_minute", 100)
         monkeypatch.setattr(settings, "rate_limit_tenant_per_minute", 2)
-        set_rate_limiter(InMemoryRateLimiter())
+        set_rate_limiter(InMemoryRateLimiter(clock=lambda: 1_700_000_040.0))
 
         assert api.post("/investigations", json={}, headers=ALICE).status_code == 202
         assert api.post("/investigations", json={}, headers=BOB).status_code == 202
@@ -159,6 +164,19 @@ class TestBucketsAreIndependent:
         for _ in range(2):
             evaluate(limiter, "alice", "acme", subject_limit=2, tenant_limit=2)
         assert evaluate(limiter, "alice", "acme", 2, 2).scope == "subject"
+
+    def test_the_window_is_wall_clock_aligned_and_resets_on_the_boundary(self):
+        """The 2x short-term ceiling `docs/PERFORMANCE_ENVELOPE.md` states: a
+        caller may spend a window's budget at the end of one and again at the
+        start of the next. Deterministic here, which is why the fixtures above
+        hold the clock still rather than racing it."""
+        now = [1_700_000_099.0]  # 59 seconds into a window
+        limiter = InMemoryRateLimiter(clock=lambda: now[0])
+
+        assert [limiter.hit("alice", 2)[0] for _ in range(3)] == [True, True, False]
+
+        now[0] += 1.0  # one second later, a new window
+        assert limiter.hit("alice", 2)[0]
 
     def test_zero_means_unlimited(self):
         limiter = InMemoryRateLimiter()

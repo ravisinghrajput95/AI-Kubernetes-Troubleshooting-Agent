@@ -34,6 +34,7 @@ actual capacity, this is the assumption to revisit first.
 
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -80,13 +81,24 @@ class InMemoryRateLimiter:
     enforces is the real one.
     """
 
-    def __init__(self, window_seconds: int = WINDOW_SECONDS) -> None:
+    def __init__(
+        self,
+        window_seconds: int = WINDOW_SECONDS,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         self._window = window_seconds
         self._counts: dict[tuple[str, int], int] = {}
         self._lock = threading.Lock()
+        # Injectable so a test can hold the window still. The window is aligned
+        # to the wall clock, so four requests that straddle a minute boundary
+        # are two windows and the fourth is allowed — which is the documented
+        # fixed-window behaviour, and made `test_one_caller_does_not_spend_
+        # anothers_budget` fail once in CI on one Python version. A required
+        # job that flakes gets ignored exactly like a broken one.
+        self._clock = clock
 
     def hit(self, key: str, limit: int) -> tuple[bool, int]:
-        now = time.time()
+        now = self._clock()
         window = int(now // self._window)
         remaining = int(self._window - (now % self._window)) or 1
 
