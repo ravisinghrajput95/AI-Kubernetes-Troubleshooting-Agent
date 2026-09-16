@@ -345,17 +345,25 @@ jobs:
       - name: Mutation tests still catch their defects
         run: python3 ../scripts/mutation_check.py --suite frontend
 
-  # deploy/terraform cannot be applied here — there is no AWS account behind
+  # deploy/terraform/aws cannot be applied here — there is no AWS account behind
   # CI and there should not be. What can run does: validate, `terraform test`
   # against mocked providers, the provider-free values module applied for real
-  # and rendered through the actual chart, and the mutations that prove those
-  # tests can fail. A green job is not evidence an apply would work, and the
-  # module README says so.
+  # and rendered through the actual chart, the mutations that prove those tests
+  # can fail — and an apply of the Kubernetes half (modules/platform-release,
+  # the same module the AWS root calls) into kind, against a Postgres that
+  # refuses plaintext. A green job is not evidence an AWS apply would work, and
+  # the README says so.
   terraform:
-    name: Terraform (validated, mocked, chart contract)
+    name: Terraform (validated, mocked, applied on kind)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+
+      - uses: helm/kind-action@v1
+        with:
+          version: v0.24.0
+          install_only: true
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -374,8 +382,17 @@ jobs:
       - name: Install dependencies
         run: pip install -r backend/requirements.txt
 
-      - name: Validate, test, and render through the chart
-        run: python scripts/terraform_verify.py
+      - name: Build the backend image into a kind cluster
+        run: |
+          kind create cluster --name tf --wait 120s
+          docker build -t k8s-agent-backend:tfverify backend
+          kind load docker-image k8s-agent-backend:tfverify --name tf
+
+      - name: Validate, test, render through the chart, and apply on kind
+        run: >-
+          python scripts/terraform_verify.py --kind
+          --kubeconfig "$HOME/.kube/config" --context kind-tf
+          --image k8s-agent-backend:tfverify
 
       - name: Mutation tests still catch their defects
         run: python scripts/mutation_check.py --suite terraform

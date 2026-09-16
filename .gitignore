@@ -105,6 +105,9 @@ node_modules/
 # =========================================================
 
 .terraform/
+# Local state holds every generated password in the clear.
+*.tfstate
+*.tfstate.*
 *.tfstate
 *.tfstate.backup
 

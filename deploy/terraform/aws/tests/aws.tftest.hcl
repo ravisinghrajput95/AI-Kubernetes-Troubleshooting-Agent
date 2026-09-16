@@ -52,11 +52,11 @@ run "the_database_url_is_encrypted_and_names_the_instance" {
   command = apply
 
   assert {
-    condition     = startswith(kubernetes_secret_v1.state.data["DATABASE_URL"], "postgresql://k8sagent:")
+    condition     = startswith(module.release.database_url, "postgresql://k8sagent:")
     error_message = "DATABASE_URL must be a postgresql:// URL for the configured user."
   }
   assert {
-    condition     = endswith(kubernetes_secret_v1.state.data["DATABASE_URL"], "@k8s-agent.abc123.eu-west-1.rds.amazonaws.com:5432/k8sagent?sslmode=require")
+    condition     = endswith(module.release.database_url, "@k8s-agent.abc123.eu-west-1.rds.amazonaws.com:5432/k8sagent?sslmode=require")
     error_message = "DATABASE_URL must name the instance and require TLS, which rds.force_ssl enforces server-side."
   }
 }
@@ -65,11 +65,11 @@ run "the_redis_url_uses_tls_and_the_auth_token" {
   command = apply
 
   assert {
-    condition     = startswith(kubernetes_secret_v1.state.data["REDIS_URL"], "rediss://:")
+    condition     = startswith(module.release.redis_url, "rediss://:")
     error_message = "Transit encryption is on, so a redis:// URL would be refused."
   }
   assert {
-    condition     = strcontains(kubernetes_secret_v1.state.data["REDIS_URL"], random_password.redis.result)
+    condition     = strcontains(module.release.redis_url, random_password.redis.result)
     error_message = "REDIS_URL must carry the replication group's auth token."
   }
 }
@@ -112,15 +112,15 @@ run "the_release_reads_state_from_the_secret_this_module_wrote" {
   command = apply
 
   assert {
-    condition     = yamldecode(helm_release.this.values[0]).database.urlSecret.name == kubernetes_secret_v1.state.metadata[0].name
+    condition     = yamldecode(module.release.values_yaml).database.urlSecret.name == module.release.state_secret_name
     error_message = "The chart must mount the secret holding DATABASE_URL."
   }
   assert {
-    condition     = yamldecode(helm_release.this.values[0]).redis.urlSecret.name == kubernetes_secret_v1.state.metadata[0].name
+    condition     = yamldecode(module.release.values_yaml).redis.urlSecret.name == module.release.state_secret_name
     error_message = "The chart must mount the secret holding REDIS_URL."
   }
   assert {
-    condition     = !strcontains(helm_release.this.values[0], random_password.database.result) && !strcontains(helm_release.this.values[0], random_password.redis.result)
+    condition     = !strcontains(module.release.values_yaml, random_password.database.result) && !strcontains(module.release.values_yaml, random_password.redis.result)
     error_message = "No credential may appear in Helm values: they are readable with `helm get values`."
   }
 }

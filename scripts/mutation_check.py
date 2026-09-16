@@ -1639,8 +1639,8 @@ MUTATIONS = [
         ),
         suite="terraform",
         path="aws/main.tf",
-        old='    "postgresql://%s:%s@%s:%d/%s?sslmode=require",\n',
-        new='    "postgresql://%s:%s@%s:%d/%s",\n',
+        old='    sslmode  = "require"\n',
+        new='    sslmode  = "disable"\n',
         tests="aws",
     ),
     Mutation(
@@ -1652,8 +1652,8 @@ MUTATIONS = [
         ),
         suite="terraform",
         path="aws/main.tf",
-        old='    "rediss://:%s@%s:%d/0",\n',
-        new='    "redis://:%s@%s:%d/0",\n',
+        old="    tls        = true\n",
+        new="    tls        = false\n",
         tests="aws",
     ),
     Mutation(

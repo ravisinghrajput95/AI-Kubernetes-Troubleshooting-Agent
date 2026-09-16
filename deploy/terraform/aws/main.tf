@@ -7,27 +7,6 @@
 locals {
   chart_path = coalesce(var.chart_path, "${path.module}/../../helm/k8s-agent")
   tags       = { "app.kubernetes.io/part-of" = var.name }
-
-  # sslmode=require encrypts and does not verify the server certificate: the
-  # platform image carries no RDS CA bundle, and verify-full would fail every
-  # connection. Stated rather than hidden — README.md, *Known gaps*.
-  database_url = format(
-    "postgresql://%s:%s@%s:%d/%s?sslmode=require",
-    aws_db_instance.this.username,
-    random_password.database.result,
-    aws_db_instance.this.address,
-    aws_db_instance.this.port,
-    aws_db_instance.this.db_name,
-  )
-
-  # rediss:// because transit encryption is on; an ElastiCache group with an
-  # auth token refuses plaintext. The token is the password, with no username.
-  redis_url = format(
-    "rediss://:%s@%s:%d/0",
-    random_password.redis.result,
-    aws_elasticache_replication_group.this.primary_endpoint_address,
-    aws_elasticache_replication_group.this.port,
-  )
 }
 
 # --- Credentials --------------------------------------------------------------
@@ -168,62 +147,61 @@ resource "aws_elasticache_replication_group" "this" {
 }
 
 # --- Kubernetes ---------------------------------------------------------------
+#
+# The Secret, values and release are modules/platform-release — the same code
+# the kind/ root applies on a laptop, which is the only part of this directory
+# that has been applied anywhere.
 
-resource "kubernetes_namespace_v1" "this" {
-  count = var.create_namespace ? 1 : 0
-  metadata {
-    name = var.namespace
+module "release" {
+  source = "../modules/platform-release"
+
+  name             = var.name
+  namespace        = var.namespace
+  create_namespace = var.create_namespace
+  chart_path       = local.chart_path
+
+  # sslmode=require encrypts and does not verify the server certificate: the
+  # platform image carries no RDS CA bundle, and verify-full would fail every
+  # connection. rds.force_ssl makes the server refuse plaintext regardless.
+  database = {
+    host     = aws_db_instance.this.address
+    port     = aws_db_instance.this.port
+    username = aws_db_instance.this.username
+    password = random_password.database.result
+    name     = aws_db_instance.this.db_name
+    sslmode  = "require"
   }
-}
 
-resource "kubernetes_secret_v1" "state" {
-  metadata {
-    name      = "${var.name}-state"
-    namespace = var.create_namespace ? kubernetes_namespace_v1.this[0].metadata[0].name : var.namespace
+  # rediss:// because transit encryption is on; a group with an auth token
+  # refuses plaintext.
+  redis = {
+    host       = aws_elasticache_replication_group.this.primary_endpoint_address
+    port       = aws_elasticache_replication_group.this.port
+    auth_token = random_password.redis.result
+    tls        = true
   }
-  data = {
-    DATABASE_URL = local.database_url
-    REDIS_URL    = local.redis_url
+
+  platform = {
+    auth                       = var.auth
+    tenancy_mode               = var.tenancy_mode
+    rbac_default_role          = var.rbac_default_role
+    replica_count              = var.replica_count
+    image_tag                  = var.image_tag
+    openai_api_key_secret_name = var.openai_api_key_secret_name
+    hostname                   = var.hostname
+    ingress_class_name         = var.ingress_class_name
+    ingress_annotations        = var.ingress_annotations
+    ingress_tls_secret_name    = var.ingress_tls_secret_name
+    agent_gateway = merge(var.agent_gateway, {
+      # An NLB, because a gateway stream is a long-lived gRPC connection an
+      # HTTP load balancer would time out and re-balance.
+      service_annotations = {
+        "service.beta.kubernetes.io/aws-load-balancer-type"            = "external"
+        "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" = "ip"
+        "service.beta.kubernetes.io/aws-load-balancer-scheme"          = "internet-facing"
+      }
+    })
   }
-}
-
-module "values" {
-  source = "../modules/platform-values"
-
-  fullname                   = var.name
-  auth                       = var.auth
-  tenancy_mode               = var.tenancy_mode
-  rbac_default_role          = var.rbac_default_role
-  state_secret_name          = kubernetes_secret_v1.state.metadata[0].name
-  replica_count              = var.replica_count
-  image_tag                  = var.image_tag
-  openai_api_key_secret_name = var.openai_api_key_secret_name
-  hostname                   = var.hostname
-  ingress_class_name         = var.ingress_class_name
-  ingress_annotations        = var.ingress_annotations
-  ingress_tls_secret_name    = var.ingress_tls_secret_name
-
-  agent_gateway = merge(var.agent_gateway, {
-    # An NLB, because a gateway stream is a long-lived gRPC connection an
-    # HTTP load balancer would time out and re-balance.
-    service_annotations = {
-      "service.beta.kubernetes.io/aws-load-balancer-type"            = "external"
-      "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" = "ip"
-      "service.beta.kubernetes.io/aws-load-balancer-scheme"          = "internet-facing"
-    }
-  })
-}
-
-resource "helm_release" "this" {
-  name      = var.name
-  namespace = kubernetes_secret_v1.state.metadata[0].namespace
-  chart     = local.chart_path
-  values    = [module.values.values_yaml]
-
-  # Readiness consults Postgres, so a release that waits is a release whose
-  # database is reachable from the pods — the one thing a plan cannot show.
-  wait    = true
-  timeout = 900
 }
 
 # --- DNS ----------------------------------------------------------------------
@@ -232,7 +210,7 @@ data "kubernetes_ingress_v1" "this" {
   count = var.hostname != "" && var.route53_zone_id != "" ? 1 : 0
   metadata {
     name      = var.name
-    namespace = helm_release.this.namespace
+    namespace = module.release.namespace
   }
 }
 
@@ -249,7 +227,7 @@ data "kubernetes_service_v1" "gateway" {
   count = var.agent_gateway.enabled && var.route53_zone_id != "" ? 1 : 0
   metadata {
     name      = "${var.name}-gateway"
-    namespace = helm_release.this.namespace
+    namespace = module.release.namespace
   }
 }
 

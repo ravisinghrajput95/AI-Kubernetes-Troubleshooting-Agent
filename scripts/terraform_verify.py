@@ -17,15 +17,30 @@ What this runs, in order:
      through the platform's own `Settings` where that is how the value is
      consumed.
 
+3. With `--kind`, **an apply**: `deploy/terraform/kind` installs the same
+   `modules/platform-release` the AWS root uses into a kind cluster, beside a
+   Postgres that refuses plaintext and a Redis that requires its password, and
+   then requires that:
+   - the release became ready — which, because readiness consults Postgres,
+     means the platform connected with the URL the module formatted;
+   - every platform connection Postgres sees is TLS, **and** a plaintext
+     connection is refused, without which the first check proves nothing;
+   - `/health/ready` reports both stores ok from inside a platform pod;
+   - the token the module wrote authenticates, and a wrong one does not.
+   It destroys what it applied unless `--keep`.
+
 What it cannot run is an apply of `deploy/terraform/aws`. Nothing here has
 created an RDS instance, an ElastiCache group or a Route 53 record, and a clean
 run of this script is not evidence that one would work.
 
     python scripts/terraform_verify.py
+    python scripts/terraform_verify.py --kind --kubeconfig ~/.kube/config \
+        --context kind-dev --image k8s-agent-backend:tfverify   # loaded into kind
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
@@ -39,7 +54,12 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 TERRAFORM = ROOT / "deploy" / "terraform"
 CHART = ROOT / "deploy" / "helm" / "k8s-agent"
-MODULES = [TERRAFORM / "modules" / "platform-values", TERRAFORM / "aws"]
+MODULES = [
+    TERRAFORM / "modules" / "platform-values",
+    TERRAFORM / "modules" / "platform-release",
+    TERRAFORM / "aws",
+    TERRAFORM / "kind",
+]
 
 SCENARIOS: dict[str, dict] = {
     "token-single-tenant": {
@@ -82,10 +102,11 @@ SCENARIOS: dict[str, dict] = {
 }
 
 
-def run(command: list[str], cwd: Path, **kwargs) -> subprocess.CompletedProcess:
-    where = cwd.relative_to(ROOT) if cwd.is_relative_to(ROOT) else cwd.name
-    print(f"  $ {' '.join(command)}  ({where})", flush=True)
-    return subprocess.run(command, cwd=cwd, text=True, capture_output=True, **kwargs)
+def run(command: list[str], cwd: Path, show: bool = True) -> subprocess.CompletedProcess:
+    if show:
+        where = cwd.relative_to(ROOT) if cwd.is_relative_to(ROOT) else cwd.name
+        print(f"  $ {' '.join(command)}  ({where})", flush=True)
+    return subprocess.run(command, cwd=cwd, text=True, capture_output=True)
 
 
 def check(result: subprocess.CompletedProcess, what: str) -> None:
@@ -118,6 +139,8 @@ def modules() -> None:
             run(["terraform", "init", "-backend=false", "-input=false"], module), f"init {module}"
         )
         check(run(["terraform", "validate", "-no-color"], module), f"validate {module}")
+        if not (module / "tests").is_dir():
+            continue
         result = run(["terraform", "test", "-no-color"], module)
         check(result, f"test {module}")
         print("    " + result.stdout.strip().splitlines()[-1])
@@ -197,8 +220,140 @@ def settings_reads(rendered: str, expected: list[str]) -> None:
         )
 
 
+def kind(kubeconfig: str, context: str, image: str, keep: bool) -> None:
+    root = TERRAFORM / "kind"
+    repository, _, tag = image.rpartition(":")
+    variables = [
+        f"-var=kubeconfig_path={kubeconfig}",
+        f"-var=kube_context={context}",
+        f"-var=image_repository={repository}",
+        f"-var=image_tag={tag}",
+    ]
+    kubectl = ["kubectl", "--kubeconfig", kubeconfig, "--context", context, "-n", "k8s-agent-tf"]
+
+    def query(sql: str) -> str:
+        result = run(
+            [
+                *kubectl,
+                "exec",
+                "deploy/postgres",
+                "--",
+                "psql",
+                "-U",
+                "k8sagent",
+                "-d",
+                "k8sagent",
+                "-Atc",
+                sql,
+            ],
+            root,
+        )
+        check(result, "psql")
+        return result.stdout.strip()
+
+    def platform_get(path: str, token: str) -> str:
+        code = (
+            "import urllib.request as u, urllib.error as e\n"
+            f"r = u.Request('http://127.0.0.1:8000{path}', headers={{'Authorization': 'Bearer ' + {token!r}}})\n"
+            "try:\n    response = u.urlopen(r)\n    print(response.status, response.read().decode())\n"
+            "except e.HTTPError as x:\n    print(x.code)\n"
+        )
+        # Not echoed: the command carries the API token.
+        result = run(
+            [*kubectl, "exec", "deploy/k8s-agent", "--", "python", "-c", code], root, show=False
+        )
+        check(result, f"GET {path}")
+        return result.stdout.strip()
+
+    print("\n== apply deploy/terraform/kind")
+    check(run(["terraform", "init", "-input=false"], root), "init kind")
+    try:
+        check(
+            run(
+                ["terraform", "apply", "-auto-approve", "-input=false", "-no-color", *variables],
+                root,
+            ),
+            "apply kind",
+        )
+        print(
+            "    applied; the release became ready (helm waited on readiness, which consults Postgres)"
+        )
+
+        by_tls = query(
+            "SELECT s.ssl, count(*) FROM pg_stat_ssl s JOIN pg_stat_activity a USING (pid) "
+            "WHERE a.client_addr IS NOT NULL AND a.usename = 'k8sagent' GROUP BY 1"
+        )
+        rows = dict(line.split("|") for line in by_tls.splitlines())
+        if rows.get("f") or not rows.get("t"):
+            raise SystemExit(f"FAIL platform connections by TLS: {rows or 'none at all'}")
+        print(f"    {rows['t']} platform connection(s) to Postgres, all TLS")
+
+        plaintext = run(
+            [
+                *kubectl,
+                "exec",
+                "deploy/postgres",
+                "--",
+                "sh",
+                "-c",
+                'PGPASSWORD="$POSTGRES_PASSWORD" psql "host=127.0.0.1 user=k8sagent dbname=k8sagent sslmode=disable" -c "select 1"',
+            ],
+            root,
+        )
+        if plaintext.returncode == 0 or "no encryption" not in plaintext.stderr:
+            raise SystemExit(
+                f"FAIL the control: Postgres accepted plaintext, so TLS proves nothing\n{plaintext.stderr}"
+            )
+        print("    control: Postgres refuses a plaintext connection")
+
+        token = run(["terraform", "output", "-raw", "api_token"], root)
+        check(token, "api_token output")
+        ready = platform_get("/health/ready", token.stdout)
+        if '"postgres":"ok"' not in ready or '"redis":"ok"' not in ready:
+            raise SystemExit(f"FAIL /health/ready: {ready}")
+        print("    /health/ready: postgres ok, redis ok")
+        if not platform_get("/me", token.stdout).startswith("200"):
+            raise SystemExit("FAIL the token the module wrote does not authenticate")
+        if platform_get("/me", "not-the-token") != "401":
+            raise SystemExit(
+                "FAIL a wrong token was not refused, so the check above proves nothing"
+            )
+        print("    the module's token authenticates; a wrong one is refused")
+    finally:
+        if keep:
+            print("    --keep: left applied")
+        else:
+            check(
+                run(
+                    [
+                        "terraform",
+                        "destroy",
+                        "-auto-approve",
+                        "-input=false",
+                        "-no-color",
+                        *variables,
+                    ],
+                    root,
+                ),
+                "destroy kind",
+            )
+            print("    destroyed")
+
+
 def main() -> int:
-    for tool in ("terraform", "helm"):
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("--kind", action="store_true", help="also apply deploy/terraform/kind")
+    parser.add_argument("--kubeconfig", default=os.path.expanduser("~/.kube/config"))
+    parser.add_argument("--context", default="")
+    parser.add_argument("--image", default="k8s-agent-backend:tfverify")
+    parser.add_argument("--keep", action="store_true", help="do not destroy after --kind")
+    arguments = parser.parse_args()
+    if arguments.kind and not arguments.context:
+        parser.error("--kind needs --context, so it never applies to whatever cluster is current")
+
+    for tool in ("terraform", "helm", *(["kubectl"] if arguments.kind else [])):
         if shutil.which(tool) is None:
             print(f"{tool} is not installed; nothing was checked", file=sys.stderr)
             return 2
@@ -206,10 +361,17 @@ def main() -> int:
     chart_values = yaml.safe_load((CHART / "values.yaml").read_text())
     for name, scenario in SCENARIOS.items():
         render(name, scenario, chart_values)
-    print(
-        "\nOK — validated and tested with mocked providers, and the chart accepts the values."
-        "\nNOT run: an apply against AWS."
-    )
+    if arguments.kind:
+        kind(arguments.kubeconfig, arguments.context, arguments.image, arguments.keep)
+        print(
+            "\nOK — the Kubernetes half applied on kind and served; the AWS half is validated and mocked only."
+            "\nNOT run: an apply against AWS."
+        )
+    else:
+        print(
+            "\nOK — validated and tested with mocked providers, and the chart accepts the values."
+            "\nNOT run: an apply against AWS, or --kind."
+        )
     return 0
 
 

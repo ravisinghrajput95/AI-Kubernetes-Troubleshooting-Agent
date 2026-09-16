@@ -8,10 +8,10 @@ output "redis_endpoint" {
 
 output "state_secret_name" {
   description = "The Secret holding DATABASE_URL and REDIS_URL."
-  value       = kubernetes_secret_v1.state.metadata[0].name
+  value       = module.release.state_secret_name
 }
 
 output "helm_values" {
   description = "The values the release was installed with. Holds secret names, never secret values."
-  value       = module.values.values_yaml
+  value       = module.release.values_yaml
 }

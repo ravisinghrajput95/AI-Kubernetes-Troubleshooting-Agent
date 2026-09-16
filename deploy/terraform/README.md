@@ -3,32 +3,43 @@
 The managed Postgres, Redis, secret and DNS plumbing around
 [`deploy/helm/k8s-agent`](../helm/k8s-agent), on AWS.
 
-> **This has never been applied.** No RDS instance, ElastiCache group, Route 53
-> record or Helm release has been created from it. It is validated, tested
-> against mocked providers, and its values are rendered through the real chart
-> in CI. None of that shows that AWS accepts these resources, that the pods can
-> reach them, or that the platform starts against them. Read it as a reviewed
-> starting point, not a deployment known to work.
+> **The AWS half has never been applied.** No RDS instance, ElastiCache group,
+> Route 53 record or EKS release has been created from it. **The Kubernetes
+> half has** — `modules/platform-release`, the module the AWS root calls, is
+> applied to kind in CI against a Postgres that refuses plaintext, and the
+> platform it installs becomes ready and serves. Read the AWS resources as a
+> reviewed starting point, not a deployment known to work.
 
-| Path | What it is |
-|---|---|
-| `modules/platform-values/` | Helm values from infrastructure outputs. **No providers**, so it is the one part that runs for real anywhere. |
-| `aws/` | RDS PostgreSQL 17, ElastiCache Redis, the `DATABASE_URL`/`REDIS_URL` Secret, the Helm release, and Route 53 CNAMEs for the console and the agent gateway. Does **not** create the VPC or the EKS cluster. |
+| Path | What it is | Applied? |
+|---|---|---|
+| `modules/platform-values/` | Helm values from infrastructure coordinates. **No providers.** | yes, in every run |
+| `modules/platform-release/` | The `DATABASE_URL`/`REDIS_URL` Secret, the values, and the Helm release, waiting on readiness | **yes, on kind** |
+| `aws/` | RDS PostgreSQL 17, ElastiCache Redis, security groups, Route 53 CNAMEs; calls `platform-release`. Does **not** create the VPC or the EKS cluster. | no |
+| `kind/` | `platform-release` beside an in-cluster Postgres (TLS only) and Redis (password required) | **yes** |
 
 ## What has been run
 
 ```bash
-python scripts/terraform_verify.py              # validate, test, render through the chart
+python scripts/terraform_verify.py                     # validate, test, render through the chart
+python scripts/terraform_verify.py --kind \
+    --kubeconfig ~/.kube/config --context kind-dev \
+    --image k8s-agent-backend:tfverify                 # ...and apply the Kubernetes half
 python scripts/mutation_check.py --suite terraform
 ```
 
 | Check | What it proves | What it does not |
 |---|---|---|
-| `terraform validate` | Both modules parse against the provider schemas (aws 6.x, kubernetes 2.38, helm 3.x) | Anything about a real account |
+| `terraform validate` | All four roots and modules parse against the provider schemas | Anything about a real account |
 | `terraform test` on `platform-values` (10 runs) | The values each input produces, and that each refusal fires | — nothing is mocked here |
-| `terraform test` on `aws` (9 runs) | The wiring: URLs have the scheme and TLS mode the platform needs and land in the Secret the chart mounts; state admits only the workload security group; encryption, `rds.force_ssl` and deletion protection are on; no credential appears in Helm values; records point at the load balancers the chart created | That AWS accepts any of it — every provider but `random` is mocked |
-| Values → chart contract | Every key the module sets exists in the chart's `values.yaml` (Helm ignores an unknown key silently); `helm template` accepts the values; the rendered ConfigMap says what was asked, with `CORS_ORIGINS` read back by the platform's own `Settings` | That the release installs or becomes ready |
-| Mutation pairs | Six defects, each confirmed to fail the test named for it | — |
+| `terraform test` on `aws` (9 runs) | The wiring: `sslmode=require` and `rediss://` on the URLs, state admitting only the workload security group, encryption, `rds.force_ssl`, deletion protection, no credential in Helm values, records pointing at the chart's load balancers | That AWS accepts any of it — every provider but `random` is mocked |
+| Values → chart contract | Every key set exists in the chart's `values.yaml` (Helm ignores unknown keys silently); `helm template` accepts the values; the ConfigMap says what was asked, `CORS_ORIGINS` read back through the platform's `Settings` | — |
+| **`--kind` apply** | The release waits on readiness and becomes ready, so the platform connected with the URL `platform-release` formatted; every platform connection Postgres reports is **TLS**; a plaintext connection is **refused** (the control that makes the previous line mean something); `/health/ready` says both stores are ok; the token Secret authenticates and a wrong token is refused | `rediss://` — Redis here speaks plaintext, see below; anything AWS-specific |
+| Mutation pairs | Five defects under `terraform test`, one under pytest, each confirmed to fail the test named for it | — |
+
+**The apply's wait was mutation-checked by hand**, because a wait that returns
+early would make "became ready" meaningless: with `sslmode = "disable"` against
+the TLS-only Postgres, the platform's pool timed out, the pods never became
+ready, and the apply failed at its deadline with `context deadline exceeded`.
 
 **Writing it found a chart defect.** The chart rendered `CORS_ORIGINS`
 comma-joined, and the platform reads a list setting from the environment as
@@ -87,6 +98,10 @@ the `alb` class and the gateway Service to an NLB.
   carries no RDS CA bundle, so the server certificate is not verified. Redis
   uses `rediss://` and verifies against the image's system CAs, which is
   expected to trust ElastiCache's certificate and has not been observed doing so.
+  The kind apply cannot close this: a self-signed Redis would be refused by that
+  verification, and weakening it to pass would test a configuration nobody
+  should ship — so there the URL is `redis://` with the password, and the
+  `rediss` branch is covered only by the mocked test.
 - **`tenancy_mode = "shared"` needs a database role this module does not
   create.** Row-level security is inert for a role that bypasses it, and the
   platform refuses to start `shared` on such a role
