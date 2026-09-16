@@ -170,20 +170,29 @@ async function snapshot(label) {
 
 async function go(path) {
   where = path;
-  await send("Page.navigate", { url: BASE + path });
-  await wait(SETTLE_MS);
   // **The page must be the page this route asked for.** A navigation that had
   // not taken effect when the snapshot was read filed the Settings page's text
   // under `/clusters/kind-k8s-agent-dev`, with that route's control inventory
   // and clicks — a whole route reported as swept and never loaded. Reading a
   // dump cannot catch it; the URL is written at the top of every dump and was
-  // right there. One retry, then it is a finding rather than a quiet lie.
+  // right there.
+  //
+  // **A redirect is not that.** `/no-such-page` is answered by the fleet page,
+  // which is the app's catch-all doing its job — the first version called each
+  // of those a finding, twenty times in one run, and a check that cries wolf
+  // gets skipped exactly like a flaky one. The defect is the page not having
+  // moved at all: landing back where we already were.
+  const before = String((await evaluate("location.pathname + location.search")) || "");
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const here = String((await evaluate("location.pathname + location.search")) || "");
-    if (here.startsWith(path.split("?")[0])) return;
-    record("misnavigated", { wanted: path, got: here, attempt });
     await send("Page.navigate", { url: BASE + path });
     await wait(SETTLE_MS);
+    const here = String((await evaluate("location.pathname + location.search")) || "");
+    if (here.startsWith(path.split("?")[0])) return;
+    if (here !== before) {
+      record("redirected", { from: path, to: here });
+      return;
+    }
+    record("misnavigated", { wanted: path, got: here, attempt });
   }
 }
 
