@@ -1712,6 +1712,18 @@ MUTATIONS = [
         tests="tests/test_terraform_verify.py",
     ),
     Mutation(
+        name="live-eval-disagreements-unnamed",
+        why=(
+            "evals.live reported 'Agreed with the rules: 53%' and nothing else, so a "
+            "defensible choice among concurrent faults and a wrong answer grounding "
+            "let through were the same number."
+        ),
+        path="evals/live.py",
+        old="        if disagreed:\n",
+        new="        if False:  # mutation\n",
+        tests="tests/test_live_evals.py::TestDisagreementIsNamed",
+    ),
+    Mutation(
         name="stream-request-carries-no-credential",
         why=(
             "F29: the progress stream was an EventSource, which cannot send an "

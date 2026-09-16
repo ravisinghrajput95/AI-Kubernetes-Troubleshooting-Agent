@@ -118,6 +118,17 @@ class LiveReport:
         if rejections:
             lines.append("Grounding rejections:")
             lines += [f"  {count:>3}x  {reason}" for reason, count in rejections.most_common()]
+        # Named, not only counted. "Agreed 53%" cannot be read without knowing
+        # which cases and what the model chose instead: a defensible pick among
+        # concurrent faults and a wrong answer grounding let through look
+        # identical as a percentage, and only the second is a defect.
+        disagreed = [case for case in self.grounded if case.expected and not case.agreed]
+        if disagreed:
+            lines.append("Grounded, but chose differently from the rules:")
+            lines += [
+                f"  {case.id}: model {case.selected or '(none)'}, rules {case.expected}"
+                for case in disagreed
+            ]
         unanswered = [case for case in self.cases if not case.answered]
         if unanswered:
             lines.append(f"No answer for: {', '.join(case.id for case in unanswered)}")

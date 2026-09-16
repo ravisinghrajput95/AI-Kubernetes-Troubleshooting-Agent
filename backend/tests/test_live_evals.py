@@ -198,3 +198,46 @@ class TestItScoresWhatTheModelActuallySaid:
         """
         assert live.load_investigation_cases is load_investigation_cases
         assert len(load_investigation_cases()) >= 20
+
+
+class TestDisagreementIsNamed:
+    """A percentage cannot tell a defensible pick from a wrong answer let through."""
+
+    def report(self):
+        return live.LiveReport(
+            provider="p",
+            model="m",
+            cases=[
+                live.LiveCase(
+                    id="agrees",
+                    answered=True,
+                    grounded=True,
+                    agreed=True,
+                    expected="a",
+                    selected="a",
+                ),
+                live.LiveCase(
+                    id="differs",
+                    answered=True,
+                    grounded=True,
+                    expected="image.pull_failure",
+                    selected="rollout.stalled",
+                ),
+                live.LiveCase(
+                    id="rejected",
+                    answered=True,
+                    grounded=False,
+                    expected="b",
+                    selected="b",
+                    rejection="no",
+                ),
+            ],
+        )
+
+    def test_each_grounded_disagreement_names_both_choices(self):
+        summary = self.report().summary()
+        assert "  differs: model rollout.stalled, rules image.pull_failure" in summary
+
+    def test_agreements_and_rejections_are_not_listed_as_disagreements(self):
+        listed = self.report().summary().split("chose differently from the rules:")[1]
+        assert "agrees" not in listed and "rejected:" not in listed
