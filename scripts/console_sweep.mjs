@@ -182,13 +182,19 @@ async function go(path) {
   // of those a finding, twenty times in one run, and a check that cries wolf
   // gets skipped exactly like a flaky one. The defect is the page not having
   // moved at all: landing back where we already were.
-  const before = String((await evaluate("location.pathname + location.search")) || "");
+  // Comparing URLs cannot tell the two apart when a route redirects *back to
+  // the page the crawl was already on* — `/no-such-page` from the fleet page
+  // lands on the fleet page, which is both a redirect and indistinguishable
+  // from not having moved. A stamp on the document can: `Page.navigate`
+  // replaces the document, so a surviving stamp means nothing navigated.
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const stamp = `sweep-${Date.now()}-${attempt}`;
+    await evaluate(`window.__sweepStamp = ${JSON.stringify(stamp)}`);
     await send("Page.navigate", { url: BASE + path });
     await wait(SETTLE_MS);
     const here = String((await evaluate("location.pathname + location.search")) || "");
     if (here.startsWith(path.split("?")[0])) return;
-    if (here !== before) {
+    if ((await evaluate("window.__sweepStamp")) !== stamp) {
       record("redirected", { from: path, to: here });
       return;
     }
