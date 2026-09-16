@@ -1976,7 +1976,7 @@ Opt-in, like the soak: every route, every link, button, tab and summary clicked 
 - **A count over pooled resources.** A hypothesis rule pools every resource its triggers fire on, so fraud-scorer's OOM kill "refuted" checkout's startup failure, and archiver's unavailable replicas "supported" it. Refutation and support are now scoped to the triggered workloads (`_about` in `hypothesis_rules.py`), a Service whose selector matches nothing is supported by no pod, and an event supports a workload hypothesis only if it names that workload. Every one of these moved the root cause the two providers reported, and the tie rationale then quoted the inflated count as its reason. `distinct_workloads` is the same mistake one layer up: a Deployment and its failing pods were two affected workloads.
 - **A fallback that reads as a finding.** With no keyword matched, the log collector returned the tail under `relevant_lines`, and `logs.error_pattern` quoted `starting checkout service` at HIGH. `default/kubernetes` has no selector on every cluster. "Top consumers" was kubectl's alphabetical first page.
 - **A state nothing tracks.** Report Status read Open or Resolved. Environment was a substring guess (`kind-prod` → Development). "Secrets were scrubbed from this record" was on every record that went through the redactor. Lessons Learned offered "Prometheus is not configured" as what would have shortened diagnosing a selector mismatch.
-- **Absence that was not observation.** Trends counted runs that collected nothing, or were scoped elsewhere, as the finding being absent, so every finding was "happening more often". One kind cluster reached through a kubeconfig and two agents was "the same failure on 3 clusters"; runs now record the node UIDs they read (`cluster_identity`) and the console groups names that share one.
+- **Absence that was not observation.** Trends counted runs that collected nothing, or were scoped elsewhere, as the finding being absent, so every finding was "happening more often". One kind cluster reached through a kubeconfig and two agents was "the same failure on 3 clusters"; runs now record the node UIDs they read (`cluster_identity`) and the console groups names that share one. **And the headers kept counting names after the cards stopped**: Fleet read "3 clusters" above three cards each reading the same nodes as the other two, and Ask "across 3 of 3 clusters". Both count `clusterKeys` groups now ("3 names for 1 cluster"), and a name on record that shares nodes with one still in the fleet is not a departed cluster.
 
 **A route's dump must be the route it asked for.** A `Page.navigate` that had not taken effect when the snapshot was read filed the Settings page's text under `/clusters/kind-k8s-agent-dev` — with that route's control inventory and its clicks — so a route reported as swept was never loaded. The URL is written at the top of every dump and still went unread; `go()` now checks it, retries once, and records `misnavigated` as a finding. **A redirect is not that failure**: `/no-such-page` is answered by the fleet page, and the first version of the check called each of those a finding — twenty in one run. The defect is the page not having moved at all — and comparing URLs cannot see that when a route redirects *back* to the page the crawl was already on, which `/no-such-page` does from the fleet page. `go()` stamps the document before navigating: `Page.navigate` replaces it, so a surviving stamp means nothing navigated, and anything else is a `redirected` note rather than a finding.
 
@@ -2236,13 +2236,26 @@ It is also the discipline that decays first: a passing suite feels like
 evidence, and a mutation not run leaves no trace.
 
 ```bash
-python scripts/mutation_check.py          # 32 mutations
+python scripts/mutation_check.py                   # 109 mutations
+python scripts/mutation_check.py --suite frontend  # the console's, under vitest
 python scripts/mutation_check.py --list
 ```
 
 Each entry pairs **a defect that actually shipped** with the test written to
-catch it, and the run fails if any test passes with its defect present. Runs in
-the `backend` CI job on 3.12.
+catch it, and the run fails if any test passes with its defect present. The
+backend half runs in the `backend` CI job on 3.12, the console half in the
+`frontend` job — `--suite` exists because neither job has the other's
+toolchain. Until it did, every console mutation pair recorded in this file had
+been run once by hand and written down; F29, F30, the SSE dispatch rule, the
+risk tone, the provenance label and the outage-is-not-failure rule are now
+re-run on every push, each confirmed to fail the test named for it.
+
+**A non-zero exit is not a catch.** Any failing exit used to count, so a
+selector naming a moved file, a collection error or a missing `npx` reported
+every mutation CAUGHT — the anchor rule's vacuity pointing the other way. A
+catch now needs pytest's exit 1 or a vitest `Tests N failed` line; anything else
+is ERROR and fails the run. Both toolchains were shown to report ERROR on a
+selector naming a file that does not exist, where the previous rule said CAUGHT.
 
 **Deliberately not `mutmut` or `cosmic-ray`.** A general fuzzer mutates
 everything and grades the whole suite, which here would spend minutes

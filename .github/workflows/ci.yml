@@ -77,7 +77,7 @@ jobs:
       # re-derive the same answer.
       - name: Mutation tests still catch their defects
         if: matrix.python-version == '3.12'
-        run: python ../scripts/mutation_check.py
+        run: python ../scripts/mutation_check.py --suite backend
 
   # The default suite is hermetic and needs no database, which is what keeps
   # `python -m pytest` usable on a laptop. That would leave the distributed job
@@ -340,6 +340,10 @@ jobs:
         run: npm run build
       - name: Tests
         run: npm test
+      # The console's half of scripts/mutation_check.py. Its pairs were run by
+      # hand and written down until this step existed.
+      - name: Mutation tests still catch their defects
+        run: python3 ../scripts/mutation_check.py --suite frontend
 
   security:
     name: Security

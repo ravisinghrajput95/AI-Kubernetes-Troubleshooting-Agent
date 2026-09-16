@@ -27,6 +27,14 @@ someone from walking into at 2am.
     python scripts/mutation_check.py            # all of them
     python scripts/mutation_check.py --list     # what is covered
     python scripts/mutation_check.py -k revoked # one, by name
+    python scripts/mutation_check.py --suite frontend   # only the console's
+
+**The console's invariants run here too, under vitest.** Until they did, every
+console mutation pair in CLAUDE.md — F29, F30, F31 and the sweep fixes — had been
+run once by hand and written down, which is precisely the standing this script
+was written to end for the backend. `--suite` exists because the two CI jobs have
+different toolchains: the backend job has no `node_modules` and the frontend job
+no virtualenv.
 
 Restores every file on the way out, including on Ctrl-C.
 """
@@ -34,6 +42,7 @@ Restores every file on the way out, including on Ctrl-C.
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -41,7 +50,9 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-BACKEND = Path(__file__).resolve().parents[1] / "backend"
+ROOT = Path(__file__).resolve().parents[1]
+BACKEND = ROOT / "backend"
+FRONTEND = ROOT / "frontend"
 
 
 @dataclass(frozen=True)
@@ -54,10 +65,13 @@ class Mutation:
     old: str
     new: str
     tests: str
+    # "backend" runs `tests` under pytest from backend/; "frontend" runs it
+    # under vitest from frontend/, with `path` relative to frontend/ as well.
+    suite: str = "backend"
 
     @property
     def file(self) -> Path:
-        return BACKEND / self.path
+        return (FRONTEND if self.suite == "frontend" else BACKEND) / self.path
 
 
 MUTATIONS = [
@@ -1503,6 +1517,121 @@ MUTATIONS = [
         new="    if False:  # mutation: reader clock against writer clock\n",
         tests="tests/test_agent_presence.py",
     ),
+    Mutation(
+        name="stream-request-carries-no-credential",
+        why=(
+            "F29: the progress stream was an EventSource, which cannot send an "
+            "Authorization header, so in every authenticated deployment it was "
+            "answered 401 and every investigation the console showed was polled."
+        ),
+        suite="frontend",
+        path="src/hooks/useInvestigationJob.ts",
+        old="            headers: authHeaders(),\n            signal: controller.signal,\n",
+        new="            signal: controller.signal,\n",
+        tests="src/hooks/useInvestigationJob.test.ts",
+    ),
+    Mutation(
+        name="report-download-carries-no-credential",
+        why=(
+            "F30: report downloads were <a href> navigations, which send no "
+            "credential, so PDF, JSON and Markdown were all 401 and the browser "
+            "saved the JSON error body under the name of a report."
+        ),
+        suite="frontend",
+        path="src/services/api.ts",
+        old="  const response = await fetch(reportUrl(path), { headers: authHeaders() });\n",
+        new="  const response = await fetch(reportUrl(path));\n",
+        tests="src/services/download.test.ts",
+    ),
+    Mutation(
+        name="named-sse-events-read-as-message",
+        why=(
+            "The server names every SSE frame and the hook listened only for the "
+            "default 'message' type, so the stream delivered zero events, errored "
+            "~400ms later and fell back to polling — on every run, unnoticed."
+        ),
+        suite="frontend",
+        path="src/services/eventStream.ts",
+        old='    frames.push({ id, type: type || "message", data: data.join("\\n") });\n',
+        new='    frames.push({ id, type: "message", data: data.join("\\n") });\n',
+        tests="src/hooks/useInvestigationJob.test.ts src/services/eventStream.test.ts",
+    ),
+    Mutation(
+        name="unrecognised-risk-level-reads-as-low",
+        why=(
+            "The legacy remediation panel coloured every risk level but Medium as "
+            "safe, so the two High plans the platform emits showed green."
+        ),
+        suite="frontend",
+        path="src/components/RemediationPlanPanel.tsx",
+        old="RISK_TONE[plan.risk.level] ?? UNKNOWN_RISK_TONE}",
+        new="RISK_TONE[plan.risk.level] ?? RISK_TONE.Low}",
+        tests="src/components/RemediationPlanPanel.test.tsx",
+    ),
+    Mutation(
+        name="deterministic-report-labelled-model-authored",
+        why=(
+            "Lessons Learned carried 'Model-authored · not evidence-derived' on "
+            "every report, including every report from a deployment with no model "
+            "configured, under 'Diagnosis source: Deterministic analysis'."
+        ),
+        suite="frontend",
+        path="src/lib/report.ts",
+        old='  if (title === "Lessons Learned" && modelAnswered) {\n',
+        new='  if (title === "Lessons Learned") {\n',
+        tests="src/lib/report.test.ts src/components/report/ReportDocument.test.tsx",
+    ),
+    Mutation(
+        name="platform-outage-fails-the-investigation",
+        why=(
+            "One 503 during a database pause set a running investigation's phase "
+            "to failed, permanently: nothing retried, and it completed on its "
+            "worker while the console read Failed for good."
+        ),
+        suite="frontend",
+        path="src/hooks/useInvestigationJob.ts",
+        old='  if (cause.kind === "network" || cause.kind === "timeout") return true;\n  return cause.status !== null && cause.status >= 500;\n',
+        new="  return false; // mutation: every error is an answer\n",
+        tests="src/hooks/useInvestigationJob.test.ts",
+    ),
+    Mutation(
+        name="fleet-header-counts-names",
+        why=(
+            "The Fleet header read '3 clusters' above three cards, each saying it "
+            "read the same nodes as the other two: one kind cluster reached "
+            "through its kubeconfig and two agents, counted by name."
+        ),
+        suite="frontend",
+        path="src/lib/fleet.ts",
+        old="  const clusters = new Set(names.map(key)).size;\n",
+        new="  const clusters = names.length; // mutation: count names\n",
+        tests="src/lib/fleet.test.ts src/routes/FleetPage.test.tsx",
+    ),
+    Mutation(
+        name="ask-coverage-counts-names",
+        why=(
+            "Ask read 'across 3 of 3 clusters' for one cluster reached three ways, "
+            "on the page whose promise is that every claim is a count of runs."
+        ),
+        suite="frontend",
+        path="src/routes/AskPage.tsx",
+        old="  const fleetClusters = new Set(fleet.map((cluster) => key(cluster.name)));\n",
+        new="  const fleetClusters = new Set(fleet.map((cluster) => cluster.name)); // mutation\n",
+        tests="src/routes/AskPage.test.tsx",
+    ),
+    Mutation(
+        name="ask-renamed-cluster-reads-as-departed",
+        why=(
+            "A name on record whose runs read the same nodes as a name still in "
+            "the fleet was counted as a cluster 'no longer in the fleet' — the "
+            "cluster had not gone, only the name it was reached under."
+        ),
+        suite="frontend",
+        path="src/routes/AskPage.tsx",
+        old="            .filter((group) => !fleetClusters.has(group)),\n",
+        new="",
+        tests="src/routes/AskPage.test.tsx",
+    ),
 ]
 
 
@@ -1523,7 +1652,16 @@ def apply(mutation: Mutation) -> str:
     return original
 
 
-def run_tests(selector: str) -> subprocess.CompletedProcess:
+def run_tests(mutation: Mutation) -> subprocess.CompletedProcess:
+    selector = mutation.tests
+    if mutation.suite == "frontend":
+        return subprocess.run(
+            ["npx", "--no-install", "vitest", "run", *selector.split()],
+            cwd=FRONTEND,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
     return subprocess.run(
         [
             sys.executable,
@@ -1545,16 +1683,43 @@ def run_tests(selector: str) -> subprocess.CompletedProcess:
     )
 
 
+def not_a_test_failure(mutation: Mutation, result: subprocess.CompletedProcess) -> str:
+    """Why a non-zero exit is not a test objecting to the defect, or "".
+
+    Any non-zero exit used to count as CAUGHT, so a toolchain that could not
+    run at all — `npx` absent, a collection error, a selector naming a file
+    that moved — reported every mutation caught. That is the same vacuity as
+    an anchor that fails to apply, pointing the other way.
+    """
+    if result.returncode == 0:
+        return ""
+    if mutation.suite == "frontend":
+        if re.search(r"Tests\s+\d+ failed", result.stdout):
+            return ""
+    elif result.returncode == 1:
+        # pytest: 1 is "tests ran and some failed"; 2 is an interrupted or
+        # uncollectable run, 4 a usage error, 5 nothing collected.
+        return ""
+    tail = (result.stdout + result.stderr).strip().splitlines()[-3:]
+    return f"exit {result.returncode} without a failing test: {' | '.join(tail)}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-k", default="", help="only mutations whose name contains this")
     parser.add_argument("--list", action="store_true", help="show what is covered and exit")
+    parser.add_argument(
+        "--suite",
+        choices=["all", "backend", "frontend"],
+        default="all",
+        help="only mutations whose tests run under this toolchain",
+    )
     args = parser.parse_args()
 
-    selected = [m for m in MUTATIONS if args.k in m.name]
+    selected = [m for m in MUTATIONS if args.k in m.name and args.suite in ("all", m.suite)]
     if args.list:
         for mutation in selected:
-            print(f"{mutation.name:32} {mutation.path}")
+            print(f"{mutation.name:32} {mutation.suite:8} {mutation.path}")
         return 0
     if not selected:
         print(f"no mutation matches {args.k!r}")
@@ -1563,20 +1728,30 @@ def main() -> int:
     # A copy of every file involved, restored no matter how this exits. The
     # alternative — trusting the happy path to put things back — leaves a
     # mutated working tree behind on the first Ctrl-C.
+    # Keyed by position rather than by file name: the console has more than
+    # one `index.ts`, and two originals sharing a backup name would restore one
+    # file's contents over the other.
     backup = Path(tempfile.mkdtemp(prefix="mutation-check-"))
-    touched = {m.file for m in selected}
-    for path in touched:
-        shutil.copy2(path, backup / path.name)
+    saved = {
+        path: backup / str(index) for index, path in enumerate(sorted({m.file for m in selected}))
+    }
+    for path, copy in saved.items():
+        shutil.copy2(path, copy)
 
     survived: list[Mutation] = []
+    errored: list[tuple[Mutation, str]] = []
     try:
         for mutation in selected:
             print(f"\n\033[1m{mutation.name}\033[0m  ({mutation.path})")
             apply(mutation)
-            result = run_tests(mutation.tests)
-            mutation.file.write_text((backup / mutation.file.name).read_text())
+            result = run_tests(mutation)
+            mutation.file.write_text(saved[mutation.file].read_text())
 
-            if result.returncode != 0:
+            refusal = not_a_test_failure(mutation, result)
+            if refusal:
+                errored.append((mutation, refusal))
+                print(f"  \033[33mERROR\033[0m  {refusal}")
+            elif result.returncode != 0:
                 summary = next(
                     (line for line in reversed(result.stdout.splitlines()) if "failed" in line),
                     "tests failed",
@@ -1587,16 +1762,19 @@ def main() -> int:
                 print(f"  \033[31mSURVIVED\033[0m  {mutation.tests} passed with the defect present")
                 print(f"           {mutation.why}")
     finally:
-        for path in touched:
-            shutil.copy2(backup / path.name, path)
+        for path, copy in saved.items():
+            shutil.copy2(copy, path)
         shutil.rmtree(backup, ignore_errors=True)
 
     print("\n" + "=" * 72)
-    print(f"{len(selected) - len(survived)} caught, {len(survived)} survived")
+    caught = len(selected) - len(survived) - len(errored)
+    print(f"{caught} caught, {len(survived)} survived, {len(errored)} could not be judged")
     for mutation in survived:
         print(f"\n\033[31mSURVIVED\033[0m {mutation.name}\n  {mutation.why}")
+    for mutation, refusal in errored:
+        print(f"\n\033[33mERROR\033[0m {mutation.name}\n  {refusal}")
     print("=" * 72)
-    return 1 if survived else 0
+    return 1 if survived or errored else 0
 
 
 if __name__ == "__main__":
