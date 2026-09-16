@@ -1683,6 +1683,9 @@ def run_tests(mutation: Mutation) -> subprocess.CompletedProcess:
     )
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
 def not_a_test_failure(mutation: Mutation, result: subprocess.CompletedProcess) -> str:
     """Why a non-zero exit is not a test objecting to the defect, or "".
 
@@ -1694,7 +1697,10 @@ def not_a_test_failure(mutation: Mutation, result: subprocess.CompletedProcess) 
     if result.returncode == 0:
         return ""
     if mutation.suite == "frontend":
-        if re.search(r"Tests\s+\d+ failed", result.stdout):
+        # CI sets FORCE_COLOR, and vitest then colours the summary: the first
+        # version matched plain text only and judged all nine console
+        # mutations ERROR on their first CI run, having passed locally.
+        if re.search(r"Tests\s+\d+ failed", _ANSI.sub("", result.stdout)):
             return ""
     elif result.returncode == 1:
         # pytest: 1 is "tests ran and some failed"; 2 is an interrupted or
@@ -1753,7 +1759,11 @@ def main() -> int:
                 print(f"  \033[33mERROR\033[0m  {refusal}")
             elif result.returncode != 0:
                 summary = next(
-                    (line for line in reversed(result.stdout.splitlines()) if "failed" in line),
+                    (
+                        line
+                        for line in reversed(_ANSI.sub("", result.stdout).splitlines())
+                        if "failed" in line
+                    ),
                     "tests failed",
                 )
                 print(f"  \033[32mCAUGHT\033[0m  {summary.strip()}")
