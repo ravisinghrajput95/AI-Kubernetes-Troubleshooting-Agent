@@ -422,6 +422,9 @@ export interface InvestigationReport {
     confidence_breakdown?: Array<{
       source: string;
       contribution: number;
+      weight?: number;
+      score?: number;
+      detail?: string;
     }>;
     evidence_matrix?: Array<{
       source: string;

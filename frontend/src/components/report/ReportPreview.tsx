@@ -70,21 +70,29 @@ export function ReportPreview({
           </div>
         </div>
 
-        <div className="rounded-md border border-slate-800 bg-[#080d14] p-4">
-          <h3 className="text-sm font-semibold text-slate-100">
-            AI Confidence Breakdown
-          </h3>
-          <div className="mt-3 grid gap-2">
-            {confidence.map((item) => (
-              <div key={item.source} className="grid grid-cols-[1fr_auto] gap-3 text-sm">
-                <span className="text-slate-400">{item.source}</span>
-                <span className="font-semibold text-cyan-200">
-                  {item.contribution}%
-                </span>
-              </div>
-            ))}
+        {/* Not "AI": this is the deterministic composition in
+            `app/analysis/confidence.py`, printed on reports no model touched.
+            Its contributions sum to the confidence above, which the invented
+            per-section table it replaced never did. Omitted when a diagnosis
+            carries no breakdown, rather than padded. */}
+        {confidence.length > 0 ? (
+          <div className="rounded-md border border-slate-800 bg-[#080d14] p-4">
+            <h3 className="text-sm font-semibold text-slate-100">How the confidence was reached</h3>
+            <div className="mt-3 grid gap-2">
+              {confidence.map((item) => (
+                <div key={item.source} className="grid grid-cols-[1fr_auto] gap-3 text-sm">
+                  <span className="text-slate-400">
+                    {item.source}
+                    {item.score !== undefined && item.weight !== undefined
+                      ? ` · ${item.score}% × weight ${item.weight}%`
+                      : ""}
+                  </span>
+                  <span className="font-semibold text-cyan-200">{item.contribution}%</span>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        ) : null}
       </div>
 
       <div className="mt-5 grid gap-5 xl:grid-cols-2">

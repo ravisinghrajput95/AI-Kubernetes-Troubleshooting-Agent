@@ -1294,6 +1294,18 @@ MUTATIONS = [
         tests="tests/test_recently_restarted_pods.py",
     ),
     Mutation(
+        name="invented-confidence-breakdown",
+        why=(
+            "Report metadata carried fixed per-section weights ('Pod Analysis 25%') "
+            "unrelated to the confidence above them, under an 'AI' heading on "
+            "diagnoses no model touched."
+        ),
+        path="app/reports/rendering.py",
+        old='        breakdown = diagnosis.get("confidence_breakdown") or []\n',
+        new='        breakdown = [{"component": "Pod Analysis", "contribution": 25}]  # mutation\n',
+        tests="tests/test_reports.py",
+    ),
+    Mutation(
         name="refutation-across-unrelated-resources",
         why=(
             "Refuting signals matched by type anywhere in the namespace, so "

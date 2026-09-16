@@ -1,6 +1,7 @@
 """Incident report composition."""
 
 from app.reports.composer import IncidentReportComposer
+from app.reports.rendering import ReportRenderer
 
 COMPOSER = IncidentReportComposer()
 
@@ -249,6 +250,42 @@ class TestContent:
 
         assert "Evidence this investigation did not have:" in text
         assert "would have shortened" not in text
+
+    def test_the_confidence_breakdown_is_the_one_that_was_computed(self):
+        """The report metadata invented its own: fixed weights per section
+        ("Pod Analysis 25%") that bore no relation to the confidence printed
+        above them, under the heading "AI Confidence Breakdown" on diagnoses no
+        model had touched, and a hardcoded 0/0/25/35/40 when the API server was
+        unreachable."""
+        import json as _json
+
+        payload = _json.loads(
+            ReportRenderer().render_json(
+                DIAGNOSIS, INVESTIGATION, "2026-09-14T00:00:00Z", "prod", "success", "INC-1"
+            )
+        )
+        parts = payload["report_metadata"]["confidence_breakdown"]
+
+        assert [part["source"] for part in parts] == [
+            part["component"] for part in DIAGNOSIS["confidence_breakdown"]
+        ]
+        assert sum(part["contribution"] for part in parts) == DIAGNOSIS["confidence"]
+        assert not any("Analysis" in part["source"] for part in parts)
+
+    def test_a_diagnosis_with_no_breakdown_gets_no_invented_one(self):
+        import json as _json
+
+        payload = _json.loads(
+            ReportRenderer().render_json(
+                {**DIAGNOSIS, "confidence_breakdown": []},
+                INVESTIGATION,
+                "2026-09-14T00:00:00Z",
+                "prod",
+                "success",
+                "INC-1",
+            )
+        )
+        assert payload["report_metadata"]["confidence_breakdown"] == []
 
     def test_appendix_notes_that_all_commands_were_read_only(self):
         section = compose().section("Appendix: Commands Executed")

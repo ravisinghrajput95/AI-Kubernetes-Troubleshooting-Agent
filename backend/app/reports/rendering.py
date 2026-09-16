@@ -130,10 +130,7 @@ class ReportRenderer:
                 "severity": self.severity(investigation),
                 "incident_status": self.incident_status(investigation),
                 "business_impact": self._business_impact(investigation),
-                "confidence_breakdown": [
-                    {"source": label, "contribution": value}
-                    for label, value in self._confidence_breakdown(diagnosis, investigation)
-                ],
+                "confidence_breakdown": self._confidence_breakdown(diagnosis),
                 "evidence_matrix": [
                     {"source": source, "status": state}
                     for source, state in self._evidence_matrix(investigation)
@@ -295,44 +292,32 @@ class ReportRenderer:
 
         return impact or ["Operational impact requires SRE review based on collected evidence."]
 
-    def _confidence_breakdown(
-        self,
-        diagnosis: dict[str, Any],
-        investigation: dict[str, Any],
-    ) -> list[tuple[str, int]]:
-        if self._api_connectivity_issue(investigation):
-            return [
-                ("Pod Analysis", 0),
-                ("Event Analysis", 0),
-                ("Node Analysis", 25),
-                ("Network Analysis", 35),
-                ("API Connectivity", 40),
-            ]
+    def _confidence_breakdown(self, diagnosis: dict[str, Any]) -> list[dict[str, Any]]:
+        """The composition `app/analysis/confidence.py` actually computed.
 
-        signals = [
-            ("Pod Analysis", self._signal_score(investigation.get("pods", {}), 25)),
-            ("Event Analysis", self._signal_score(investigation.get("events", {}), 20)),
-            ("Logs Analysis", 20 if investigation.get("logs", {}).get("logs") else 5),
-            ("Deployment Analysis", self._signal_score(investigation.get("deployments", {}), 20)),
-            ("Network Analysis", self._signal_score(investigation.get("network", {}), 15)),
+        This invented its own: fixed weights per collected section — Pod
+        Analysis 25, Event Analysis 20, Logs 20 — that sum to about a hundred,
+        bear no relation to the confidence printed above them, and were
+        rendered under the heading "AI Confidence Breakdown" on diagnoses no
+        model had touched. An investigation whose API server was unreachable
+        got a hardcoded `0/0/25/35/40`, which is a number for every component
+        and a measurement of none. The real breakdown names each component,
+        its weight and its contribution, and the contributions sum to the
+        confidence; when a diagnosis carries none, the section is omitted
+        rather than filled.
+        """
+        breakdown = diagnosis.get("confidence_breakdown") or []
+        return [
+            {
+                "source": str(part.get("component", "")),
+                "contribution": int(part.get("contribution", 0)),
+                "weight": int(part.get("weight", 0)),
+                "score": int(part.get("score", 0)),
+                "detail": str(part.get("detail", "")),
+            }
+            for part in breakdown
+            if isinstance(part, dict)
         ]
-        total = sum(value for _, value in signals)
-        if total == 0:
-            return [("Evidence Available", int(diagnosis.get("confidence", 0)))]
-        return signals
-
-    def _signal_score(self, section: dict[str, Any], weight: int) -> int:
-        if section.get("error"):
-            return 0
-        if (
-            section.get("findings")
-            or section.get("problematic_pods")
-            or section.get("unhealthy_deployments")
-        ):
-            return weight
-        if section.get("healthy") is True:
-            return max(5, weight // 3)
-        return 0
 
     def _evidence_matrix(self, investigation: dict[str, Any]) -> list[tuple[str, str]]:
         rows = [
@@ -398,20 +383,6 @@ class ReportRenderer:
         return any(
             investigation.get(key, {}).get("error")
             for key in ("pods", "events", "deployments", "network", "nodes", "storage", "workloads")
-        )
-
-    def _api_connectivity_issue(self, investigation: dict[str, Any]) -> bool:
-        text = self._combined_error_text(investigation)
-        return any(
-            phrase in text
-            for phrase in (
-                "connection refused",
-                "unable to connect",
-                "couldn't get current server api group list",
-                "invalidclienttokenid",
-                "api?timeout",
-                "port 6443",
-            )
         )
 
     def _api_connection_refused(self, investigation: dict[str, Any]) -> bool:
