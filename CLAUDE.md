@@ -2238,8 +2238,9 @@ It is also the discipline that decays first: a passing suite feels like
 evidence, and a mutation not run leaves no trace.
 
 ```bash
-python scripts/mutation_check.py                   # 117 mutations
+python scripts/mutation_check.py                   # 124 mutations
 python scripts/mutation_check.py --suite frontend  # the console's, under vitest
+python scripts/mutation_check.py --suite terraform # `terraform test`, its own CI job
 python scripts/mutation_check.py --list
 ```
 
@@ -2371,6 +2372,7 @@ procedures, so read them before changing the thing they describe:
 | `deploy/helm/k8s-agent/README.md` | The chart reproduces the platform's startup refusals at render time; **the kubeconfig identity needs the `impersonate` verb** or every investigation fails pointing at the user's RBAC. Probes must stay on `/health/live` and `/health/ready` — they were on `/health` once, which made the whole readiness split inert in a Helm deployment — and the `preStop` sleep is what covers the Endpoints propagation window |
 | `docs/MCP.md` | The **named** JSON-RPC subset, the four tools and their permissions, and what is deliberately not exposed |
 | `docs/DEPENDENCY_GRAPH.md` | The `relation` set is closed and directional; no rule invents a node |
+| `deploy/terraform/README.md` | AWS state, secrets and DNS around the chart. **Never applied** — validated, `terraform test` against mocked providers, and its values rendered through the real chart by `scripts/terraform_verify.py`, which refuses a values key the chart does not define because Helm ignores one silently. The agent CA is deliberately not generated (it would sit in state). Writing it found `config.corsOrigins` rendered comma-joined, which the platform's JSON list parsing could not start with; `backend/tests/test_helm_chart.py` now renders the chart and reads the result through `Settings` |
 
 Two conventions worth keeping:
 

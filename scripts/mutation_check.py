@@ -53,6 +53,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
 FRONTEND = ROOT / "frontend"
+TERRAFORM = ROOT / "deploy" / "terraform"
 
 
 @dataclass(frozen=True)
@@ -66,12 +67,14 @@ class Mutation:
     new: str
     tests: str
     # "backend" runs `tests` under pytest from backend/; "frontend" runs it
-    # under vitest from frontend/, with `path` relative to frontend/ as well.
+    # under vitest from frontend/; "terraform" runs `terraform test` in the
+    # module directory `tests` names. `path` is relative to the same root.
     suite: str = "backend"
 
     @property
     def file(self) -> Path:
-        return (FRONTEND if self.suite == "frontend" else BACKEND) / self.path
+        root = {"frontend": FRONTEND, "terraform": TERRAFORM}.get(self.suite, BACKEND)
+        return root / self.path
 
 
 MUTATIONS = [
@@ -1616,6 +1619,99 @@ MUTATIONS = [
         tests="src/components/report/ReportPreview.test.tsx",
     ),
     Mutation(
+        name="chart-cors-origins-comma-joined",
+        why=(
+            "The chart rendered CORS_ORIGINS comma-joined and the platform parses a "
+            "list setting from the environment as JSON, so any config.corsOrigins "
+            "value failed startup. Nothing that installs the chart sets it."
+        ),
+        path="../deploy/helm/k8s-agent/templates/configmap.yaml",
+        old="  CORS_ORIGINS: {{ toJson . | quote }}\n",
+        new='  CORS_ORIGINS: {{ join "," . | quote }}\n',
+        tests="tests/test_helm_chart.py",
+    ),
+    Mutation(
+        name="terraform-database-url-without-tls",
+        why=(
+            "A DATABASE_URL without sslmode=require against an RDS instance that "
+            "forces TLS fails every connection; against one that does not, it sends "
+            "every investigation in the clear."
+        ),
+        suite="terraform",
+        path="aws/main.tf",
+        old='    "postgresql://%s:%s@%s:%d/%s?sslmode=require",\n',
+        new='    "postgresql://%s:%s@%s:%d/%s",\n',
+        tests="aws",
+    ),
+    Mutation(
+        name="terraform-redis-url-plaintext",
+        why=(
+            "ElastiCache with transit encryption refuses a redis:// connection, and "
+            "the platform degrades rather than failing — so a wrong scheme reads as "
+            "a slow deployment, not a broken one."
+        ),
+        suite="terraform",
+        path="aws/main.tf",
+        old='    "rediss://:%s@%s:%d/0",\n',
+        new='    "redis://:%s@%s:%d/0",\n',
+        tests="aws",
+    ),
+    Mutation(
+        name="terraform-database-open-to-a-cidr",
+        why="Postgres holds every investigation; it must admit the platform's pods and nothing else.",
+        suite="terraform",
+        path="aws/main.tf",
+        old=(
+            "  security_group_id            = aws_security_group.database.id\n"
+            "  referenced_security_group_id = var.workload_security_group_id\n"
+        ),
+        new=(
+            "  security_group_id            = aws_security_group.database.id\n"
+            '  cidr_ipv4                    = "10.0.0.0/8"\n'
+        ),
+        tests="aws",
+    ),
+    Mutation(
+        name="terraform-gateway-advertises-an-unnamed-address",
+        why=(
+            "AGENT_GATEWAY_DNS_NAMES left at the platform default and every chart-"
+            "deployed gateway failed the agent's TLS check before enrolment began; "
+            "the certificate must name what the manifest tells agents to dial."
+        ),
+        suite="terraform",
+        path="modules/platform-values/main.tf",
+        old="      dnsNames  = local.gateway_names\n",
+        new="      dnsNames  = []\n",
+        tests="modules/platform-values",
+    ),
+    Mutation(
+        name="terraform-disabled-auth-without-acknowledgement",
+        why=(
+            "ALLOW_INSECURE_NO_AUTH pre-set by docker-compose was the careless "
+            "deployment F13 warns about; a module accepting auth.mode=disabled "
+            "without the acknowledgement is the same mistake with a longer reach."
+        ),
+        suite="terraform",
+        path="modules/platform-values/variables.tf",
+        old='    condition     = var.auth.mode != "disabled" || var.auth.allow_insecure_no_auth\n',
+        # Must still mention var.auth, or Terraform refuses to load the module
+        # and the run is judged ERROR rather than caught — as the first
+        # version of this entry was.
+        new="    condition     = var.auth.mode == var.auth.mode\n",
+        tests="modules/platform-values",
+    ),
+    Mutation(
+        name="terraform-values-key-unknown-to-the-chart",
+        why=(
+            "Helm ignores a values key the chart does not define, silently: a "
+            "misspelt key from Terraform renders, installs and does nothing."
+        ),
+        path="../scripts/terraform_verify.py",
+        old="        if key not in chart:\n",
+        new="        if False:  # mutation\n",
+        tests="tests/test_terraform_verify.py",
+    ),
+    Mutation(
         name="stream-request-carries-no-credential",
         why=(
             "F29: the progress stream was an EventSource, which cannot send an "
@@ -1752,6 +1848,14 @@ def apply(mutation: Mutation) -> str:
 
 def run_tests(mutation: Mutation) -> subprocess.CompletedProcess:
     selector = mutation.tests
+    if mutation.suite == "terraform":
+        return subprocess.run(
+            ["terraform", "test", "-no-color"],
+            cwd=TERRAFORM / selector,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
     if mutation.suite == "frontend":
         return subprocess.run(
             ["npx", "--no-install", "vitest", "run", *selector.split()],
@@ -1794,7 +1898,12 @@ def not_a_test_failure(mutation: Mutation, result: subprocess.CompletedProcess) 
     """
     if result.returncode == 0:
         return ""
-    if mutation.suite == "frontend":
+    if mutation.suite == "terraform":
+        # `terraform test` exits 1 for a failed assertion and for a module
+        # that does not even load; only the summary line tells them apart.
+        if re.search(r"Failure! \d+ passed, [1-9]\d* failed", result.stdout):
+            return ""
+    elif mutation.suite == "frontend":
         # CI sets FORCE_COLOR, and vitest then colours the summary: the first
         # version matched plain text only and judged all nine console
         # mutations ERROR on their first CI run, having passed locally.
@@ -1814,7 +1923,7 @@ def main() -> int:
     parser.add_argument("--list", action="store_true", help="show what is covered and exit")
     parser.add_argument(
         "--suite",
-        choices=["all", "backend", "frontend"],
+        choices=["all", "backend", "frontend", "terraform"],
         default="all",
         help="only mutations whose tests run under this toolchain",
     )

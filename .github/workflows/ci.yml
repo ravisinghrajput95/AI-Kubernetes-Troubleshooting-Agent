@@ -345,6 +345,41 @@ jobs:
       - name: Mutation tests still catch their defects
         run: python3 ../scripts/mutation_check.py --suite frontend
 
+  # deploy/terraform cannot be applied here — there is no AWS account behind
+  # CI and there should not be. What can run does: validate, `terraform test`
+  # against mocked providers, the provider-free values module applied for real
+  # and rendered through the actual chart, and the mutations that prove those
+  # tests can fail. A green job is not evidence an apply would work, and the
+  # module README says so.
+  terraform:
+    name: Terraform (validated, mocked, chart contract)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.5"
+          # The wrapper rewrites stdout, which the mutation check reads.
+          terraform_wrapper: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      # The backend, because the chart contract is judged by the platform's own
+      # Settings reading what `helm template` rendered.
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Validate, test, and render through the chart
+        run: python scripts/terraform_verify.py
+
+      - name: Mutation tests still catch their defects
+        run: python scripts/mutation_check.py --suite terraform
+
   security:
     name: Security
     runs-on: ubuntu-latest
