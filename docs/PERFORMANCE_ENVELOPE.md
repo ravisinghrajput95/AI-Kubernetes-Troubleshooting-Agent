@@ -239,37 +239,39 @@ in that harness nothing caps anything.
 python scripts/payload_bench.py --parse-scan
 ```
 
-| pods | kubectl stdout | peak parse | retained after cap |
-|---|---|---|---|
-| 500 | 0.27 MB | 1.5 MB | 0.27 MB |
-| 2,000 | 1.09 MB | 5.9 MB | 1.09 MB |
-| 5,000 | 2.73 MB | 14.9 MB | 1.09 MB |
-| 10,000 | 5.46 MB | 29.7 MB | 1.09 MB |
-| 25,000 | 13.67 MB | **74.3 MB** | 1.09 MB |
+| pods | kubectl stdout | peak: built whole | peak: streamed | retained after cap |
+|---|---|---|---|---|
+| 500 | 0.27 MB | 1.5 MB | 2.1 MB | 0.27 MB |
+| 2,000 | 1.09 MB | 5.9 MB | 8.3 MB | 1.09 MB |
+| 5,000 | 2.73 MB | 14.9 MB | **8.4 MB** | 1.09 MB |
+| 10,000 | 5.46 MB | 29.7 MB | **8.4 MB** | 1.09 MB |
+| 25,000 | 13.67 MB | **74.3 MB** | **8.4 MB** | 1.09 MB |
 
-**The cap does exactly what it claims and nothing more.** What is *retained* is
-flat at 1.09 MB from 2,000 pods upward. What is *parsed* is linear and
-unbounded — about 2.95 KB per pod, 5.5× kubectl's own output — because
-`_cap_items` truncates a document `json.loads` has already built in full. That
-is F5's remaining half, and this is the first measurement of it; the 13.4 MB
-above is a whole investigation at the cap, not a transient spike on a cluster
-past it.
+**`built whole` is what the platform used to do and what the cap could not
+reach**: `subprocess.run` buffered kubectl's whole output, `json.loads` built
+the whole document, and only then did `_cap_items` truncate it — so peak was
+linear in the cluster, about 2.95 KB per pod and 5.5× kubectl's own output,
+while what was *retained* stayed flat at 1.09 MB. That was F5's remaining half.
 
-**Deferred rather than built, and the reason is the shape of the number.** At
-10,000 pods the spike is 29.7 MB, so a worker at the default
-`JOB_MAX_CONCURRENT=4` transiently touches ~119 MB against a 159 MB resident
-platform — real, and not the constraint. The measured ceiling is per-worker
-throughput at ~12/s with the worker 92% idle in socket waits, which is CPU and
-the GIL, not memory; five days spent on memory would not move it. Removing the
-spike needs a streaming client, because kubectl assembles the whole list before
-writing a byte, and it would replace the only path in the platform that shells
-out.
+**`streamed` is the path every list read takes now** (`app/kubernetes/json_stream.py`):
+the items array is decoded one element at a time and elements past
+`MAX_LIST_ITEMS` are counted and dropped, so peak tracks the cap rather than
+the cluster — **flat at 8.4 MB from 5,000 pods to 25,000**, an 8.8× reduction
+at the top of the range, and the same number whether the cluster has five
+thousand pods or fifty.
 
-**What an operator has today is scope, not a setting.** Raising or lowering
-`MAX_LIST_ITEMS` does not change the spike — it is applied after the parse — so
-on a cluster of this size the lever is investigating a namespace rather than
-the cluster. That is worth knowing before the 5 days are spent, and it is why
-this is written down rather than left as an effort estimate.
+**The trade is stated because it is real: at or below the cap, streaming costs
+about 40% more than building the document** (8.3 MB against 5.9 MB at 2,000
+pods). That is not the reader being wasteful — decoding 2,000 elements
+individually costs 8.51 MB and decoding one document of the same 2,000 costs
+6.13 MB, measured directly, because a single `json.loads` shares more strings
+across the whole document than 2,000 separate decodes can. The number that was
+worth removing is the one with no ceiling; a constant 2.4 MB at the cap is not.
+
+**What an operator has is still scope, and now it is a setting too.** Lowering
+`MAX_LIST_ITEMS` now lowers the spike, because the cap is applied while the
+list is read rather than after it. Investigating a namespace rather than a
+cluster remains the larger lever.
 
 ### Routing
 

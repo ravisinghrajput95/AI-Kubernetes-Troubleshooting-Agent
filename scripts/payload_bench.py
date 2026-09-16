@@ -136,6 +136,10 @@ def parse_scan(sizes: tuple[int, ...]) -> list[dict]:
     The result is the distinction F5 turns on — what is *retained* is capped
     and flat, what is *parsed* is not.
     """
+    import io
+
+    from app.core.config import settings
+    from app.kubernetes.json_stream import read_capped_list
     from app.kubernetes.kubectl_executor import KubectlExecutor
 
     pod = {
@@ -190,16 +194,28 @@ def parse_scan(sizes: tuple[int, ...]) -> list[dict]:
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
+        # The same read through the streaming path the executor now takes for
+        # every list read. The stream is built before the measurement starts,
+        # because `io.StringIO(text)` copies the text and counting that copy
+        # measures the fixture.
+        stream = io.StringIO(text)
+        tracemalloc.start()
+        streamed, _returned = read_capped_list(stream, settings.max_list_items)
+        _, streamed_peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        assert len(streamed["items"]) == len(capped["items"])
+
         rows.append(
             {
                 "pods": count,
                 "kubectl_stdout_mb": round(len(text) / 1024 / 1024, 2),
                 "peak_parse_mb": round(peak / 1024 / 1024, 1),
+                "peak_streamed_mb": round(streamed_peak / 1024 / 1024, 1),
                 "retained_mb": round(len(json.dumps(capped).encode()) / 1024 / 1024, 2),
                 "capped": truncated,
             }
         )
-        del parsed, capped, text
+        del parsed, capped, text, streamed, stream
     return rows
 
 
@@ -231,16 +247,19 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(rows, indent=2))
             return 0
         print("One `kubectl get pods -o json`, through the real executor:\n")
-        print(f"{'pods':>8} {'stdout':>10} {'peak parse':>12} {'retained':>10}  capped")
+        print(f"{'pods':>8} {'stdout':>10} {'built':>10} {'streamed':>10} {'retained':>10}  capped")
         for row in rows:
             print(
                 f"{row['pods']:>8} {row['kubectl_stdout_mb']:>9}M "
-                f"{row['peak_parse_mb']:>11}M {row['retained_mb']:>9}M  {row['capped']}"
+                f"{row['peak_parse_mb']:>9}M {row['peak_streamed_mb']:>9}M "
+                f"{row['retained_mb']:>9}M  {row['capped']}"
             )
         print(
-            "\nRetained is flat above MAX_LIST_ITEMS; peak parse is not, because "
-            "the cap\napplies after `json.loads` has already built the whole "
-            "document. That is F5."
+            "\n`built` is `json.loads` then cap — the old path, where peak tracked "
+            "the cluster\nbecause the cap applied to a document already built in "
+            "full. `streamed` is the\npath the executor takes now: the cap is "
+            "applied as the items arrive, so peak\ntracks the cap instead. "
+            "Retained was always flat; the spike is what F5 was."
         )
         return 0
 

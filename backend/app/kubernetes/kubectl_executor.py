@@ -10,6 +10,7 @@ from loguru import logger
 from app.auth.models import Principal
 from app.core.config import settings
 from app.kubernetes.command_policy import assert_read_only
+from app.kubernetes.json_stream import JsonStreamError, read_capped_list
 from app.kubernetes.list_limit import cap_items
 
 
@@ -106,6 +107,25 @@ class KubectlExecutor:
             return []
         return [f"--chunk-size={settings.kubectl_chunk_size}"]
 
+    def _note_truncation(self, rendered: str, returned: int) -> bool:
+        """Record that a list read was capped. The bookkeeping half of `_cap_items`.
+
+        Shared with the streaming path, which caps as it reads and therefore
+        never holds the document `cap_items` would have been handed.
+        """
+        limit = settings.max_list_items
+        if limit <= 0 or returned <= limit:
+            return False
+        logger.warning(
+            "Capping list response at {limit} of {total} items: {command}",
+            limit=limit,
+            total=returned,
+            command=rendered,
+        )
+        with self._audit_lock:
+            self.truncations.append({"command": rendered, "returned": returned, "retained": limit})
+        return True
+
     def _cap_items(self, data: Any, command: list[str]) -> tuple[Any, bool, int]:
         """Cap a list response, recording that it happened.
 
@@ -130,6 +150,114 @@ class KubectlExecutor:
             self.truncations.append(truncation)
         return data, True, total
 
+    def _run_streaming(self, command: list[str], env: dict[str, str]) -> KubectlResult:
+        """Read a list response as it arrives, keeping at most `MAX_LIST_ITEMS`.
+
+        F5's remaining half. `subprocess.run` buffers the whole of kubectl's
+        output and `json.loads` then builds the whole document, so one read of
+        a large cluster cost two copies of it before the cap that exists to
+        bound memory was applied to the second — 74.3 MB at 25,000 pods for a
+        retained 1.09 MB. `--chunk-size` does not help: it bounds the API
+        server per request, and kubectl still assembles the list before
+        printing it.
+
+        The timeout stays a kill, as `subprocess.run(timeout=…)` does it: a
+        reader blocked on a process that has stopped writing cannot time itself
+        out, so a timer kills the process and the read ends at EOF. stderr is
+        drained by its own thread, because a child that fills that pipe while
+        this one reads stdout deadlocks.
+        """
+        rendered = " ".join(command)
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+            )
+        except FileNotFoundError:
+            logger.error("kubectl was not found on PATH")
+            return KubectlResult(
+                command=command,
+                success=False,
+                stdout="",
+                stderr="kubectl was not found on PATH",
+                return_code=127,
+            )
+
+        errors: list[str] = []
+        drain = threading.Thread(
+            target=lambda: errors.append(process.stderr.read() if process.stderr else ""),
+            daemon=True,
+        )
+        drain.start()
+
+        killed = threading.Event()
+
+        def stop() -> None:
+            killed.set()
+            process.kill()
+
+        timer = threading.Timer(settings.kubectl_timeout_seconds, stop)
+        timer.start()
+
+        data: Any = None
+        total = 0
+        failure = ""
+        try:
+            data, total = read_capped_list(process.stdout, settings.max_list_items)
+        except JsonStreamError as exc:
+            failure = str(exc)
+        finally:
+            timer.cancel()
+            if process.stdout:
+                process.stdout.close()
+            process.wait()
+            drain.join(timeout=1)
+
+        if killed.is_set():
+            logger.error("kubectl command timed out: {command}", command=rendered)
+            return KubectlResult(
+                command=command,
+                success=False,
+                stdout="",
+                stderr="kubectl command timed out",
+                return_code=124,
+            )
+
+        stderr = errors[0] if errors else ""
+        success = process.returncode == 0 and not failure
+        if failure:
+            logger.error("Failed to parse kubectl JSON output: {error}", error=failure)
+        if not success:
+            logger.warning(
+                "kubectl command failed: {command} stderr={stderr}",
+                command=rendered,
+                stderr=stderr.strip(),
+            )
+            return KubectlResult(
+                command=command,
+                success=False,
+                stdout="",
+                stderr=stderr,
+                return_code=process.returncode,
+            )
+
+        truncated = self._note_truncation(rendered, total)
+        # The text a caller sees is the document it was given: bounded by the
+        # cap, and never disagreeing with `data` about what this read returned.
+        return KubectlResult(
+            command=command,
+            success=True,
+            stdout=json.dumps(data),
+            stderr=stderr,
+            return_code=process.returncode,
+            data=data,
+            truncated=truncated,
+            total_items=total,
+        )
+
     def run(self, args: list[str], parse_json: bool = False) -> KubectlResult:
         assert_read_only(args)
 
@@ -150,6 +278,11 @@ class KubectlExecutor:
             env["KUBECONFIG"] = settings.kubeconfig_path
 
         logger.info("Running command: {command}", command=" ".join(command))
+
+        # A list read is the only unbounded one, so it is the only one that
+        # streams: everything else is one object, or text, and small.
+        if parse_json and self._is_list_read(args):
+            return self._run_streaming(command, env)
 
         try:
             completed = subprocess.run(

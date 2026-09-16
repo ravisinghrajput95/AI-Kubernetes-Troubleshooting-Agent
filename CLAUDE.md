@@ -775,14 +775,42 @@ unmeasured for so long.** Its fake overrides `KubectlExecutor.run`, so neither
 run it above 2,000 pods and it reports a stored result that keeps growing,
 because in that harness nothing caps anything. It measures the *derived*
 payload, which is what M8b wanted. `--parse-scan` measures the read instead,
-through the real executor: peak parse is **5.9 MB at 2,000 pods, 29.7 MB at
-10,000, 74.3 MB at 25,000** — ~2.95 KB per pod — while *retained* stays flat at
-1.09 MB. The cap truncates a document already built in full, so it bounds the
-payload and not the spike, and raising or lowering it changes nothing here. The
-lever on a very large cluster is scoping to a namespace. Deferred deliberately:
-at 10,000 pods four concurrent investigations transiently touch ~119 MB against
-a 159 MB resident platform, while the ceiling that actually binds is per-worker
-throughput at ~12/s with the worker 92% idle in socket waits.
+through the real executor, and now reports both arms.
+
+**F5's remaining half is closed: a list read is decoded as it arrives**
+(`app/kubernetes/json_stream.py`, `KubectlExecutor._run_streaming`). It was
+5.9 MB peak at 2,000 pods, 29.7 MB at 10,000 and 74.3 MB at 25,000 — ~2.95 KB
+per pod, 5.5x kubectl's own output — because `subprocess.run` buffered the
+whole output and `json.loads` built the whole document before the cap that
+exists to bound memory was applied to it. It is now **flat at 8.4 MB from 5,000
+pods to 25,000**. Lowering `MAX_LIST_ITEMS` now lowers the spike, which it
+never used to.
+
+Four things carry it. **The shape of a list response is what makes it possible
+without a dependency**: everything except `items` is a few hundred bytes, so a
+small scanner finds the top-level `items` array and `json.JSONDecoder.raw_decode`
+does every element — the stdlib owns escapes, unicode and nesting, and the only
+hand-written scanning covers a tiny prefix. **A value that parses has not
+necessarily finished**: `raw_decode` reads `3` out of `3.` and `1234` out of
+`12345678901234`, so an element split across reads came back as a *different
+number*; every array element ends at `,` or `]`, and that delimiter is what the
+reader waits for. It was found by a seeded fuzz against `json.loads` feeding one
+byte per read — the property that matters is that the reader and the stdlib
+agree on every document, because the moment they do not, evidence quietly
+differs from what the cluster said. **The timeout stays a kill**, as
+`subprocess.run(timeout=…)` does it, because a reader blocked on a process that
+stopped writing cannot time itself out; and **stderr is drained by its own
+thread**, because a child that fills that pipe while this end reads stdout
+deadlocks. `text` on a JSON read is now the capped document rather than
+kubectl's full output, which is what the collection cache re-parses, so the two
+can never disagree about what the read returned.
+
+**The trade is real and is stated rather than buried**: at or below the cap
+streaming costs about 40% more (8.3 MB against 5.9 MB at 2,000 pods), because
+decoding 2,000 elements individually costs 8.51 MB where one `json.loads` of
+the same 2,000 costs 6.13 MB — measured directly, and inherent to per-element
+decoding rather than to this reader. The number worth removing was the one with
+no ceiling.
 
 ### Routing an investigation to the right worker (M8a)
 

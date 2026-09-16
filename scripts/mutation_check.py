@@ -1328,6 +1328,30 @@ MUTATIONS = [
         tests="tests/test_investigation_service.py",
     ),
     Mutation(
+        name="streamed-value-accepted-before-it-ended",
+        why=(
+            "`raw_decode` reads 3 out of `3.` and 1234 out of `12345678901234`, so an "
+            "element split across reads came back as a different number. Every array "
+            "element ends at `,` or `]`; nothing else means it ended."
+        ),
+        path="app/kubernetes/json_stream.py",
+        old='            if self._buffer[index] not in ",]":\n',
+        new="            if False:  # mutation: a value that parses has finished\n",
+        tests="tests/test_json_stream.py",
+    ),
+    Mutation(
+        name="list-reads-buffered-whole-again",
+        why=(
+            "F5: the cap was applied to a document json.loads had already built, out "
+            "of a string subprocess.run had already buffered — 74.3 MB peak at 25,000 "
+            "pods for a retained 1.09 MB."
+        ),
+        path="app/kubernetes/kubectl_executor.py",
+        old="        if parse_json and self._is_list_read(args):\n",
+        new="        if False:  # mutation: buffer the whole list again\n",
+        tests="tests/test_streaming_reads.py",
+    ),
+    Mutation(
         name="refutation-across-unrelated-resources",
         why=(
             "Refuting signals matched by type anywhere in the namespace, so "
