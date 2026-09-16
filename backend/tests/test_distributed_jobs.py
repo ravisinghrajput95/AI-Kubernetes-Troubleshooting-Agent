@@ -102,6 +102,33 @@ class TestClaiming:
         assert second is None
         assert worker_b.get(job.id).status is JobStatus.RUNNING
 
+    async def test_a_hand_off_returns_the_job_to_pending_for_the_named_worker(
+        self, backend, worker_a, worker_b
+    ):
+        job = worker_a.create({})
+        assert worker_b.claim(job.id, "worker-b", LEASE) is not None
+
+        assert worker_b.hand_off(job.id, "worker-b", "worker-a") is True
+
+        assert worker_a.get(job.id).status is JobStatus.PENDING
+        # The claim that follows is the ordinary one, so exclusion is unchanged.
+        assert worker_a.claim(job.id, "worker-a", LEASE) is not None
+        assert worker_b.claim(job.id, "worker-b", LEASE) is None
+
+    async def test_only_the_lease_holder_can_hand_a_job_off(self, worker_a, worker_b):
+        job = worker_a.create({})
+        assert worker_a.claim(job.id, "worker-a", LEASE) is not None
+
+        assert worker_b.hand_off(job.id, "worker-b", "worker-c") is False
+        assert worker_a.get(job.id).status is JobStatus.RUNNING
+
+    async def test_a_cancelled_job_is_not_handed_off(self, worker_a, worker_b):
+        job = worker_a.create({})
+        assert worker_b.claim(job.id, "worker-b", LEASE) is not None
+        worker_a.request_cancel(job.id)
+
+        assert worker_b.hand_off(job.id, "worker-b", "worker-a") is False
+
     async def test_a_job_cancelled_before_it_starts_is_never_claimed(self, worker_a, worker_b):
         job = worker_a.create({})
         worker_a.request_cancel(job.id)

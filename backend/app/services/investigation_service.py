@@ -24,7 +24,7 @@ from app.observability import metrics
 from app.playbooks.kubernetes import DEFAULT_PLAYBOOKS
 from app.playbooks.orchestrator import DEFAULT_MAX_ROUNDS, InvestigationOrchestrator
 from app.playbooks.registry import PlaybookRegistry
-from app.providers.base import ClusterProvider, ClusterUnreachable
+from app.providers.base import AgentAway, AgentElsewhere, ClusterProvider, ClusterUnreachable
 from app.providers.cache import CachingProvider, underlying, with_cache
 from app.providers.local_kubectl import LocalKubectlProvider
 
@@ -160,12 +160,13 @@ def select_provider(context: str | None, principal: Principal | None) -> Cluster
 
     holder = _fleet_holder(context)
     if holder:
-        raise ClusterUnreachable(
+        raise AgentElsewhere(
             f"The agent for cluster {context!r} is attached to worker {holder}, "
             f"not this one. Reading the local kubeconfig instead could collect "
             f"evidence from a different cluster with the same name, so this "
             f"investigation is refused rather than answered wrongly. Retry — "
-            f"submissions are routed to the worker holding the agent."
+            f"submissions are routed to the worker holding the agent.",
+            holder=holder,
         )
 
     if _agent_was_revoked(context):
@@ -178,7 +179,7 @@ def select_provider(context: str | None, principal: Principal | None) -> Cluster
         )
 
     if _enrolled_agent_is_away(context):
-        raise ClusterUnreachable(
+        raise AgentAway(
             f"Cluster {context!r} is reached through its agent, and that agent is not "
             f"connected to any worker right now — it may be reconnecting, or the "
             f"worker holding its stream may have stopped responding. The platform "

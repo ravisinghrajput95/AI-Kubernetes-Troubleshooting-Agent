@@ -7,12 +7,13 @@ from loguru import logger
 from app.auth.models import Principal
 from app.core.config import settings
 from app.core.correlation import bind, correlation_scope
+from app.gateway.timing import AGENT_RECONNECT_GRACE_SECONDS, AGENT_RECONNECT_POLL_SECONDS
 from app.jobs.models import InvestigationJob, JobEvent, JobEventType
 from app.models.investigation import InvestigationRequest
 from app.notify import announce
 from app.observability import metrics
 from app.observability.tracing import span
-from app.providers.base import ClusterUnreachable
+from app.providers.base import AgentAway, AgentElsewhere, ClusterUnreachable
 from app.services.investigation_runner import (
     FAILURE_DETAIL,
     collection_failure,
@@ -20,6 +21,14 @@ from app.services.investigation_runner import (
 )
 
 WORKER_LOST = "Investigation worker stopped before the run finished."
+
+
+class _HandedOff(Exception):
+    """The job now belongs to another worker; this one records nothing."""
+
+    def __init__(self, to_worker: str) -> None:
+        super().__init__(to_worker)
+        self.to_worker = to_worker
 
 
 def agent_affinity(request: InvestigationRequest | None) -> str:
@@ -296,6 +305,64 @@ class InvestigationJobRunner:
                 else:
                     self.store.mark_cancelled(job_id)
 
+    async def _run_when_reachable(
+        self,
+        job_id: str,
+        request: InvestigationRequest | None,
+        reporter: JobProgressReporter,
+        principal: Principal | None,
+        lease_worker: str,
+    ) -> dict:
+        """Run the investigation, unless its agent is somewhere this worker is not.
+
+        **Two refusals rest on a Redis-only fact, and Redis losing its data made
+        both wrong.** Presence records are rewritten on each heartbeat, so a
+        `FLUSHDB` removed every one of them for up to fifteen seconds; a job
+        claimed in that window about an agent-only cluster was failed for good
+        with "that agent is not connected to any worker right now" — about an
+        agent connected and healthy on the other worker, measured on the second
+        of three flushes. The rule is that losing Redis makes the platform
+        slower, never wrong, and this was wrong.
+
+        - `AgentAway` is retried for `AGENT_RECONNECT_GRACE_SECONDS` — long
+          enough for the holder's next heartbeat to re-announce, and the same
+          silence after which the console calls an agent silent. An agent that
+          really is gone is refused after that, as before, only later.
+        - `AgentElsewhere` is handed to the worker holding the stream when this
+          job was claimed from the queue, instead of failing with "retry". The
+          hand-off is the claim's conditional UPDATE in reverse, so it cannot
+          double-run a job; a job with no lease to give up still refuses.
+
+        Selection happens before any collection, so a retry repeats no cluster
+        read and writes no evidence.
+        """
+        deadline = time.monotonic() + AGENT_RECONNECT_GRACE_SECONDS
+        waiting = False
+        while True:
+            try:
+                return await run_investigation(
+                    request,
+                    reporter=reporter,
+                    investigation_id=job_id,
+                    principal=principal,
+                )
+            except AgentElsewhere as exc:
+                if lease_worker and await asyncio.to_thread(
+                    self.store.hand_off, job_id, lease_worker, exc.holder
+                ):
+                    raise _HandedOff(exc.holder) from exc
+                raise
+            except AgentAway:
+                if time.monotonic() >= deadline:
+                    raise
+                if not waiting:
+                    waiting = True
+                    await reporter.report(
+                        f"Waiting up to {AGENT_RECONNECT_GRACE_SECONDS:.0f}s for the "
+                        f"cluster's agent to be seen by a worker",
+                    )
+                await asyncio.sleep(AGENT_RECONNECT_POLL_SECONDS)
+
     async def _execute(
         self,
         job_id: str,
@@ -338,12 +405,18 @@ class InvestigationJobRunner:
                 # that window would leave the loop with no terminal transition
                 # at all and wait for the reaper's lease expiry to settle it.
                 await asyncio.to_thread(self.store.mark_running, job_id)
-            result = await run_investigation(
-                request,
-                reporter=reporter,
-                investigation_id=job_id,
-                principal=principal,
+            result = await self._run_when_reachable(
+                job_id, request, reporter, principal, lease_worker
             )
+        except _HandedOff as handed:
+            logger.info(
+                "Investigation job {id} handed to worker {to}, which holds its agent",
+                id=job_id,
+                to=handed.to_worker,
+            )
+            # Not counted: it has not finished, and the worker that runs it
+            # records the outcome. Counting here would count it twice.
+            return
         except asyncio.CancelledError:
             # Recorded synchronously: this task is being torn down, so there is
             # no opportunity to await anything after this point.

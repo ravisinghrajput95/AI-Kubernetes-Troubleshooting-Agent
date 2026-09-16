@@ -125,6 +125,25 @@ class ClusterUnreachable(RuntimeError):
     """
 
 
+class AgentElsewhere(ClusterUnreachable):
+    """The agent's stream is held by another worker, which is named."""
+
+    def __init__(self, message: str, holder: str) -> None:
+        super().__init__(message)
+        self.holder = holder
+
+
+class AgentAway(ClusterUnreachable):
+    """An enrolled agent is connected nowhere this worker can see.
+
+    **Absence of a presence record, which is Redis-only.** Redis losing its
+    data deletes every record until each holder's next heartbeat re-announces
+    it, and in that window this is raised about agents that are connected and
+    healthy. So a job does not fail on it at once — see
+    `InvestigationJobRunner._run_when_reachable`.
+    """
+
+
 @runtime_checkable
 class ClusterProvider(Protocol):
     """The engine's only route to a cluster."""

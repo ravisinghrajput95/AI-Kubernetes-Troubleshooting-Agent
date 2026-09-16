@@ -1724,6 +1724,31 @@ MUTATIONS = [
         tests="tests/test_live_evals.py::TestDisagreementIsNamed",
     ),
     Mutation(
+        name="redis-loss-fails-a-job-about-a-connected-agent",
+        why=(
+            "FLUSHDB deleted every presence record until the next heartbeat, and a "
+            "job claimed in that gap was failed for good with 'that agent is not "
+            "connected to any worker right now' about an agent connected and healthy "
+            "on the other worker. Losing Redis is meant to be slower, never wrong."
+        ),
+        path="app/jobs/runner.py",
+        old="                if time.monotonic() >= deadline:\n",
+        new="                if True:  # mutation: refuse at once\n",
+        tests="tests/test_agent_reconnect_grace.py",
+    ),
+    Mutation(
+        name="agent-elsewhere-refused-instead-of-handed-off",
+        why=(
+            "A job claimed by a worker not holding the agent's stream was failed "
+            "with 'retry' instead of being given to the worker that could run it — "
+            "which is also where a Redis flush left it once presence came back."
+        ),
+        path="app/jobs/runner.py",
+        old="                if lease_worker and await asyncio.to_thread(\n",
+        new="                if False and await asyncio.to_thread(\n",
+        tests="tests/test_agent_reconnect_grace.py",
+    ),
+    Mutation(
         name="stream-request-carries-no-credential",
         why=(
             "F29: the progress stream was an EventSource, which cannot send an "

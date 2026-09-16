@@ -36,3 +36,12 @@ AGENT_STALE_SECONDS = 30.0
 # worth of time, short enough that a dead worker's agents lapse before routing
 # recovery re-offers their jobs.
 PRESENCE_TTL_SECONDS = 45
+
+# How long a claimed job keeps asking before it believes an enrolled agent is
+# connected nowhere. Presence is Redis-only, so Redis losing its data deletes
+# every record until the holder's next heartbeat, and a refusal inside that gap
+# was a false claim that also failed the investigation for good. Equal to the
+# stale threshold: the same length of silence after which the console calls
+# an agent silent, and longer than one heartbeat, which is what re-announces.
+AGENT_RECONNECT_GRACE_SECONDS = AGENT_STALE_SECONDS
+AGENT_RECONNECT_POLL_SECONDS = 2.0

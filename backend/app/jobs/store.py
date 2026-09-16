@@ -148,6 +148,10 @@ class InMemoryJobStore:
     def on_cancel(self, listener: CancelListener) -> None:
         self._cancel_listeners.append(listener)
 
+    def hand_off(self, job_id: str, worker: str, to_worker: str) -> bool:
+        # One process is the whole fleet: there is nobody to hand a job to.
+        return False
+
     def enqueue(self, job_id: str, worker_id: str = "") -> None:
         """No queue here: the submitting process runs the job itself.
 

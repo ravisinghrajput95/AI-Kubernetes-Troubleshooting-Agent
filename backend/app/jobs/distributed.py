@@ -381,6 +381,21 @@ class PostgresRedisJobStore:
             logger.warning("Reaped investigation {id}: lease expired", id=job_id)
         return reaped
 
+    def hand_off(self, job_id: str, worker: str, to_worker: str) -> bool:
+        with self._db.cursor() as cursor:
+            cursor.execute(
+                "UPDATE investigations SET status = %s, started_at = NULL, "
+                "lease_worker = NULL, lease_expires_at = NULL "
+                "WHERE id = %s AND status = %s AND lease_worker = %s AND NOT cancel_requested "
+                "RETURNING id",
+                (str(JobStatus.PENDING), job_id, str(JobStatus.RUNNING), worker),
+            )
+            moved = cursor.fetchone() is not None
+        if moved:
+            self._bus.enqueue(job_id, to_worker)
+            logger.info("Handed investigation {id} to worker {to}", id=job_id, to=to_worker)
+        return moved
+
     def requeue_unclaimed(self, older_than_seconds: int) -> list[str]:
         """Re-offer pending jobs whose queue message never reached a worker.
 

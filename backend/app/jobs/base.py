@@ -142,6 +142,17 @@ class JobStore(Protocol):
         """
         ...
 
+    def hand_off(self, job_id: str, worker: str, to_worker: str) -> bool:
+        """Give a job this worker claimed to the worker that can run it.
+
+        Returns the job to `pending` and queues it for `to_worker`, but only
+        while `worker` still holds the lease and nobody asked to cancel — the
+        same conditional-UPDATE exclusion as a claim, so a hand-off can never
+        produce a double run. False when it did not happen, including always on
+        the in-process store, where there is no other worker.
+        """
+        ...
+
     def check_health(self) -> dict[str, str]:
         """Name each backing dependency, and how badly its loss hurts.
 

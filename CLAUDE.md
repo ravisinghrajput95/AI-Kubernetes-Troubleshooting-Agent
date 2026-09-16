@@ -914,6 +914,8 @@ synthetic ones before.
 
 **An enrolled agent that is not connected anywhere refuses too, when there is nothing to fall back to.** Found by SIGSTOPping the worker holding an agent's stream: presence lapsed at 45s, the queued investigation was re-offered to the other worker at ~80s, and `select_provider` handed an agent-only cluster to `LocalKubectlProvider` — which failed with "Verify kubeconfig, cluster access, and kubectl permissions" about a path never involved. `_enrolled_agent_is_away` refuses only when the cluster has a valid certificate **and** the platform's kubeconfig has no context of that name; where one exists, the flap-tolerant fallback stands.
 
+**Both refusals rest on presence, which is Redis-only, so a job does not fail on them at once.** `FLUSHDB` on the platform's Redis deleted every presence record until each holder's next heartbeat, and a job claimed in that gap by the worker without the stream was failed for good with "that agent is not connected to any worker right now" — about an agent connected and healthy on the other worker; one batch in three against the live harness. That is Redis loss making the platform *wrong*, which the governing rule forbids. `select_provider` now raises `AgentAway` or `AgentElsewhere` (both still `ClusterUnreachable`, so `/investigate` answers 409 as before), and `InvestigationJobRunner._run_when_reachable` retries `AgentAway` for `AGENT_RECONNECT_GRACE_SECONDS` (= stale, 30 — longer than a heartbeat) and hands an `AgentElsewhere` job to the holder with `JobStore.hand_off`: the claim's conditional UPDATE in reverse (`WHERE lease_worker = me AND status = running AND NOT cancel_requested`), so it cannot double-run. After: eight back-to-back flushes, 48 investigations, zero failures; one job waited 6 s, was handed to worker-a and succeeded in 7 s. Control: a stopped agent is still refused with the same message, 31 s later instead of at once. Selection precedes collection, so the retry repeats no cluster read. A hand-off is not counted in `investigations_total`; the worker that runs it counts the outcome.
+
 **A presence record naming *this* worker is never a routing target.**
 `holder()` is consulted only after the local registry has said no, so a record
 still claiming us means the agent disconnected here within the TTL. Returning it
@@ -2238,7 +2240,7 @@ It is also the discipline that decays first: a passing suite feels like
 evidence, and a mutation not run leaves no trace.
 
 ```bash
-python scripts/mutation_check.py                   # 125 mutations
+python scripts/mutation_check.py                   # 127 mutations
 python scripts/mutation_check.py --suite frontend  # the console's, under vitest
 python scripts/mutation_check.py --suite terraform # `terraform test`, its own CI job
 python scripts/mutation_check.py --list
