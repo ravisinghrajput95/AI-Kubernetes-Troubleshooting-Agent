@@ -277,6 +277,23 @@ export function clusterKeys(history: InvestigationHistoryItem[]): (name: string)
   return (name: string) => find(name);
 }
 
+/**
+ * "3 clusters", or "3 names for 1 cluster" when some of them read the same
+ * nodes.
+ *
+ * The cards already say "Reads the same nodes as …", and the header above them
+ * still counted names: one kind cluster reached through its kubeconfig and two
+ * agents read "3 clusters" over three cards each saying it was the other two.
+ * A name with no recorded nodes counts as its own cluster, the same direction
+ * `clusterKeys` takes.
+ */
+export function describeClusterCount(names: string[], key: (name: string) => string): string {
+  const clusters = new Set(names.map(key)).size;
+  const noun = (count: number) => (count === 1 ? "cluster" : "clusters");
+  if (clusters === names.length) return `${names.length} ${noun(names.length)}`;
+  return `${names.length} names for ${clusters} ${noun(clusters)}`;
+}
+
 /** The other names that reach the same nodes as `name`. */
 export function sameClusterAs(
   name: string,

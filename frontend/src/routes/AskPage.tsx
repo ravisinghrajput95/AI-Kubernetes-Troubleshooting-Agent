@@ -107,17 +107,30 @@ export function AskPage() {
   // they are said separately. And only when the fleet actually loaded: if it
   // failed, every cluster would look departed, which is the same false claim
   // pointing the other way.
+  //
+  // **And it counts clusters, not names.** One kind cluster reached through its
+  // kubeconfig and two agents read "across 3 of 3 clusters" beside fleet cards
+  // saying each name reads the same nodes as the other two. A name on record
+  // that shares nodes with one still in the fleet has not departed — the
+  // cluster is here under another name.
+  const key = useMemo(() => clusterKeys(history.data ?? []), [history.data]);
   const fleetNames = useMemo(() => new Set(fleet.map((cluster) => cluster.name)), [fleet]);
-  const coveredInFleet = [...covered].filter((name) => fleetNames.has(name)).length;
+  const fleetClusters = new Set(fleet.map((cluster) => key(cluster.name)));
   const departed = contexts.isSuccess
-    ? [...covered].filter((name) => !fleetNames.has(name))
+    ? [
+        ...new Set(
+          [...covered]
+            .filter((name) => !fleetNames.has(name))
+            .map(key)
+            .filter((group) => !fleetClusters.has(group)),
+        ),
+      ]
     : [];
-  const uncovered = fleet.filter((cluster) => !covered.has(cluster.name));
+  const coveredClusters = new Set([...covered].map(key));
+  const coveredInFleet = [...fleetClusters].filter((group) => coveredClusters.has(group)).length;
+  const uncovered = fleet.filter((cluster) => !coveredClusters.has(key(cluster.name)));
 
-  const findings = useMemo(
-    () => recurringFindings(corpus, clusterKeys(history.data ?? [])),
-    [corpus, history.data],
-  );
+  const findings = useMemo(() => recurringFindings(corpus, key), [corpus, key]);
   const matches = useMemo(() => search(findings, query), [findings, query]);
   const shared = useMemo(() => sharedAcrossClusters(matches), [matches]);
   // Disjoint from `shared`, so one finding never appears under two headings.
@@ -133,8 +146,9 @@ export function AskPage() {
       <p className="mt-1 max-w-measure text-sm leading-6 text-ink-2">
         Answers come from {corpus.length} stored{" "}
         {corpus.length === 1 ? "investigation" : "investigations"} across{" "}
-        {coveredInFleet} of {fleet.length}{" "}
-        {fleet.length === 1 ? "cluster" : "clusters"}
+        {coveredInFleet} of {fleetClusters.size}{" "}
+        {fleetClusters.size === 1 ? "cluster" : "clusters"}
+        {fleet.length > fleetClusters.size ? `, reached under ${fleet.length} names` : ""}
         {departed.length > 0
           ? `, and ${departed.length} ${departed.length === 1 ? "cluster" : "clusters"} no longer in the fleet`
           : ""}

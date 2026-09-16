@@ -10,6 +10,7 @@ import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import {
   clusterKeys,
   correlateSignals,
+  describeClusterCount,
   fleetState,
   rollup,
   type ClusterState,
@@ -129,7 +130,11 @@ export function FleetPage() {
         <div>
           <h1 className="text-display">Fleet</h1>
           <p className="mt-1 text-sm text-ink-2">
-            {rows.length} {rows.length === 1 ? "cluster" : "clusters"} · state as of the
+            {describeClusterCount(
+              rows.map((row) => row.name),
+              clusterKeys(history.data ?? []),
+            )}{" "}
+            · state as of the
             last investigation of each, not a live reading.
           </p>
         </div>

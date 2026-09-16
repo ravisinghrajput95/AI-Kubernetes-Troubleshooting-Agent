@@ -205,6 +205,45 @@ describe("coverage counts the fleet it claims to count", () => {
     expect(text).toMatch(/1 of 1 cluster/);
   });
 
+  it("counts the clusters its names reach, not the names", async () => {
+    // Swept live: "across 3 of 3 clusters" for one kind cluster reached through
+    // its kubeconfig and two agents.
+    vi.spyOn(api, "getInvestigationHistory").mockResolvedValue([
+      { ...item("run-a", "kind-dev", "2026-07-01T00:00:00Z"), node_uids: ["uid-1"] },
+      { ...item("run-b", "sweep-agent", "2026-07-02T00:00:00Z"), node_uids: ["uid-1"] },
+      { ...item("run-c", "api-cut", "2026-07-03T00:00:00Z"), node_uids: ["uid-1"] },
+    ]);
+    fleetOf("kind-dev", "sweep-agent", "api-cut");
+    renderAsk();
+    await screen.findByText(/3 stored investigations/i);
+    const text = await vi.waitFor(async () => {
+      const value = await headline();
+      if (!/names/.test(value)) throw new Error("fleet not loaded yet");
+      return value;
+    });
+
+    expect(text).toMatch(/across 1 of 1 cluster, reached under 3 names\./);
+  });
+
+  it("does not call a cluster departed when it is still here under another name", async () => {
+    vi.spyOn(api, "getInvestigationHistory").mockResolvedValue([
+      { ...item("run-a", "old-agent-name", "2026-07-01T00:00:00Z"), node_uids: ["uid-1"] },
+      { ...item("run-b", "kind-dev", "2026-07-02T00:00:00Z"), node_uids: ["uid-1"] },
+      { ...item("run-c", "staging-1", "2026-07-03T00:00:00Z"), node_uids: ["uid-2"] },
+    ]);
+    fleetOf("kind-dev");
+    renderAsk();
+    await screen.findByText(/3 stored investigations/i);
+    const text = await vi.waitFor(async () => {
+      const value = await headline();
+      if (!/no longer in the fleet/.test(value)) throw new Error("fleet not loaded yet");
+      return value;
+    });
+
+    // staging-1 has gone; old-agent-name read kind-dev's nodes and has not.
+    expect(text).toMatch(/1 of 1 cluster, and 1 cluster no longer in the fleet/);
+  });
+
   it("says what is on record but no longer present, rather than dropping it", async () => {
     fleetOf("prod-eu-west");
     renderAsk();

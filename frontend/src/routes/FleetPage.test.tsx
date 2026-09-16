@@ -109,6 +109,13 @@ describe("fleet", () => {
     expect(await screen.findByText(/not a live reading/i)).toBeInTheDocument();
   });
 
+  it("counts clusters plainly when no two names share nodes", async () => {
+    renderFleet();
+    await screen.findByText("prod-eu-west");
+    const header = screen.getByText(/not a live reading/i).textContent ?? "";
+    expect(header).toMatch(/^3 clusters ·/);
+  });
+
   it("opens the cluster's workspace, not straight into one run", async () => {
     // The workspace carries every run for that cluster plus what the latest
     // one established; jumping directly to a single investigation skips it.
@@ -182,6 +189,21 @@ describe("fleet-wide correlation", () => {
 
     expect(await screen.findByText(/reads the same nodes as staging-1/i)).toBeInTheDocument();
     expect(screen.queryByText(/cross-cluster signals/i)).not.toBeInTheDocument();
+  });
+
+  it("does not count one cluster reached under two names as two in the header", async () => {
+    // Swept live: "3 clusters" above three cards, each saying it read the same
+    // nodes as the other two.
+    vi.spyOn(api, "getInvestigationHistory").mockResolvedValue([
+      entry({ id: "1", context: "prod-eu-west", node_uids: ["uid-1"] }),
+      entry({ id: "2", context: "staging-1", node_uids: ["uid-1"] }),
+    ]);
+
+    renderFleet();
+
+    expect(await screen.findByText(/reads the same nodes as staging-1/i)).toBeInTheDocument();
+    const header = screen.getByText(/not a live reading/i).textContent ?? "";
+    expect(header).toMatch(/^3 names for 2 clusters/);
   });
 
   it("shows nothing when no failure is shared", async () => {

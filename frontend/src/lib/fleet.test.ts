@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   clusterKeys,
   correlateSignals,
+  describeClusterCount,
   describeScope,
   fleetState,
   relativeAge,
@@ -363,6 +364,18 @@ describe("names for the same cluster", () => {
     expect(withProd).toHaveLength(1);
     expect(withProd[0].distinct).toBe(2);
     expect(withProd[0].clusters).toHaveLength(4);
+  });
+
+  it("counts names that share nodes as one cluster", () => {
+    const key = clusterKeys(history);
+    expect(describeClusterCount(["kind-dev", "sweep-agent", "api-cut"], key)).toBe(
+      "3 names for 1 cluster",
+    );
+    expect(describeClusterCount(["kind-dev", "sweep-agent", "prod-eu", "no-nodes-recorded"], key)).toBe(
+      "4 names for 3 clusters",
+    );
+    expect(describeClusterCount(["prod-eu"], key)).toBe("1 cluster");
+    expect(describeClusterCount(["prod-eu", "no-nodes-recorded"], key)).toBe("2 clusters");
   });
 
   it("tells each card which other names reach its nodes", () => {
