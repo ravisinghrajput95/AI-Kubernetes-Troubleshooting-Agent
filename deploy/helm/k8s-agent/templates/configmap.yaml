@@ -29,8 +29,15 @@ data:
   RATE_LIMIT_TENANT_PER_MINUTE: {{ .Values.config.rateLimitTenantPerMinute | quote }}
   REPORT_RETENTION_DAYS: {{ .Values.config.reportRetentionDays | quote }}
   LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  {{- /*
+  JSON, not comma-joined. `cors_origins` is a list setting, and
+  pydantic-settings parses a list from the environment as JSON: the comma-joined
+  form this rendered failed startup with a SettingsError for any value at all,
+  so `config.corsOrigins` could only ever be left empty. Found writing the
+  Terraform that sets it.
+  */}}
   {{- with .Values.config.corsOrigins }}
-  CORS_ORIGINS: {{ join "," . | quote }}
+  CORS_ORIGINS: {{ toJson . | quote }}
   {{- end }}
   {{- with .Values.config.notifyDestinations }}
   NOTIFY_DESTINATIONS: {{ . | quote }}
