@@ -172,6 +172,19 @@ async function go(path) {
   where = path;
   await send("Page.navigate", { url: BASE + path });
   await wait(SETTLE_MS);
+  // **The page must be the page this route asked for.** A navigation that had
+  // not taken effect when the snapshot was read filed the Settings page's text
+  // under `/clusters/kind-k8s-agent-dev`, with that route's control inventory
+  // and clicks — a whole route reported as swept and never loaded. Reading a
+  // dump cannot catch it; the URL is written at the top of every dump and was
+  // right there. One retry, then it is a finding rather than a quiet lie.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const here = String((await evaluate("location.pathname + location.search")) || "");
+    if (here.startsWith(path.split("?")[0])) return;
+    record("misnavigated", { wanted: path, got: here, attempt });
+    await send("Page.navigate", { url: BASE + path });
+    await wait(SETTLE_MS);
+  }
 }
 
 const CONTROLS = `[...document.querySelectorAll("a[href], button, summary, [role=button], [role=tab]")]
@@ -280,7 +293,7 @@ try {
   ws.close();
 }
 
-const automated = ["http", "netfail", "console", "exception", "dialog", "overflow", "vanished", "blank-after-click"]
+const automated = ["http", "netfail", "console", "exception", "dialog", "overflow", "vanished", "blank-after-click", "misnavigated"]
   .reduce((sum, kind) => sum + (counts[kind] || 0), 0);
 console.log(`\nsweep: ${JSON.stringify(counts)}`);
 console.log(`text for reading: ${join(OUT, "text")} (${shot} states)`);

@@ -1950,6 +1950,8 @@ Opt-in, like the soak: every route, every link, button, tab and summary clicked 
 - **A state nothing tracks.** Report Status read Open or Resolved. Environment was a substring guess (`kind-prod` → Development). "Secrets were scrubbed from this record" was on every record that went through the redactor. Lessons Learned offered "Prometheus is not configured" as what would have shortened diagnosing a selector mismatch.
 - **Absence that was not observation.** Trends counted runs that collected nothing, or were scoped elsewhere, as the finding being absent, so every finding was "happening more often". One kind cluster reached through a kubeconfig and two agents was "the same failure on 3 clusters"; runs now record the node UIDs they read (`cluster_identity`) and the console groups names that share one.
 
+**A route's dump must be the route it asked for.** A `Page.navigate` that had not taken effect when the snapshot was read filed the Settings page's text under `/clusters/kind-k8s-agent-dev` — with that route's control inventory and its clicks — so a route reported as swept was never loaded. The URL is written at the top of every dump and still went unread; `go()` now checks it, retries once, and records `misnavigated` as a finding.
+
 **Clear the harness's runs between verification sweeps**, or the Ask and Fleet pages keep rendering diagnoses stored by the code you just fixed: truncate `investigations`, `investigation_events` and `investigation_reports` in the sweep database. Leave the agent tables alone, or you have to re-enrol.
 
 ### Operability (`app/core/correlation.py`, `app/core/readiness.py`, M9.2)
