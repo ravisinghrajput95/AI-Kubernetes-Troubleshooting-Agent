@@ -37,6 +37,7 @@ class FakeStream {
   static instances: FakeStream[] = [];
   private controller: ReadableStreamDefaultController<Uint8Array> | null = null;
   private encoder = new TextEncoder();
+  private seq = 0;
   closed = false;
 
   constructor(
@@ -70,10 +71,21 @@ class FakeStream {
     return { ok: this.status === 200, status: this.status, body } as unknown as Response;
   }
 
-  /** Write one frame exactly as the server frames it. */
-  emit(payload: Record<string, unknown>, seq = 1) {
+  /**
+   * Write one frame exactly as the server frames it.
+   *
+   * Sequences are **assigned**, and carried in the data as well as the frame
+   * id, because that is what `JobEvent.to_dict` writes. The default used to be
+   * a literal `1` for every frame, so this fake modelled a wire on which every
+   * event shares one sequence — which is no wire at all, and it is the reason
+   * nothing here could see the console replaying a backlog it already had.
+   */
+  emit(payload: Record<string, unknown>, seq?: number) {
+    const assigned = seq ?? (payload.seq as number | undefined) ?? this.seq + 1;
+    this.seq = Math.max(this.seq, assigned);
     const name = String(payload.type ?? "message");
-    const frame = `id: ${seq}\nevent: ${name}\ndata: ${JSON.stringify(payload)}\n\n`;
+    const body = JSON.stringify({ ...payload, seq: assigned });
+    const frame = `id: ${assigned}\nevent: ${name}\ndata: ${body}\n\n`;
     this.controller?.enqueue(this.encoder.encode(frame));
   }
 
@@ -83,9 +95,12 @@ class FakeStream {
   }
 
   /** Deliver a frame split across two chunks, as a network does. */
-  emitSplit(payload: Record<string, unknown>, seq = 1) {
+  emitSplit(payload: Record<string, unknown>, seq?: number) {
+    const assigned = seq ?? this.seq + 1;
+    this.seq = Math.max(this.seq, assigned);
     const name = String(payload.type ?? "message");
-    const frame = `id: ${seq}\nevent: ${name}\ndata: ${JSON.stringify(payload)}\n\n`;
+    const body = JSON.stringify({ ...payload, seq: assigned });
+    const frame = `id: ${assigned}\nevent: ${name}\ndata: ${body}\n\n`;
     const cut = Math.floor(frame.length / 2);
     this.controller?.enqueue(this.encoder.encode(frame.slice(0, cut)));
     this.controller?.enqueue(this.encoder.encode(frame.slice(cut)));
@@ -478,6 +493,71 @@ describe("attach", () => {
     });
 
     expect(result.current.timeline.map((event) => event.message)).toContain("Retrieved Pods");
+  });
+
+  it("does not list an event twice when the stream replays what attach fetched", async () => {
+    // The shape every investigation started from this console takes: the form
+    // posts, navigates to the run's address, and this page attaches to a job
+    // that has already emitted. `attach` seeds those events, then `subscribe()`
+    // replays them from the beginning — on purpose, so nothing published while
+    // the reader was connecting can be lost. Before the sequence filter both
+    // copies were listed, and the live timeline opened with "Investigation
+    // queued / Investigation started" twice over.
+    vi.spyOn(api, "getInvestigationJob").mockResolvedValueOnce({
+      id: "job-1",
+      status: "running",
+      timeline: [
+        { type: "queued", message: "Investigation queued", seq: 1 },
+        { type: "started", message: "Investigation started", seq: 2 },
+      ],
+    } as unknown as Awaited<ReturnType<typeof api.getInvestigationJob>>);
+
+    const { result } = renderHook(() => useInvestigationJob());
+    await act(async () => {
+      await result.current.attach("job-1");
+    });
+
+    await act(async () => {
+      const stream = FakeStream.latest();
+      stream.emit({ type: "queued", message: "Investigation queued" }, 1);
+      stream.emit({ type: "started", message: "Investigation started" }, 2);
+      stream.emit({ type: "progress", message: "Retrieved Pods" }, 3);
+      await drain();
+    });
+
+    expect(result.current.timeline.map((event) => event.message)).toEqual([
+      "Investigation queued",
+      "Investigation started",
+      "Retrieved Pods",
+    ]);
+  });
+
+  it("settles once when the backlog replays a completion already adopted", async () => {
+    // The same filter, on the frame that has a consequence beyond a duplicate
+    // row: skipping the event whole is what keeps a replayed `completed` from
+    // settling a second time.
+    vi.spyOn(api, "getInvestigationJob").mockResolvedValueOnce({
+      id: "job-1",
+      status: "running",
+      timeline: [{ type: "progress", message: "Retrieved Pods", seq: 7 }],
+    } as unknown as Awaited<ReturnType<typeof api.getInvestigationJob>>);
+
+    const { result } = renderHook(() => useInvestigationJob());
+    await act(async () => {
+      await result.current.attach("job-1");
+    });
+    const readsAfterAttach = (api.getInvestigationJob as unknown as ReturnType<typeof vi.fn>).mock
+      .calls.length;
+
+    await act(async () => {
+      FakeStream.latest().emit({ type: "progress", message: "Retrieved Pods" }, 7);
+      await drain();
+    });
+
+    expect(result.current.timeline).toHaveLength(1);
+    expect(
+      (api.getInvestigationJob as unknown as ReturnType<typeof vi.fn>).mock.calls.length,
+    ).toBe(readsAfterAttach);
   });
 
   it("reports an id that does not resolve", async () => {

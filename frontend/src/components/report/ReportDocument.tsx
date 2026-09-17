@@ -163,7 +163,12 @@ function EvidenceSection({
           {signals.map((signal) => (
             <li key={signal.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
               <SeverityDot tone={severityTone(signal.severity)} />
-              <span className="text-sm text-ink">{signal.summary}</span>
+              {/* `min-w-0 break-words`: a summary quoting an image reference or
+                  a URL is one long unbreakable token, so as a flex item its
+                  min-content width exceeds the row and it wraps *below* its own
+                  bullet — the image-pull evidence line rendered that way.
+                  Same family as the grid items that needed `min-w-0`. */}
+              <span className="min-w-0 flex-1 break-words text-sm text-ink">{signal.summary}</span>
               <Citations
                 ids={citationsForSignal(diagnosis, signal.id)}
                 index={index}

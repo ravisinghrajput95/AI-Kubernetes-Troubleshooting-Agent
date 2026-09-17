@@ -1881,6 +1881,46 @@ MUTATIONS = [
         tests="src/services/download.test.ts",
     ),
     Mutation(
+        name="readme-shows-an-image-that-is-not-committed",
+        why=(
+            "README screenshots are served from the repository by relative path, "
+            "so one renamed or left uncommitted is a broken image box on the "
+            "project's front page and nothing in the suite notices."
+        ),
+        path="../README.md",
+        old="![The fleet view](docs/images/fleet.png)",
+        new="![The fleet view](docs/images/fleet-view.png)",
+        tests="tests/test_documentation.py",
+    ),
+    Mutation(
+        name="replayed-backlog-listed-twice",
+        why=(
+            "`attach` seeds the timeline from GET /investigations/{id} and then "
+            "opens the stream, which replays the same events from the beginning; "
+            "with no sequence filter both copies were listed, so every run "
+            "started from the console opened with 'Investigation queued / "
+            "Investigation started' twice over."
+        ),
+        suite="frontend",
+        path="src/hooks/useInvestigationJob.ts",
+        old="            if (payload.seq && payload.seq <= deliveredRef.current) {\n              continue;\n            }\n",
+        new="",
+        tests="src/hooks/useInvestigationJob.test.ts",
+    ),
+    Mutation(
+        name="attach-does-not-set-the-resume-cursor",
+        why=(
+            "The same duplication from the other side: the filter is only as good "
+            "as the cursor, and a timeline adopted without recording its highest "
+            "sequence leaves the cursor at zero, so the whole backlog replays."
+        ),
+        suite="frontend",
+        path="src/hooks/useInvestigationJob.ts",
+        old="            setTimeline(state.timeline);\n            deliveredRef.current = highestSeq(state.timeline);\n          }\n          if (isTerminal(state.status)) {",
+        new="            setTimeline(state.timeline);\n          }\n          if (isTerminal(state.status)) {",
+        tests="src/hooks/useInvestigationJob.test.ts",
+    ),
+    Mutation(
         name="named-sse-events-read-as-message",
         why=(
             "The server names every SSE frame and the hook listened only for the "

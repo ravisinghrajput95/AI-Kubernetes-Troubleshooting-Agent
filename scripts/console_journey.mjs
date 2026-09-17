@@ -82,14 +82,25 @@ const RUN_TIMEOUT_MS = Number(process.env.JOURNEY_TIMEOUT_MS || 180000);
 // — under the threshold, so the check sat there looking right and never fired.
 // Measured: two clean runs at 0 and 0, the mutant at 2.
 const MAX_TOLERATED_POLLS = 1;
-// Below this the timeline is a shell rather than a run: queued and started
-// alone would pass "some events arrived" while every progress frame was lost.
+// Below this the timeline is a shell rather than a run: a page that renders
+// nothing satisfies every other assertion here.
 //
-// Measured on the built bundle against a 49-pod cluster — 8 to 10 across four
-// runs, against **4** with the stream refused and the polling fallback
-// carrying it. Six is the midpoint of that gap. The dev server gives 15-17 because React's StrictMode
-// double-renders, so calibrate on the bundle: it is what ships and what CI
-// serves.
+// **A floor, and deliberately not a discriminator between the transports.**
+// It was a constant 6 over a keyword subset of the rows, two of which were the
+// duplicates the console listed before the sequence filter — so removing those
+// took a clean streamed run to 4 and the fix would have failed this check.
+// Counting every timestamped row instead, and taking a share of the events the
+// platform says it published, the arms do not separate: measured against a
+// cluster emitting 74 events, streamed runs painted **58, 48, 37 and then 25
+// four times running**, while the polling fallback painted **25** — the same
+// number. What varies is how long the investigation took, not how it was
+// carried: on a warm collection cache the last burst arrives with `completed`
+// and the view flips to the report before those rows ever paint.
+//
+// So the row count says events reached the page, and nothing more. **The
+// transport is judged by the requests the browser made** — zero to `/status`
+// against a live `/events` — which is what F29 actually broke and what no
+// amount of counting rows could see.
 const MIN_PROGRESS_EVENTS = 6;
 // A report smaller than this is an error body, not a document.
 const MIN_REPORT_BYTES = 2000;
@@ -194,11 +205,43 @@ async function until(expression, timeoutMs, everyMs = 500) {
   }
 }
 
-/** How many progress rows the live timeline is showing, right now. */
+/**
+ * How many progress rows the live timeline is showing, right now.
+ *
+ * Every row the backend emits is stamped `HH:MM:SS`, and that is what is
+ * counted. The previous rule matched a *keyword list* — "Collecting evidence",
+ * "Analyzing", and so on — which missed every named collector step
+ * ("Mapped Cluster Nodes", "Retrieved Pods"), so it counted about a fifth of
+ * what arrived and two of the rows it did count were the duplicates the
+ * console was listing before the sequence filter. Removing those took a clean
+ * streamed run from 6 to 4 and put it under a threshold calibrated with them
+ * present.
+ */
 const PROGRESS_ROWS = `[...document.querySelectorAll("li, tr")]
   .map(el => el.innerText || "")
-  .filter(t => /Collecting evidence|Collected |Analyzing|Root Cause Generated|Report generated|Investigation (started|queued|complete)/i.test(t))
+  .filter(t => /^\\s*\\d{2}:\\d{2}:\\d{2}\\b/.test(t))
   .length`;
+
+/**
+ * How many times the live timeline lists each once-per-run lifecycle row.
+ *
+ * An investigation is queued once and started once, so two of either is the
+ * console listing one event twice. That is not hypothetical: the form
+ * navigates to the run's address, `attach` seeds the timeline from
+ * `GET /investigations/{id}`, and the stream then replays the same backlog
+ * from the beginning — deliberately, so nothing published while the reader
+ * was connecting is lost. Without a sequence filter both copies were listed,
+ * and every investigation started from this console opened with "Investigation
+ * queued / Investigation started" twice over. Nothing could see it: the row
+ * count only went *up*, which is the direction every other check here rewards.
+ */
+const LIFECYCLE_ROWS = `JSON.stringify(
+  ["Investigation queued", "Investigation started"].map((label) => [
+    label,
+    [...document.querySelectorAll("li, tr")]
+      .filter((el) => (el.innerText || "").includes(label)).length,
+  ]),
+)`;
 
 const seen = (pattern) => responses.filter((r) => pattern.test(r.url));
 
@@ -358,9 +401,18 @@ if (investigationId) {
   // the transport did. The peak is what says progress was delivered *as it
   // happened*, which is the whole claim the stream exists to support.
   let peakRows = 0;
+  let repeated = [];
   const deadline = Date.now() + RUN_TIMEOUT_MS;
   for (;;) {
     peakRows = Math.max(peakRows, Number(await evaluate(PROGRESS_ROWS)) || 0);
+    // Sampled in the same loop and for the same reason: the live timeline is
+    // replaced by the report the moment the run finishes, so a duplicate row
+    // is only visible while it is on screen.
+    for (const [label, count] of JSON.parse((await evaluate(LIFECYCLE_ROWS)) || "[]")) {
+      if (count > 1 && !repeated.some((entry) => entry[0] === label)) {
+        repeated.push([label, count]);
+      }
+    }
     const done = await evaluate(
       `/Root cause|Investigation complete|No cluster read succeeded/i.test(document.body.innerText)`,
     );
@@ -382,14 +434,47 @@ if (investigationId) {
   );
   timeline.progress = peakRows;
 
-  if (timeline.progress < MIN_PROGRESS_EVENTS) {
+  // What the platform says it published, which is what the share is taken of.
+  let emitted = 0;
+  try {
+    const stored = await (
+      await fetch(`${API}/investigations/${investigationId}/status`, {
+        headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
+      })
+    ).json();
+    emitted = (stored.timeline || []).length;
+  } catch {
+    emitted = 0;
+  }
+
+  if (!emitted) {
+    refusals.push(
+      "the platform reported no events for this investigation, so there is no " +
+        "denominator and 'progress reached the screen' cannot be judged.",
+    );
+  } else if (timeline.progress < MIN_PROGRESS_EVENTS) {
     findings.push(
-      `the console rendered ${timeline.progress} progress row(s); expected at ` +
-        `least ${MIN_PROGRESS_EVENTS}. Events reached neither the page nor the ` +
-        `person watching it.`,
+      `the console rendered ${timeline.progress} of the ${emitted} progress ` +
+        `events the platform published; expected at least ` +
+        `${MIN_PROGRESS_EVENTS} rows on screen. Events reached neither the ` +
+        `page nor the person watching it.`,
     );
   } else {
-    note(`${timeline.progress} progress rows rendered on screen`);
+    note(
+      `${timeline.progress} of ${emitted} progress rows on screen ` +
+        `(${Math.round((timeline.progress / emitted) * 100)}%)`,
+    );
+  }
+
+  if (repeated.length) {
+    findings.push(
+      `the live timeline listed an event more than once: ` +
+        repeated.map(([label, count]) => `"${label}" ${count}x`).join(", ") +
+        `. The stream replays its backlog from the beginning on purpose, so the ` +
+        `reader must drop what it already has by sequence — as the backend's ` +
+        `own EventSequencer does. A run this console started shows every event ` +
+        `emitted before the page attached twice over.`,
+    );
   }
 
   if (pollRequests().length > MAX_TOLERATED_POLLS) {
@@ -399,6 +484,60 @@ if (investigationId) {
         `fallback working is what hid F29 for the console's whole life — the ` +
         `only symptom was a tag nobody reads.`,
     );
+  }
+}
+
+// --- 4b. Is the report readable, or does a line sit under its own bullet? --
+//
+// The 256 unit tests cannot answer this and neither can `console_check.mjs`:
+// jsdom has no layout, and the page does not scroll sideways — a flex row
+// *wraps* rather than overflowing, so the whole line moves below its bullet
+// and the page stays exactly as wide as it was. The evidence summaries are
+// where it bites, because they quote image references and URLs, which are one
+// unbreakable token: the span's min-content width exceeded the room left on
+// the row, so the most important line in the report — the one naming the image
+// that could not be pulled — rendered as a bullet with nothing beside it.
+//
+// Measured on this cluster's report both ways: **7 rows below their bullet**
+// with the span left at its default `min-width: auto`, **0** with
+// `min-w-0 flex-1 break-words`.
+if (investigationId) {
+  const layout = JSON.parse(
+    (await evaluate(`(() => {
+      const rows = [...document.querySelectorAll("li")].filter((li) => {
+        const style = getComputedStyle(li);
+        return style.display === "flex" && li.children.length >= 2;
+      });
+      const wrapped = rows
+        .filter((li) => {
+          const marker = li.children[0].getBoundingClientRect();
+          const body = li.children[1].getBoundingClientRect();
+          // Its top is at or below the marker's bottom: a different line.
+          return marker.height > 0 && body.top >= marker.bottom - 1;
+        })
+        .slice(0, 3)
+        .map((li) => (li.innerText || "").replace(/\\s+/g, " ").slice(0, 80));
+      return JSON.stringify({ rows: rows.length, wrapped });
+    })()`)) || "{}",
+  );
+
+  if (!layout.rows) {
+    // Vacuity, the failure this harness keeps committing: zero rows examined
+    // satisfies "no row wrapped" perfectly.
+    refusals.push(
+      "the finished page carried no multi-part rows to measure, so nothing was " +
+        "checked about how the report lays out.",
+    );
+  } else if (layout.wrapped?.length) {
+    findings.push(
+      `${layout.wrapped.length} report row(s) render below their own bullet, ` +
+        `out of ${layout.rows}: ${layout.wrapped.join(" | ")}. A flex item at ` +
+        `min-width: auto is at least its min-content width, and a summary ` +
+        `quoting an image reference is one unbreakable token — so the row wraps ` +
+        `instead of overflowing and no width check can see it.`,
+    );
+  } else {
+    note(`${layout.rows} report rows measured, none below its own bullet`);
   }
 }
 

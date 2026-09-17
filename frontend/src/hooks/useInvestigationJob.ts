@@ -63,6 +63,26 @@ export const STREAM_EVENT_TYPES = [
   "failed",
   "cancelled",
 ] as const;
+/**
+ * The highest sequence in a timeline: a resume cursor, and the thing that
+ * makes a replayed backlog idempotent.
+ *
+ * `subscribe()` deliberately replays every event from the beginning so that
+ * nothing published while a reader was connecting can be lost — the backend's
+ * own `EventSequencer` is what stops those replays being *delivered* twice.
+ * The console has the same two sources and had no such filter: `attach` seeds
+ * the timeline from `GET /investigations/{id}` and then opens the stream,
+ * which replays the same events and appended them again. The form navigates
+ * to the run's address, so on every investigation started from this console
+ * the live timeline opened with "Investigation queued / Investigation started"
+ * listed twice, and a slower platform would duplicate every row emitted before
+ * the page attached. An unsequenced event (`seq` absent or 0) is always
+ * accepted, exactly as the backend accepts one.
+ */
+export function highestSeq(events: JobEvent[]): number {
+  return events.reduce((highest, event) => Math.max(highest, event.seq ?? 0), 0);
+}
+
 const TERMINAL: JobStatus[] = ["succeeded", "failed", "cancelled"];
 
 function isTerminal(status: JobPhase): boolean {
@@ -113,6 +133,7 @@ export function useInvestigationJob(): InvestigationJobHandle {
   const pollRef = useRef<number | null>(null);
   const retryRef = useRef<number | null>(null);
   const receivedRef = useRef(false);
+  const deliveredRef = useRef(0);
   const settledRef = useRef(false);
   const mountedRef = useRef(true);
 
@@ -148,6 +169,7 @@ export function useInvestigationJob(): InvestigationJobHandle {
       setPhase(state.status ?? fallback);
       if (state.timeline?.length) {
         setTimeline(state.timeline);
+        deliveredRef.current = highestSeq(state.timeline);
       }
       if (state.error) {
         setError(state.error);
@@ -199,6 +221,7 @@ export function useInvestigationJob(): InvestigationJobHandle {
           }
           if (state.timeline?.length) {
             setTimeline(state.timeline);
+            deliveredRef.current = highestSeq(state.timeline);
           }
           setPhase(state.status);
           if (isTerminal(state.status)) {
@@ -258,6 +281,14 @@ export function useInvestigationJob(): InvestigationJobHandle {
               return;
             }
 
+            // Already seen — the backlog this stream replays overlaps whatever
+            // `attach` had already fetched. Skipped whole, not merely left out
+            // of the timeline, so a replayed `completed` cannot settle twice.
+            if (payload.seq && payload.seq <= deliveredRef.current) {
+              continue;
+            }
+            deliveredRef.current = Math.max(deliveredRef.current, payload.seq ?? 0);
+
             setTimeline((current) => [...current, payload]);
 
             if (payload.type === "started") {
@@ -302,6 +333,7 @@ export function useInvestigationJob(): InvestigationJobHandle {
     teardown();
     receivedRef.current = false;
     settledRef.current = false;
+    deliveredRef.current = 0;
     setPhase("idle");
     setTransport(null);
     setJobId(null);
@@ -360,6 +392,7 @@ export function useInvestigationJob(): InvestigationJobHandle {
           setError("");
           if (state.timeline?.length) {
             setTimeline(state.timeline);
+            deliveredRef.current = highestSeq(state.timeline);
           }
           if (isTerminal(state.status)) {
             // Already finished: adopt what was just fetched rather than opening

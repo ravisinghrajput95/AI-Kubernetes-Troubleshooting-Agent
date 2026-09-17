@@ -18,6 +18,34 @@ modify your cluster, and it will tell you what it could not see.
 
 ---
 
+## What it looks like
+
+An investigation, from the button to the root cause. Progress is streamed over
+SSE as the collectors run; nothing here is a timer.
+
+![Starting an investigation and watching it stream to a root cause](docs/images/investigation.gif)
+
+**The fleet**, as of each cluster's last investigation — never a live reading it
+does not have. The three names here are one cluster, grouped by the node UIDs
+the runs actually read.
+
+![The fleet view](docs/images/fleet.png)
+
+**The root cause**, with every candidate that was ranked, which one was selected,
+and evidence lines carrying citation chips back to the records they came from.
+
+![A root cause with its candidates and cited evidence](docs/images/root-cause.png)
+
+**The remediation plan**, keyed on the selected hypothesis and naming the
+resource it is about: its blast radius, the caveat that the owning Deployment was
+*derived* from the ReplicaSet name, and the change itself marked manual because
+this platform does not apply what it generates.
+
+![The remediation plan](docs/images/remediation-plan.png)
+
+These are captured from a kind cluster with faults induced on purpose
+(`docs/qa/audit-faults.yaml`), which is why every card reads Critical.
+
 ## What makes it different
 
 **It never mutates your cluster.** Every command goes through a read-only verb

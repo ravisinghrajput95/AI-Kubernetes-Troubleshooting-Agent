@@ -1783,6 +1783,32 @@ standing warning about stale "this is dead" notes.
 
 `/connect` (`ConnectClusterPage`) is the onboarding flow: name a cluster, mint an enrolment, copy the manifest, watch for the agent to check in. `AgentDot` renders agent reachability in three states — online, degraded, silent — and never in colour alone.
 
+**The console had two sources for the same events, and listed both.**
+`subscribe()` replays a backlog from the beginning on purpose — that is what
+makes it impossible to *drop* an event published while a reader was connecting —
+and the backend's own `EventSequencer` is what makes it impossible to then
+deliver one twice. The console reproduced the first half and not the second: the
+form navigates to the run's address, `InvestigationPage` attaches, `attach`
+seeds the timeline from `GET /investigations/{id}`, and the stream then replays
+those same events and appended them again. So **every investigation started from
+this console opened with "Investigation queued / Investigation started" listed
+twice**, and a slower platform would have duplicated every row emitted before
+the page attached. `highestSeq` plus a cursor is the same filter in the same
+shape; a replayed event is skipped *whole*, not merely left out of the timeline,
+so a replayed `completed` cannot settle twice. Nothing could see it: the row
+count only went **up**, which is the direction every check here rewards, and the
+hook's fake wire stamped every frame `seq: 1` — a wire on which no two events
+can be distinguished. Found by reading a screenshot taken for the README.
+
+**A flex row wraps instead of overflowing, so no width check can see it.** The
+evidence summaries quote image references and URLs, which are one unbreakable
+token: left at `min-width: auto` the span's min-content width exceeded the room
+left on its row, and the line naming the image that could not be pulled rendered
+*below its own bullet*. `console_check.mjs` cannot see it — the page does not
+scroll sideways — and jsdom has no layout at all. `console_journey.mjs` measures
+it on the finished report: 7 rows below their bullet with the defect, 0 with
+`min-w-0 flex-1 break-words`, out of 56 measured.
+
 **Nothing a browser initiates on its own can carry a credential**, and that one
 sentence covers F29 and F30 both. `EventSource` sends no `Authorization`
 header and `<a href>` sends none either, so the progress stream and all three
@@ -1894,6 +1920,19 @@ gives 15-17 progress rows there and 8-10 on the bundle, and a threshold
 calibrated on the dev server is calibrated against something nobody deploys.
 Reached by `kubectl port-forward`, because a browser cannot set a `Host` header
 and nginx is already under test in the SSE check.
+
+**Its progress-row threshold is a floor and deliberately not a discriminator
+between the transports**, which took measuring to establish. It was a constant 6
+over a *keyword subset* of the rows — and two of the rows it counted were the
+duplicates above, so removing them took a clean streamed run to 4 and the fix
+would have failed the check written to protect it. Counting every timestamped
+row and taking a share of the events the platform says it published, the arms do
+not separate either: against a cluster emitting 74 events, streamed runs painted
+**58, 48, 37 and then 25 four times running**, and the polling fallback painted
+**25**. What varies is how long the investigation took, not how it was carried —
+on a warm collection cache the last burst arrives with `completed` and the view
+flips to the report before those rows paint. **The transport is judged by the
+requests the browser made**, which is what F29 actually broke.
 
 Three things it had to be taught, each by being wrong first. **A snapshot is
 not a count**: the poll tally was computed before the run and read after it, so
@@ -2244,7 +2283,7 @@ It is also the discipline that decays first: a passing suite feels like
 evidence, and a mutation not run leaves no trace.
 
 ```bash
-python scripts/mutation_check.py                   # 136 mutations
+python scripts/mutation_check.py                   # 139 mutations
 python scripts/mutation_check.py --suite frontend  # the console's, under vitest
 python scripts/mutation_check.py --suite terraform # `terraform test`, its own CI job
 python scripts/mutation_check.py --list

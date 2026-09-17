@@ -44,6 +44,23 @@ def test_the_readme_links_nothing_that_does_not_exist():
     assert not dangling, f"the README links documents that do not exist: {dangling}"
 
 
+def test_every_image_the_readme_shows_is_in_the_repository():
+    """A missing screenshot is a broken image box on the project's front page.
+
+    They are referenced by relative path and served by GitHub from the
+    repository itself, so a file renamed or left uncommitted shows as a broken
+    image to every visitor and to nobody running the tests. Same class as a
+    dangling document link, and cheaper to catch here than to notice.
+    """
+    referenced = set(re.findall(r"\]\((docs/images/[^)]+)\)", README.read_text()))
+    assert referenced, (
+        "the README shows no screenshots at all — this test is checking nothing. "
+        "It was added with four; if they were deliberately removed, remove it too."
+    )
+    missing = sorted(name for name in referenced if not (ROOT / name).is_file())
+    assert not missing, f"the README shows images that do not exist: {missing}"
+
+
 def test_the_readme_quotes_the_corpus_as_it_is():
     """ "11 grounding cases" outlived two added cases, and "The agent path does
     not have this problem" outlived the fix that moved the problem to the agent
