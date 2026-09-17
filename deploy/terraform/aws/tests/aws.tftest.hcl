@@ -39,6 +39,15 @@ mock_provider "kubernetes" {
 
 mock_provider "helm" {}
 
+mock_provider "http" {
+  mock_data "http" {
+    defaults = {
+      status_code   = 200
+      response_body = "-----BEGIN CERTIFICATE-----\nMIIBrds\n-----END CERTIFICATE-----\n"
+    }
+  }
+}
+
 variables {
   region                     = "eu-west-1"
   eks_cluster_name           = "prod"
@@ -56,8 +65,12 @@ run "the_database_url_is_encrypted_and_names_the_instance" {
     error_message = "DATABASE_URL must be a postgresql:// URL for the configured user."
   }
   assert {
-    condition     = endswith(module.release.database_url, "@k8s-agent.abc123.eu-west-1.rds.amazonaws.com:5432/k8sagent?sslmode=require")
-    error_message = "DATABASE_URL must name the instance and require TLS, which rds.force_ssl enforces server-side."
+    condition     = endswith(module.release.database_url, "@k8s-agent.abc123.eu-west-1.rds.amazonaws.com:5432/k8sagent?sslmode=verify-full&sslrootcert=/etc/k8s-agent/trust/database/ca.crt")
+    error_message = "DATABASE_URL must name the instance and verify it against the mounted RDS root."
+  }
+  assert {
+    condition     = length([for v in yamldecode(module.release.values_yaml).extraVolumes : v if v.secret.secretName == "k8s-agent-database-ca"]) == 1
+    error_message = "The chart must mount the Secret holding the RDS CA bundle the URL names."
   }
 }
 

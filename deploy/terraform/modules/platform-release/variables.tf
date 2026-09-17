@@ -32,6 +32,13 @@ variable "database" {
     password = string
     name     = string
     sslmode  = string
+    # A Secret holding `ca.crt`, the root the server certificate chains to.
+    # Empty with a verify mode means the image's system roots.
+    ca_secret_name = optional(string, "")
+    # Or the root itself, which this module then writes into a Secret in the
+    # release's namespace — needed when that namespace is created here, so no
+    # Secret can exist in it beforehand. RDS's bundle is the case in point.
+    ca_pem = optional(string, "")
   })
   sensitive = true
 
@@ -47,6 +54,9 @@ variable "redis" {
     port       = optional(number, 6379)
     auth_token = string
     tls        = bool
+    # A Secret holding `ca.crt`; empty verifies against the image's system
+    # roots, which is what a publicly-signed endpoint (ElastiCache) needs.
+    ca_secret_name = optional(string, "")
   })
   sensitive = true
 }

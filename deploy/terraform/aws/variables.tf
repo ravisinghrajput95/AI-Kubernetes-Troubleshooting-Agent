@@ -159,6 +159,12 @@ variable "postgres" {
   }
 }
 
+variable "rds_ca_bundle_url" {
+  description = "Where the RDS CA bundle is read from, so the platform can verify the instance (sslmode=verify-full)."
+  type        = string
+  default     = "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem"
+}
+
 # --- Redis --------------------------------------------------------------------
 
 variable "redis" {

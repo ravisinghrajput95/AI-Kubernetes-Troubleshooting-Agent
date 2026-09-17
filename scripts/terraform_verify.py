@@ -102,6 +102,53 @@ SCENARIOS: dict[str, dict] = {
 }
 
 
+# Run inside a platform pod, against the URLs the module wrote. Each store is
+# connected three ways, and only the first may succeed: a connection that also
+# succeeds against the system roots, or against the right root addressed by IP,
+# was not verified — it was merely encrypted.
+VERIFICATION_PROBE = r"""
+import json, os, socket
+from urllib.parse import urlsplit, urlunsplit
+import psycopg, redis
+
+def attempt(fn):
+    try:
+        fn()
+        return "ok"
+    except Exception as exc:
+        return f"refused: {type(exc).__name__}: {str(exc)[:160]}"
+
+def by_ip(url):
+    parts = urlsplit(url)
+    ip = socket.gethostbyname(parts.hostname)
+    netloc = parts.netloc.replace(parts.hostname, ip)
+    return urlunsplit(parts._replace(netloc=netloc))
+
+db = os.environ["DATABASE_URL"]
+rd = os.environ["REDIS_URL"]
+# A URL with no sslrootcert (sslmode=require) must still be probed, not crash:
+# the probe exists to say "encrypted but not verified" about exactly that URL.
+if "sslrootcert=" in db:
+    system_db = db.replace("sslrootcert=" + db.split("sslrootcert=")[1].split("&")[0], "sslrootcert=system")
+else:
+    system_db = db + "&sslrootcert=system"
+system_rd = rd.split("?")[0]
+
+def pg(url):
+    with psycopg.connect(url, connect_timeout=5) as conn:
+        conn.execute("select 1")
+
+def rping(url):
+    redis.Redis.from_url(url, socket_timeout=5, socket_connect_timeout=5).ping()
+
+print(json.dumps({
+    "postgres": [attempt(lambda: pg(db)), attempt(lambda: pg(system_db)), attempt(lambda: pg(by_ip(db)))],
+    "redis": [attempt(lambda: rping(rd)), attempt(lambda: rping(system_rd)), attempt(lambda: rping(by_ip(rd)))],
+    "urls": {"postgres": db.split("?")[1], "redis": rd.split("?", 1)[1] if "?" in rd else ""},
+}))
+"""
+
+
 def run(command: list[str], cwd: Path, show: bool = True) -> subprocess.CompletedProcess:
     if show:
         where = cwd.relative_to(ROOT) if cwd.is_relative_to(ROOT) else cwd.name
@@ -305,6 +352,50 @@ def kind(kubeconfig: str, context: str, image: str, keep: bool) -> None:
                 f"FAIL the control: Postgres accepted plaintext, so TLS proves nothing\n{plaintext.stderr}"
             )
         print("    control: Postgres refuses a plaintext connection")
+
+        redis_plaintext = run(
+            [
+                *kubectl,
+                "exec",
+                "deploy/redis",
+                "--",
+                "sh",
+                "-c",
+                'redis-cli -h 127.0.0.1 -p 6379 -a "$REDIS_PASSWORD" --no-auth-warning ping',
+            ],
+            root,
+        )
+        if "PONG" in redis_plaintext.stdout:
+            raise SystemExit(
+                "FAIL the control: Redis answered plaintext, so rediss:// proves nothing"
+            )
+        print("    control: Redis refuses a plaintext connection")
+
+        probe = run(
+            [*kubectl, "exec", "deploy/k8s-agent", "--", "python", "-c", VERIFICATION_PROBE],
+            root,
+            show=False,
+        )
+        check(probe, "verification probe")
+        verdict = json.loads(probe.stdout.strip().splitlines()[-1])
+        for store in ("postgres", "redis"):
+            mounted, system_roots, by_address = verdict[store]
+            if mounted != "ok":
+                raise SystemExit(f"FAIL {store} with the mounted CA: {mounted}")
+            # Refused *for the reason under test*: a DNS failure or a bad
+            # parameter also refuses, and would pass a check on "not ok" alone.
+            if "certificate verify failed" not in system_roots.lower():
+                raise SystemExit(
+                    f"FAIL {store} against the system roots should fail certificate "
+                    f"verification, and got: {system_roots}"
+                )
+            if not any(marker in by_address for marker in ("mismatch", "server certificate for")):
+                raise SystemExit(
+                    f"FAIL {store} by IP should fail on the certificate's name, and got: {by_address}"
+                )
+            print(
+                f"    {store}: verified — the mounted root connects; system roots and a wrong name are refused"
+            )
 
         token = run(["terraform", "output", "-raw", "api_token"], root)
         check(token, "api_token output")

@@ -33,7 +33,7 @@ python scripts/mutation_check.py --suite terraform
 | `terraform test` on `platform-values` (10 runs) | The values each input produces, and that each refusal fires | — nothing is mocked here |
 | `terraform test` on `aws` (9 runs) | The wiring: `sslmode=require` and `rediss://` on the URLs, state admitting only the workload security group, encryption, `rds.force_ssl`, deletion protection, no credential in Helm values, records pointing at the chart's load balancers | That AWS accepts any of it — every provider but `random` is mocked |
 | Values → chart contract | Every key set exists in the chart's `values.yaml` (Helm ignores unknown keys silently); `helm template` accepts the values; the ConfigMap says what was asked, `CORS_ORIGINS` read back through the platform's `Settings` | — |
-| **`--kind` apply** | The release waits on readiness and becomes ready, so the platform connected with the URL `platform-release` formatted; every platform connection Postgres reports is **TLS**; a plaintext connection is **refused** (the control that makes the previous line mean something); `/health/ready` says both stores are ok; the token Secret authenticates and a wrong token is refused | `rediss://` — Redis here speaks plaintext, see below; anything AWS-specific |
+| **`--kind` apply** | The release waits on readiness and becomes ready, so the platform connected with the URLs `platform-release` formatted; every platform connection Postgres reports is **TLS**; plaintext is **refused** by both Postgres and Redis (the controls that make TLS mean something); both stores **verify** — the mounted root connects, the system roots fail certificate verification, a wrong name fails the hostname check; `/health/ready` says both stores are ok; the token Secret authenticates and a wrong token is refused | Anything AWS-specific: RDS's real bundle, ElastiCache's certificate |
 | Mutation pairs | Five defects under `terraform test`, one under pytest, each confirmed to fail the test named for it | — |
 
 **The apply's wait was mutation-checked by hand**, because a wait that returns
@@ -93,15 +93,25 @@ the `alb` class and the gateway Service to an NLB.
   the URLs the chart mounts. Use an encrypted remote backend with restricted
   access, or replace `kubernetes_secret_v1.state` with an External Secrets
   operator reading from Secrets Manager.
-- **`sslmode=require`, not `verify-full`.** The connection is encrypted and
-  `rds.force_ssl` makes the server refuse plaintext, but the platform image
-  carries no RDS CA bundle, so the server certificate is not verified. Redis
-  uses `rediss://` and verifies against the image's system CAs, which is
-  expected to trust ElastiCache's certificate and has not been observed doing so.
-  The kind apply cannot close this: a self-signed Redis would be refused by that
-  verification, and weakening it to pass would test a configuration nobody
-  should ship — so there the URL is `redis://` with the password, and the
-  `rediss` branch is covered only by the mocked test.
+- **Postgres is `verify-full` against RDS's CA bundle, and that was a gap until
+  the chart could mount one.** The module first shipped `sslmode=require`:
+  encrypted, and any certificate for any name accepted, because the platform
+  image carries no RDS root and the chart had no way to add one. The chart now
+  takes `extraVolumes`/`extraVolumeMounts`; `platform-release` mounts a CA and
+  names it in the URL (`sslrootcert=` for Postgres, `ssl_ca_certs=` for Redis);
+  the AWS root downloads the bundle over `data "http"` (checked to be PEM — 108
+  certificates when fetched on 2026-09-17). **On kind** both stores run on a
+  private root, and from inside a platform pod the script requires the mounted
+  root to connect, the system roots to fail *certificate verification*, and the
+  right root addressed by IP to fail *on the name* — each refusal checked for
+  its reason, since a DNS error also refuses. Hand-mutated to
+  `sslmode = "require"`, the run fails naming the connection as unverified.
+  **ElastiCache** uses `rediss://` against the system roots, which redis-py 8.1
+  verifies — chain and hostname — by default; that the system roots trust
+  ElastiCache's certificate has not been observed. **Applying found one defect
+  the mocked tests could not**: the CA Secret's `count` depended on the PEM,
+  unknown at plan when the certificate is generated in the same apply, and the
+  kind root refused to plan. It is decided from plan-time values now.
 - **`tenancy_mode = "shared"` needs a database role this module does not
   create.** Row-level security is inert for a role that bypasses it, and the
   platform refuses to start `shared` on such a role

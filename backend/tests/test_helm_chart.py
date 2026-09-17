@@ -72,3 +72,20 @@ def test_cors_origins_render_as_the_platform_reads_them(origins, monkeypatch):
 
 def test_unset_cors_origins_leave_the_platform_default():
     assert "CORS_ORIGINS" not in configmap()
+
+
+def test_extra_volumes_reach_the_platform_container():
+    # A CA bundle for a Postgres or Redis on a private root has to be mountable,
+    # or verify-full is unreachable from a chart deployment.
+    documents = render(
+        "extraVolumes[0].name=state-ca",
+        "extraVolumes[0].secret.secretName=k8s-agent-state-ca",
+        "extraVolumeMounts[0].name=state-ca",
+        "extraVolumeMounts[0].mountPath=/etc/k8s-agent/trust",
+    )
+    spec = next(item for item in documents if item["kind"] == "Deployment")["spec"]["template"][
+        "spec"
+    ]
+    container = spec["containers"][0]
+    assert {"name": "state-ca", "secret": {"secretName": "k8s-agent-state-ca"}} in spec["volumes"]
+    assert {"name": "state-ca", "mountPath": "/etc/k8s-agent/trust"} in container["volumeMounts"]

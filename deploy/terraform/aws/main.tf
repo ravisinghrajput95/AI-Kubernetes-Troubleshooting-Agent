@@ -146,6 +146,17 @@ resource "aws_elasticache_replication_group" "this" {
   tags              = local.tags
 }
 
+data "http" "rds_ca" {
+  url = var.rds_ca_bundle_url
+
+  lifecycle {
+    postcondition {
+      condition     = self.status_code == 200 && strcontains(self.response_body, "BEGIN CERTIFICATE")
+      error_message = "The RDS CA bundle did not download as PEM; without it verify-full would fail every connection."
+    }
+  }
+}
+
 # --- Kubernetes ---------------------------------------------------------------
 #
 # The Secret, values and release are modules/platform-release — the same code
@@ -160,16 +171,19 @@ module "release" {
   create_namespace = var.create_namespace
   chart_path       = local.chart_path
 
-  # sslmode=require encrypts and does not verify the server certificate: the
-  # platform image carries no RDS CA bundle, and verify-full would fail every
-  # connection. rds.force_ssl makes the server refuse plaintext regardless.
+  # verify-full against RDS's own CA bundle, which no public store holds —
+  # mounted by the chart and named in the URL. The same mechanism, with a
+  # private root, is what the kind/ apply exercises and proves refuses the
+  # system roots and a wrong name. rds.force_ssl makes the server refuse
+  # plaintext regardless.
   database = {
     host     = aws_db_instance.this.address
     port     = aws_db_instance.this.port
     username = aws_db_instance.this.username
     password = random_password.database.result
     name     = aws_db_instance.this.db_name
-    sslmode  = "require"
+    sslmode  = "verify-full"
+    ca_pem   = data.http.rds_ca.response_body
   }
 
   # rediss:// because transit encryption is on; a group with an auth token

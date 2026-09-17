@@ -150,3 +150,14 @@ variable "ingress_tls_secret_name" {
   type        = string
   default     = ""
 }
+
+variable "extra_volumes" {
+  description = "Chart extraVolumes, e.g. the CA bundle a verifying Postgres or Redis URL names."
+  type        = any
+  default     = []
+}
+
+variable "extra_volume_mounts" {
+  type    = any
+  default = []
+}

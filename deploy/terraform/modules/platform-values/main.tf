@@ -81,6 +81,9 @@ locals {
     }
 
     podDisruptionBudget = { enabled = var.replica_count > 1, minAvailable = 1 }
+
+    extraVolumes      = var.extra_volumes
+    extraVolumeMounts = var.extra_volume_mounts
   }
 }
 

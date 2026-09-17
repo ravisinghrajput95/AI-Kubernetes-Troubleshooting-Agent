@@ -6,13 +6,15 @@
 #
 # - **Postgres refuses plaintext.** Its pg_hba has only `hostssl` lines, which
 #   is what `rds.force_ssl = 1` does on RDS. A release that becomes ready
-#   therefore connected with TLS, and `sslmode=require` is shown to work in the
-#   platform's own driver rather than assumed to.
-# - **Redis requires its password**, as an ElastiCache auth token does. It does
-#   not speak TLS: redis-py verifies `rediss://` against the image's system
-#   CAs, a self-signed server would be refused, and weakening that check to
-#   pass here would test a configuration nobody should ship. So the `rediss`
-#   branch is still unexercised, and the README says so.
+#   therefore connected with TLS, from the platform's own driver.
+# - **Redis requires its password and speaks only TLS**, as an ElastiCache group
+#   with transit encryption does.
+# - **Both certificates chain to a private CA the platform is given**, so the
+#   URLs verify rather than merely encrypt: `sslmode=verify-full` for Postgres,
+#   `rediss://` with the CA for Redis. That is the mechanism an RDS CA bundle
+#   uses, exercised here with a root no public store holds — so a connection
+#   that succeeds was verified, not waved through by a system root. Postgres
+#   takes the root as `ca_pem`, the branch the AWS root uses for RDS's bundle.
 #
 # Applied and destroyed by `scripts/terraform_verify.py --kind`.
 
@@ -44,29 +46,66 @@ resource "random_password" "api_token" {
 
 # --- Postgres, TLS only -------------------------------------------------------
 
-resource "tls_private_key" "postgres" {
+resource "tls_private_key" "ca" {
   algorithm   = "ECDSA"
   ecdsa_curve = "P256"
 }
 
-resource "tls_self_signed_cert" "postgres" {
-  private_key_pem       = tls_private_key.postgres.private_key_pem
+resource "tls_self_signed_cert" "ca" {
+  private_key_pem       = tls_private_key.ca.private_key_pem
+  is_ca_certificate     = true
   validity_period_hours = 24
-  dns_names             = [local.pg_host, "postgres"]
-  allowed_uses          = ["server_auth", "digital_signature", "key_encipherment"]
+  allowed_uses          = ["cert_signing", "crl_signing", "digital_signature"]
   subject {
-    common_name = local.pg_host
+    common_name = "k8s-agent terraform verification CA"
   }
 }
 
-resource "kubernetes_secret_v1" "postgres_tls" {
+resource "tls_private_key" "server" {
+  for_each    = toset(["postgres", "redis"])
+  algorithm   = "ECDSA"
+  ecdsa_curve = "P256"
+}
+
+resource "tls_cert_request" "server" {
+  for_each        = toset(["postgres", "redis"])
+  private_key_pem = tls_private_key.server[each.key].private_key_pem
+  dns_names       = ["${each.key}.${local.namespace}.svc.cluster.local"]
+  subject {
+    common_name = "${each.key}.${local.namespace}.svc.cluster.local"
+  }
+}
+
+resource "tls_locally_signed_cert" "server" {
+  for_each              = toset(["postgres", "redis"])
+  cert_request_pem      = tls_cert_request.server[each.key].cert_request_pem
+  ca_private_key_pem    = tls_private_key.ca.private_key_pem
+  ca_cert_pem           = tls_self_signed_cert.ca.cert_pem
+  validity_period_hours = 24
+  allowed_uses          = ["server_auth", "digital_signature", "key_encipherment"]
+}
+
+resource "kubernetes_secret_v1" "server_tls" {
+  for_each = toset(["postgres", "redis"])
   metadata {
-    name      = "postgres-tls"
+    name      = "${each.key}-tls"
     namespace = local.namespace
   }
   data = {
-    "tls.crt" = tls_self_signed_cert.postgres.cert_pem
-    "tls.key" = tls_private_key.postgres.private_key_pem
+    "tls.crt" = tls_locally_signed_cert.server[each.key].cert_pem
+    "tls.key" = tls_private_key.server[each.key].private_key_pem
+    "ca.crt"  = tls_self_signed_cert.ca.cert_pem
+  }
+}
+
+# What the platform is given: the root, and nothing else.
+resource "kubernetes_secret_v1" "state_ca" {
+  metadata {
+    name      = "state-ca"
+    namespace = local.namespace
+  }
+  data = {
+    "ca.crt" = tls_self_signed_cert.ca.cert_pem
   }
 }
 
@@ -162,7 +201,7 @@ resource "kubernetes_deployment_v1" "postgres" {
         volume {
           name = "tls"
           secret {
-            secret_name  = kubernetes_secret_v1.postgres_tls.metadata[0].name
+            secret_name  = kubernetes_secret_v1.server_tls["postgres"].metadata[0].name
             default_mode = "0640"
           }
         }
@@ -219,9 +258,13 @@ resource "kubernetes_deployment_v1" "redis" {
       }
       spec {
         container {
-          name    = "redis"
-          image   = "redis:7-alpine"
-          command = ["sh", "-c", "exec redis-server --requirepass \"$REDIS_PASSWORD\""]
+          name  = "redis"
+          image = "redis:7-alpine"
+          # `--port 0`: no plaintext listener at all.
+          command = [
+            "sh", "-c",
+            "exec redis-server --port 0 --tls-port 6379 --tls-cert-file /tls/tls.crt --tls-key-file /tls/tls.key --tls-ca-cert-file /tls/ca.crt --tls-auth-clients no --requirepass \"$REDIS_PASSWORD\"",
+          ]
           env {
             name = "REDIS_PASSWORD"
             value_from {
@@ -233,6 +276,18 @@ resource "kubernetes_deployment_v1" "redis" {
           }
           port {
             container_port = 6379
+          }
+          volume_mount {
+            name       = "tls"
+            mount_path = "/tls"
+            read_only  = true
+          }
+        }
+        volume {
+          name = "tls"
+          secret {
+            secret_name  = kubernetes_secret_v1.server_tls["redis"].metadata[0].name
+            default_mode = "0644"
           }
         }
       }
@@ -280,13 +335,17 @@ module "release" {
     username = "k8sagent"
     password = random_password.database.result
     name     = "k8sagent"
-    sslmode  = "require"
+    sslmode  = "verify-full"
+    # The branch the AWS root takes with RDS's bundle: the module writes the
+    # Secret itself, in a namespace it may have just created.
+    ca_pem = tls_self_signed_cert.ca.cert_pem
   }
 
   redis = {
-    host       = "redis.${local.namespace}.svc.cluster.local"
-    auth_token = random_password.redis.result
-    tls        = false
+    host           = "redis.${local.namespace}.svc.cluster.local"
+    auth_token     = random_password.redis.result
+    tls            = true
+    ca_secret_name = kubernetes_secret_v1.state_ca.metadata[0].name
   }
 
   platform = {

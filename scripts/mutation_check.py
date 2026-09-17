@@ -1633,14 +1633,28 @@ MUTATIONS = [
     Mutation(
         name="terraform-database-url-without-tls",
         why=(
-            "A DATABASE_URL without sslmode=require against an RDS instance that "
-            "forces TLS fails every connection; against one that does not, it sends "
-            "every investigation in the clear."
+            "sslmode=require encrypts and verifies nothing, which is what the "
+            "module shipped with: any certificate for any name was accepted. "
+            "verify-full against the RDS bundle is what makes the connection "
+            "authenticated."
         ),
         suite="terraform",
         path="aws/main.tf",
-        old='    sslmode  = "require"\n',
-        new='    sslmode  = "disable"\n',
+        old='    sslmode  = "verify-full"\n',
+        new='    sslmode  = "require"\n',
+        tests="aws",
+    ),
+    Mutation(
+        name="terraform-database-ca-not-mounted",
+        why=(
+            "A verify-full URL naming a CA file the chart never mounts fails every "
+            "connection at startup — the release waits, times out, and the cause "
+            "reads as a database outage."
+        ),
+        suite="terraform",
+        path="modules/platform-release/main.tf",
+        old='    for item in local.trust : { name = "trust-${item.role}", secret = { secretName = item.secret } }\n',
+        new='    for item in [] : { name = "trust-${item.role}", secret = { secretName = item.secret } }\n',
         tests="aws",
     ),
     Mutation(

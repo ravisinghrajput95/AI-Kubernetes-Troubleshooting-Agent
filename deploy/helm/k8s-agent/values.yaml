@@ -225,6 +225,13 @@ config:
 
 extraEnv: []
 extraEnvFrom: []
+# Mounted into the platform container. What they are for is a CA bundle for a
+# Postgres or Redis whose certificate no public root signs — RDS's own CA, or a
+# private one — referenced from the URL (`sslrootcert=` for Postgres,
+# `ssl_ca_certs=` for Redis). Without a way to mount one, `sslmode=require`
+# was the most a chart deployment could ask for: encrypted, never verified.
+extraVolumes: []
+extraVolumeMounts: []
 
 # --- Workload -----------------------------------------------------------------
 service:
