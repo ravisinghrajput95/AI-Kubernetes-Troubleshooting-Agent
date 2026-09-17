@@ -1,0 +1,15 @@
+{
+  "id": "reject-invented-resource-at-sentence-end",
+  "investigation_case": "crashloop-missing-configmap-key",
+  "description": "An invented resource that ends a sentence is still an invented resource. The pattern refused any following dot, so this was never checked.",
+  "expect_valid": false,
+  "expect_reason_contains": "no collected evidence",
+  "response": {
+    "selected_hypothesis": "workload.missing_configuration",
+    "root_cause": "The failure originates in deployment staging/ghost.",
+    "cited_signals": [
+      "config.key_missing:pod/prod/web-0"
+    ],
+    "confidence": 80
+  }
+}

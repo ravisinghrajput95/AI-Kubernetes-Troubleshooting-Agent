@@ -193,6 +193,50 @@ class TestInventedResources:
         result = VALIDATOR.validate({"root_cause": prose, "cited_signals": [CRASH.id]}, ANALYSIS)
         assert result.valid is True, f"false positive on: {prose}"
 
+    @pytest.mark.parametrize(
+        "token",
+        [
+            "phase/status",
+            "secret/backing",
+            "wrong/non-existent",
+            "connection/timeout",
+            "image/config",
+            "limit/request",
+            "volume/secret",
+            "unreachable/unauthenticated",
+            "kubelet/attach-detach",
+            # The second live run, after the first narrowing: a replica ratio,
+            # and "container runtime/image" with a word that is not a kind. The
+            # ratio's digits are ones this fixture's evidence does not contain
+            # — `0/1` is accepted here anyway, because `1` is a substring of
+            # `node-1`, and would prove nothing about the ratio rule.
+            "2/3",
+            "runtime/image",
+        ],
+    )
+    def test_slashes_in_english_are_not_resources(self, token):
+        """Each of these rejected a sound Claude Opus diagnosis: 9 of 20 in the
+        first live run against Anthropic, while gpt-4o-mini — which does not
+        write this way — passed 20/20 through the same check."""
+        prose = f"The container {token} indicates the configuration it needs is missing."
+        result = VALIDATOR.validate({"root_cause": prose, "cited_signals": [CRASH.id]}, ANALYSIS)
+        assert result.valid is True, result.reason
+
+    @pytest.mark.parametrize(
+        "prose",
+        [
+            "Deployment staging/ghost is the source of the failure.",
+            "The failing object is pod/staging/ghost.",
+            "Check staging/ghost-7c9d for the same fault.",
+        ],
+    )
+    def test_an_invented_reference_still_reads_as_one(self, prose):
+        """A kind word, the kind/namespace/name form, or a generated name's
+        digit — the narrowing must not let these through."""
+        result = VALIDATOR.validate({"root_cause": prose, "cited_signals": [CRASH.id]}, ANALYSIS)
+        assert result.valid is False
+        assert "staging/ghost" in result.reason
+
     def test_a_partially_known_reference_is_accepted(self):
         """Leniency is deliberate: a false rejection discards a sound diagnosis."""
         result = VALIDATOR.validate(

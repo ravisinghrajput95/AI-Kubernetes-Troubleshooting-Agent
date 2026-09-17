@@ -1,0 +1,15 @@
+{
+  "id": "valid-slashes-in-english",
+  "investigation_case": "oom-confirmed-by-exit-code",
+  "description": "Slashes in prose are not resource references. Claude Opus writes 'limit/request' and 'phase/status', and 9 of its first 20 live diagnoses were rejected for it while gpt-4o-mini passed 20/20.",
+  "expect_valid": true,
+  "response": {
+    "selected_hypothesis": "workload.out_of_memory",
+    "root_cause": "The container's limit/request pair is too low for its working set, so the kernel ends it.",
+    "explanation": "Its phase/status history shows repeated termination, not a kubelet/attach-detach or image/config problem.",
+    "cited_signals": [
+      "container.oom_exit_code:pod/prod/web-0"
+    ],
+    "confidence": 75
+  }
+}

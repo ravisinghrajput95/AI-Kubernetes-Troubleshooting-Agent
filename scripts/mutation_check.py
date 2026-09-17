@@ -1787,6 +1787,63 @@ MUTATIONS = [
         tests="tests/test_reports.py",
     ),
     Mutation(
+        name="grounding-reads-english-slashes-as-resources",
+        why=(
+            "The invented-resource check read every lowercase word/word as "
+            "namespace/name, and rejected 9 of Claude Opus's first 20 live "
+            "diagnoses for 'phase/status', 'limit/request' and the like."
+        ),
+        path="app/analysis/grounding.py",
+        old="            if not _reads_as_reference(prose, match):\n                continue\n",
+        new="",
+        tests="tests/test_semantic_grounding.py",
+    ),
+    Mutation(
+        name="grounding-reads-a-ratio-as-a-resource",
+        why=(
+            "After the first narrowing, Claude Opus's '0/1 replicas available' was "
+            "still rejected as an invented namespace/name."
+        ),
+        path="app/analysis/grounding.py",
+        old="    if not (any(c.isalpha() for c in namespace) and any(c.isalpha() for c in name)):\n",
+        new="    if False:  # mutation\n",
+        tests="tests/test_semantic_grounding.py",
+    ),
+    Mutation(
+        name="grounding-ignores-a-kind-word",
+        why=(
+            "Narrowing the check to reference-shaped tokens must still catch an "
+            "invented 'Deployment staging/ghost', which has no digit."
+        ),
+        path="app/analysis/grounding.py",
+        old="    return bool(KIND_BEFORE.search(before))\n",
+        new="    return False  # mutation\n",
+        tests="tests/test_semantic_grounding.py",
+    ),
+    Mutation(
+        name="grounding-skips-sentence-final-references",
+        why=(
+            "The pattern refused any token followed by a dot, so an invented "
+            "resource that ended a sentence was never checked at all."
+        ),
+        path="app/analysis/grounding.py",
+        old='    r"\\b([a-z0-9][a-z0-9-]{0,61})/([a-z0-9][a-z0-9-]{0,61})\\b(?![./][a-z0-9])"\n',
+        new='    r"\\b([a-z0-9][a-z0-9-]{0,61})/([a-z0-9][a-z0-9-]{0,61})\\b(?![./])"\n',
+        tests="tests/test_semantic_grounding.py",
+    ),
+    Mutation(
+        name="suite-reaches-a-real-model-from-dotenv",
+        why=(
+            "With an Anthropic key in backend/.env the default suite opened TLS "
+            "connections to the Anthropic API — billed and nondeterministic — "
+            "which CI, having no .env, could never see."
+        ),
+        path="tests/conftest.py",
+        old='    os.environ[_variable] = ""\n',
+        new="    pass  # mutation\n",
+        tests="tests/test_hermetic_model_config.py::test_a_key_in_a_dotenv_file_does_not_reach_the_suite",
+    ),
+    Mutation(
         name="stream-request-carries-no-credential",
         why=(
             "F29: the progress stream was an EventSource, which cannot send an "

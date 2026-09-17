@@ -62,7 +62,7 @@ python -m evals.live    # the same corpus, scored against the configured model
 
 **It refuses rather than skips.** No configured model is exit 2, never exit 0, and a run where every call failed is refused rather than reported as zero rejections — which is what it looks like. Both guards are unit-tested against a local HTTP stub speaking the chat-completions shape, reached through `LLM_BASE_URL`, so the gate is exercised on every CI run whether or not a key is set. The workflow decides whether the job runs; the program decides whether it passed.
 
-**First measured 2026-09-16** against a local gemma4 through Ollama (`LLM_BASE_URL` is the full `/v1/chat/completions` URL): 20/20 answered, 20/20 grounded, agreement 10 of 12 — reported as 53% until the summary named each disagreement and seven were against the truthy `<unset>` sentinel. See `docs/EVALUATION.md`. **Against a hosted model (`gpt-4o-mini`, 2026-09-17): 20/20 grounded, agreement 11 of 12**, the one difference the defensible node-versus-workload reading gemma4 also chose. Anthropic unmeasured.
+**First measured 2026-09-16** against a local gemma4 through Ollama (`LLM_BASE_URL` is the full `/v1/chat/completions` URL): 20/20 answered, 20/20 grounded, agreement 10 of 12 — reported as 53% until the summary named each disagreement and seven were against the truthy `<unset>` sentinel. See `docs/EVALUATION.md`. **Against a hosted model (`gpt-4o-mini`, 2026-09-17): 20/20 grounded, agreement 11 of 12**, the one difference the defensible node-versus-workload reading gemma4 also chose. **Against `claude-opus-5`: 11/20, all nine rejections false positives** — the invented-resource check read English slashes (`phase/status`, `limit/request`) as `namespace/name`. Fixed in two rounds to 18/20 then the two failed cases re-run grounded; a full run on the final check was not made, to conserve credit.
 
 Two values must be read at their seams rather than from the diagnosis, and both were wrong first: a failed call and a rejected answer both return `ai_generated: false` carrying the *deterministic fallback's own* grounding block, so the payload cannot tell an outage from a reasoning regression — the first version scored a total provider outage as twenty perfectly grounded answers.
 
@@ -1582,7 +1582,9 @@ Semantic checks then reject prose that misrepresents what it cites — citation 
 
 - **Contradiction**: reassurance language ("no action needed", "appears healthy") over CRITICAL/HIGH signals. The same wording passes on a genuinely healthy cluster, where there are no severe signals to contradict.
 - **Citation relevance**: at least one cited signal must be one the selected hypothesis actually rests on. Citing real but unrelated signals explains nothing.
-- **Invented resources**: `namespace/name` references appearing in no evidence. The regex is case-sensitive and excludes paths, so `512Mi/1Gi` and `/healthz` are not mistaken for resources.
+- **Invented resources**: `namespace/name` references appearing in no evidence. The regex is case-sensitive and excludes paths, so `512Mi/1Gi` and `/healthz` are not mistaken for resources. **And a slash in English is not a reference**: a token counts only with letters in both halves and then a kind word before it, the `kind/namespace/name` form, or a digit — Claude Opus lost 9 of 20 diagnoses to `phase/status` and `limit/request` before that. A reference ending a sentence used to escape the check entirely.
+
+**The default suite is hermetic against a developer's `backend/.env`.** With a model key in it the suite opened connections to the Anthropic API; `tests/conftest.py` sets the model variables empty before `app` is imported, and `tests/test_hermetic_model_config.py` proves it against a temporary `.env` so the check bites in CI too.
 
 These are deterministic — a second model call would add latency and cost per investigation and would itself need grounding. Matching is deliberately lenient: **an over-strict check does not fail loudly, it silently routes every investigation to the fallback**, so `TestGenuineDiagnosesStillPass` and the false-positive cases in `tests/test_semantic_grounding.py` guard the fallback rate and must not be weakened.
 
@@ -2242,7 +2244,7 @@ It is also the discipline that decays first: a passing suite feels like
 evidence, and a mutation not run leaves no trace.
 
 ```bash
-python scripts/mutation_check.py                   # 130 mutations
+python scripts/mutation_check.py                   # 135 mutations
 python scripts/mutation_check.py --suite frontend  # the console's, under vitest
 python scripts/mutation_check.py --suite terraform # `terraform test`, its own CI job
 python scripts/mutation_check.py --list

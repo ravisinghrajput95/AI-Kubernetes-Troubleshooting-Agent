@@ -5,6 +5,18 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+import os  # noqa: E402
+
+# **No test may reach a real model because a developer has a key in
+# `backend/.env`.** `Settings` reads that file, and with an Anthropic key in it
+# the suite opened TLS connections to the Anthropic API — billed, slow and
+# nondeterministic — while CI, which has no `.env`, never could. Environment
+# variables outrank the dotenv file, so setting these empty *before* `app` is
+# imported is what keeps a laptop's suite the suite CI runs. A test that needs a
+# provider sets one explicitly, as the live-eval stub tests do.
+for _variable in ("OPENAI_API_KEY", "OPENAI", "ANTHROPIC_API_KEY", "LLM_PROVIDER", "LLM_BASE_URL"):
+    os.environ[_variable] = ""
+
 import pytest  # noqa: E402
 
 from app.core.config import settings  # noqa: E402

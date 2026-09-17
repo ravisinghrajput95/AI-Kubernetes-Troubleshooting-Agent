@@ -49,8 +49,34 @@ RESOLUTION_PHRASES = (
 
 # `namespace/name` in Kubernetes DNS-1123 form. Deliberately case-sensitive:
 # resource names are lowercase, so this does not match quantities such as
-# "512Mi/1Gi". The lookahead avoids file paths and version strings.
-RESOURCE_REFERENCE = re.compile(r"\b([a-z0-9][a-z0-9-]{0,61})/([a-z0-9][a-z0-9-]{0,61})\b(?![./])")
+# "512Mi/1Gi". The lookahead avoids file paths and version strings — a dot or
+# slash *followed by more of the token*. It used to refuse any following dot,
+# so a reference that ended a sentence ("...is pod/staging/ghost.") was never
+# checked at all.
+RESOURCE_REFERENCE = re.compile(
+    r"\b([a-z0-9][a-z0-9-]{0,61})/([a-z0-9][a-z0-9-]{0,61})\b(?![./][a-z0-9])"
+)
+
+# **A slash between two lowercase words is usually English, not a resource.**
+# Scored against Claude Opus, 9 of 20 sound diagnoses were rejected for
+# "inventing" `phase/status`, `limit/request`, `wrong/non-existent`,
+# `kubelet/attach-detach` — ordinary prose that gpt-4o-mini happened not to
+# write, so a check with 20/20 golden cases and a clean OpenAI run was routing
+# more than half of one provider's answers to the fallback. A token is judged
+# a reference only when it reads like one — letters in both halves, and then a
+# Kubernetes kind in front of it
+# (`Pod payments/checkout-9`), the `kind/namespace/name` form, or a digit in
+# either half, which generated names nearly always carry. What slips through is
+# an invented digit-free name with no kind word, and that is the lenient
+# direction: a false rejection discards a sound diagnosis silently.
+RESOURCE_KINDS = (
+    "pod|pods|deployment|deployments|deploy|service|services|svc|statefulset|"
+    "statefulsets|daemonset|daemonsets|replicaset|replicasets|job|jobs|cronjob|"
+    "cronjobs|configmap|configmaps|secret|secrets|pvc|pvcs|persistentvolumeclaim|"
+    "persistentvolumeclaims|ingress|ingresses|networkpolicy|networkpolicies|"
+    "endpoints|endpointslice|serviceaccount|hpa"
+)
+KIND_BEFORE = re.compile(rf"\b(?:{RESOURCE_KINDS})\s+(?:named\s+|called\s+)?$", re.IGNORECASE)
 
 SEVERE = frozenset({Severity.CRITICAL, Severity.HIGH})
 
@@ -226,6 +252,8 @@ class GroundingValidator:
 
         for match in RESOURCE_REFERENCE.finditer(prose):
             namespace, name = match.groups()
+            if not _reads_as_reference(prose, match):
+                continue
             if name in corpus or namespace in corpus:
                 continue
             return (
@@ -257,3 +285,21 @@ class GroundingValidator:
                 target.append(citation)
 
         return tuple(cited), tuple(rejected)
+
+
+def _reads_as_reference(prose: str, match: re.Match) -> bool:
+    """Whether a `word/word` token is written as a Kubernetes resource."""
+    namespace, name = match.groups()
+    # A ratio is not a resource: "0/1 replicas available" was rejected as an
+    # invented reference on the second live run. A namespace and a name each
+    # carry a letter.
+    if not (any(c.isalpha() for c in namespace) and any(c.isalpha() for c in name)):
+        return False
+    if any(character.isdigit() for character in namespace + name):
+        return True
+    before = prose[: match.start()]
+    # `pod/prod/web` — the token matched is `prod/web`, with a kind and a slash
+    # in front of it.
+    if re.search(rf"\b(?:{RESOURCE_KINDS})/$", before, re.IGNORECASE):
+        return True
+    return bool(KIND_BEFORE.search(before))

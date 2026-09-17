@@ -82,6 +82,9 @@ OPENAI_API_KEY=ollama LLM_BASE_URL=http://localhost:11434/v1/chat/completions \
 | before per-workload hypothesis scoring (`1f1f874`) | 20/20 | 19/20 — one invented `network/registry` | — |
 | after (`05d7b26`, run twice) | 20/20 | 20/20, 20/20 | 10/12 |
 | **`gpt-4o-mini`**, hosted, at `d0adcb2` (2026-09-17) | 20/20 | 20/20 — no citation stripped, no warning logged | **11/12** |
+| **`claude-opus-5`**, hosted, at `9c5374e` | 20/20 | **11/20 — below the 80% gate**; all nine rejections false positives | — |
+| `claude-opus-5`, first grounding fix | 20/20 | 18/20; two more false positives (`0/1`, `runtime/image`) | 11/11 |
+| `claude-opus-5`, second fix — **only the two failed cases re-run** | 2/2 | 2/2 | — |
 
 The first rows are gemma4, a small local model — a floor. **The hosted row is
 the first real-provider measurement**: 84 seconds for the corpus, every answer
@@ -89,6 +92,23 @@ grounded, and the one disagreement is the same case gemma4 chose differently —
 the node three failing pods share, over the crash loop on them — which the
 case's own description calls a defensible reading. Still one run, on one
 provider; Claude through `LLM_PROVIDER=anthropic` is unmeasured.
+
+**Claude found an over-strict check that OpenAI could not.** The
+invented-resource rule read any lowercase `word/word` as `namespace/name`, and
+Claude Opus writes `phase/status`, `limit/request`, `kubelet/attach-detach`:
+9 of 20 sound diagnoses went to the deterministic fallback — the failure this
+program exists to catch, silent in every offline test and in a 20/20
+`gpt-4o-mini` run. A token is now a reference only with letters in both halves
+and then a Kubernetes kind in front, the `kind/namespace/name` form, or a
+digit. Two rounds were needed; the second removed a ratio (`0/1`) and a
+non-kind word (`container runtime/image`). Tightening the pattern also found
+the opposite hole: a reference ending a sentence was never checked. The final
+full run was stopped at five cases to conserve the account's credit, and only
+the two previously rejected cases were re-run — both grounded. Model output
+varies, so that re-run cannot replay the rejected prose; the exact phrasings are
+pinned by `tests/test_semantic_grounding.py` and
+`evals/cases/grounding/valid-slashes-in-english.json` instead. **A full Claude
+run on the final check has not been made.**
 
 On gemma4, one run each on a nondeterministic model: the narrower hypothesis citations did
 not reduce survival, and nothing here says they improved it. **`LLM_BASE_URL`
