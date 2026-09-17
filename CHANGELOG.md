@@ -8,9 +8,109 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
-## [Unreleased]
+## [0.3.0] — 2026-09-17
+
+Seventy commits, no breaking configuration change — but **investigations now
+report different root causes**, which is the change to read first (*Changed*).
+It is a minor rather than a patch release for that, and for what is new: the
+Terraform around the chart, chart values to mount a CA, and a reasoning gate
+that has finally been run against real models.
+
+Almost nothing here came from a test suite. It came from **running the product
+the way a person does** and reading what it said: five console sweeps that read
+every page's text against the stored investigation (more than thirty false
+claims, in four recognisable shapes), unclean failures induced against a live two-worker
+deployment (Postgres and Redis paused, Redis wiped, a worker frozen, workers'
+clocks skewed, an agent cut off from its API server), and the first runs of
+`evals.live` against `gpt-4o-mini` and `claude-opus-5`. Each defect fixed has a
+test through the seam and a mutation pair; there are **135**, re-run in CI for
+the backend, the console and the Terraform alike.
+
+**No production deployment exists.** Nothing here has served real traffic, the
+AWS half of the Terraform has never been applied, scale-out across hosts is
+unmeasured, and the final grounding check has not had a full run against
+Claude — see *Known gaps*.
+
+### Changed
+
+- **A hypothesis is scored on the workload it names, not on every resource its
+  rule fired on.** After a node restart the in-cluster agent pod — Ready for
+  nine minutes, one exit code — was the root cause at 92%, on the strength of
+  checkout's FATAL log and metrics-server's failing probe; the tie rationale
+  quoted the pool ("21 against 9"), and the same cluster read through its agent
+  seconds later named a different root cause. Rules now score each workload
+  apart (a Deployment and its pods, a StatefulSet and its ordinals, are one),
+  support from another namespace or from pods a Service does not select no
+  longer counts, and a pod listed only for restart history is not a failing
+  backend. **Expect different root causes on multi-fault namespaces.** Both
+  providers now rank the same live cluster identically. Golden corpus 20/20.
+- **Contradicting evidence now outranks severity, and confidence outranks
+  severity** (held-out corpus, 10/14 → 12/14; detailed under *Fixed*).
+
+### Added
+
+- **Terraform** (`deploy/terraform/`): RDS PostgreSQL 17, ElastiCache Redis,
+  the state Secret, the Helm release and Route 53 records on AWS, around a
+  provider-free values module and a `platform-release` module shared with a
+  `kind/` root. **The AWS half has never been applied.** The Kubernetes half is
+  applied to kind in CI by `scripts/terraform_verify.py --kind`, which also
+  renders the values through the real chart and refuses any key the chart does
+  not define (Helm ignores those silently).
+- **Verified, not only encrypted, state connections.** The chart takes
+  `extraVolumes`/`extraVolumeMounts`, so a CA can be mounted; Terraform uses
+  `sslmode=verify-full` against RDS's bundle and `ssl_ca_certs` for Redis. The
+  kind apply proves from inside a platform pod that the mounted root connects,
+  the system roots fail certificate verification and an IP fails the name.
+- **`evals.live` names every case where a grounded model chose differently**,
+  so a defensible choice and a wrong answer are no longer the same percentage.
+- **Mutation pairs for the console and the Terraform**
+  (`scripts/mutation_check.py --suite frontend|terraform`), and a non-zero exit
+  no longer counts as a catch — a runner that cannot start used to report every
+  mutation caught.
+- **A list read is decoded as it arrives** (F5): peak memory flat at 8.4 MB from
+  5,000 to 25,000 pods, against 74.3 MB before.
 
 ### Fixed
+
+- **Grounding rejected sound Claude diagnoses for writing English.** The
+  invented-resource check read any lowercase `word/word` as `namespace/name`,
+  and Claude Opus writes `phase/status` and `limit/request`: **11/20** survived
+  against an 80% gate while `gpt-4o-mini` passed 20/20 through the same check.
+  A token is a reference now only when it reads as one. The same work found a
+  reference ending a sentence was never checked at all.
+- **Redis losing its data failed investigations about connected agents.**
+  Presence is Redis-only; after a `FLUSHDB` a job claimed by the worker without
+  the stream was failed with "that agent is not connected to any worker" about
+  a healthy agent — one batch in three. Jobs now wait out one heartbeat and hand
+  off to the worker holding the stream. Eight flushes after: 48 investigations,
+  no failures.
+- **Operating under failure.** A database pause reaped live investigations as
+  dead workers; a paused Redis took every worker out of rotation; a lease was
+  renewed under a different identity than it was claimed with, so any
+  investigation over 60s was reaped while running; an agent's liveness
+  depended on which worker's clock read it; a hung agent read "online, seen 0s
+  ago" until it vanished; an agent cut off from its API server, or one that
+  stopped answering, was blamed on a kubeconfig.
+- **The console and reports asserted things the evidence did not.** Among
+  them: the live progress stream and every report download 401'd in every
+  authenticated deployment (F29, F30); the remediation panel offered a fix for a
+  workload the diagnosis was not about (F31); one cluster reached three ways was
+  "3 clusters"; a restarted node read as a cluster-wide crash loop; the
+  confidence breakdown was invented and called the model's; the timeline ran
+  backwards; "Business Impact" was hedges chosen by which sections had findings
+  and is now "What is affected", by name.
+- **The chart's `config.corsOrigins` crashed the platform at startup** — it was
+  rendered comma-joined and parsed as JSON. Found writing the Terraform.
+- **`evals.live` scored a case with no expected cause as a disagreement**, so
+  10-of-12 agreement was reported as 53%.
+- **The backend test suite called the real Anthropic API** when a key sat in
+  `backend/.env`. It is hermetic again whatever that file holds.
+- **The checking apparatus**, repeatedly: a sweep dump filed under the wrong
+  route, the redirect check calling every redirect a failure, the console
+  journey port-forwarding to a port the Service does not have, a rate-limit test
+  racing its window, and vitest's coloured output making every console mutation
+  read ERROR in CI.
+
 
 - **Three diagnostic defects, found by a corpus of failures written before
   reading the rules.** The shipped corpus is 20 investigations authored by the
@@ -130,6 +230,18 @@ to. A change that fixed a defect names the defect.
   hermetic tests driven by the real series, three mutations watched fail —
   including the over-strict one, where a single worker falling alone would be
   called a host event and a bounded cache evicting would be discarded as noise.
+
+### Known gaps
+
+- **The AWS Terraform has never been applied.** RDS, ElastiCache, Route 53, the
+  real RDS CA bundle and ElastiCache's certificate are unobserved, and whether
+  the RDS master user bypasses row-level security — which `shared` tenancy
+  refuses at startup — is unchecked.
+- **Cross-host scale-out is unmeasured**; the envelope's figures are one host.
+- **The final grounding check has not had a full Claude run.** After the second
+  fix only the two previously rejected cases were re-run (both grounded), to
+  conserve API credit. `gpt-4o-mini`: 20/20 grounded, 11 of 12 agreeing.
+- **SLOs are proposed targets**, never observed against real traffic.
 
 ## [0.2.3] — 2026-09-08
 

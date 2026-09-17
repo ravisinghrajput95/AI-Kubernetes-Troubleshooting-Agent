@@ -140,6 +140,34 @@ whose rows have moved on. Empty is correct.
 These change what the platform *does* without any configuration changing. They
 are the ones that surprise people.
 
+### Upgrading into v0.3.0 (root causes, reconnect grace, verifying TLS)
+
+No configuration has to change, and nothing stops an existing deployment. Four
+things behave differently:
+
+1. **Root causes change on namespaces with several faults.** A hypothesis is now
+   scored on the workload it names rather than on every resource its rule fired
+   on, refutation outranks severity, and confidence outranks severity. A report
+   regenerated after upgrading (`POST /investigations/{id}/regenerate`) keeps
+   its stored diagnosis; a *new* investigation of the same cluster may name a
+   different root cause, usually the better-evidenced one. Compare before
+   assuming a regression.
+2. **An enrolled agent that no worker can see is refused 30 seconds later than
+   before.** A claimed job now waits `AGENT_RECONNECT_GRACE_SECONDS` for the
+   agent to reappear, and hands itself to the worker holding the stream when it
+   does, so Redis losing its data no longer fails investigations about connected
+   agents. An agent that is really gone is still refused, with the same message.
+   Mixed-version fleets are safe mid-rollout: a hand-off is an ordinary queued
+   job to the receiving worker, and an older worker simply refuses as it did.
+3. **`config.corsOrigins` in the chart now works.** It was rendered in a form
+   the platform could not parse, so any value crash-looped the pods; if you had
+   worked around that with `extraEnv`, remove the workaround.
+4. **You can mount a CA and verify the database and Redis.** `extraVolumes` and
+   `extraVolumeMounts` are new chart values; name the mounted file in
+   `DATABASE_URL` (`sslmode=verify-full&sslrootcert=…`) or `REDIS_URL`
+   (`ssl_ca_certs=…`). `sslmode=require` keeps working and still verifies
+   nothing — see `deploy/terraform/README.md`.
+
 ### Upgrading into v0.2.0 (`AUTH_MODE` has no default) — **Breaking**
 
 **This is the one change in this document that will stop an existing
