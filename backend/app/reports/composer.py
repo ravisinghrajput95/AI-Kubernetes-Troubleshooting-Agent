@@ -89,7 +89,6 @@ class IncidentReportComposer:
 
     def _impact(self, investigation: dict[str, Any], diagnosis: dict[str, Any]) -> ReportSection:
         severity = investigation.get("severity", {})
-        overview = investigation.get("overview", {})
         risk = diagnosis.get("remediation_risk", {})
 
         body = []
@@ -98,11 +97,13 @@ class IncidentReportComposer:
             body.append(f"{affected} workload(s) affected.")
         if severity.get("affected_namespace") not in (None, "none"):
             body.append(f"Primary namespace affected: {severity['affected_namespace']}.")
-        if overview.get("critical_issues"):
-            body.append(
-                f"{overview['critical_issues']} affected workload(s) and service finding(s) "
-                "observed."
-            )
+        # The service findings alone. `critical_issues` is the affected
+        # workloads plus these, so printing it under "N workload(s) affected"
+        # read as two disagreeing counts of one thing: "8 workload(s)
+        # affected" above "9 affected workload(s) and service finding(s)".
+        services = len((investigation.get("network") or {}).get("findings") or [])
+        if services:
+            body.append(f"{services} service finding(s) observed.")
 
         remediation = diagnosis.get("remediation") or {}
         remediation_risk = remediation.get("risk", {})

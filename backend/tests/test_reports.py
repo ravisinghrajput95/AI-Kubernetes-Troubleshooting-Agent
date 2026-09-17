@@ -362,3 +362,23 @@ class TestSerialization:
         report = COMPOSER.compose({}, {}, "INC-002", "2026-01-01T00:00:00Z", "default", "error")
         assert report.incident_id == "INC-002"
         assert report.to_dict()["sections"] is not None
+
+
+def test_impact_does_not_print_two_counts_of_the_same_workloads():
+    """Read off a live report: "8 workload(s) affected." above "9 affected
+    workload(s) and service finding(s) observed." — the second was the first
+    plus one Service finding, and read as a disagreement."""
+    from app.reports.composer import IncidentReportComposer
+
+    investigation = {
+        "severity": {"affected_workloads": 8, "affected_namespace": "payments"},
+        "overview": {"critical_issues": 9},
+        "network": {"findings": [{"namespace": "payments", "service": "checkout-svc"}]},
+    }
+    report = IncidentReportComposer().compose(
+        {"root_cause": "x"}, investigation, "INC-1", "2026-09-17T00:00:00Z", "payments", "success"
+    )
+    impact = "\n".join(next(s for s in report.sections if s.title == "Impact").as_lines())
+    assert "8 workload(s) affected." in impact
+    assert "1 service finding(s) observed." in impact
+    assert "9 " not in impact

@@ -34,7 +34,7 @@ python scripts/mutation_check.py --suite terraform
 | `terraform test` on `aws` (9 runs) | The wiring: `sslmode=require` and `rediss://` on the URLs, state admitting only the workload security group, encryption, `rds.force_ssl`, deletion protection, no credential in Helm values, records pointing at the chart's load balancers | That AWS accepts any of it — every provider but `random` is mocked |
 | Values → chart contract | Every key set exists in the chart's `values.yaml` (Helm ignores unknown keys silently); `helm template` accepts the values; the ConfigMap says what was asked, `CORS_ORIGINS` read back through the platform's `Settings` | — |
 | **`--kind` apply** | The release waits on readiness and becomes ready, so the platform connected with the URLs `platform-release` formatted; every platform connection Postgres reports is **TLS**; plaintext is **refused** by both Postgres and Redis (the controls that make TLS mean something); both stores **verify** — the mounted root connects, the system roots fail certificate verification, a wrong name fails the hostname check; `/health/ready` says both stores are ok; the token Secret authenticates and a wrong token is refused | Anything AWS-specific: RDS's real bundle, ElastiCache's certificate |
-| Mutation pairs | Five defects under `terraform test`, one under pytest, each confirmed to fail the test named for it | — |
+| Mutation pairs | Six defects under `terraform test`, one under pytest, each confirmed to fail the test named for it; the probe's own vacuity checked by hand with `sslmode = "require"` | — |
 
 **The apply's wait was mutation-checked by hand**, because a wait that returns
 early would make "became ready" meaningless: with `sslmode = "disable"` against

@@ -1775,6 +1775,18 @@ MUTATIONS = [
         tests="tests/test_live_evals.py",
     ),
     Mutation(
+        name="report-impact-counts-workloads-twice",
+        why=(
+            "The Impact section printed '8 workload(s) affected.' above '9 affected "
+            "workload(s) and service finding(s) observed.' — the second was the "
+            "first plus one Service finding, and read as a disagreement."
+        ),
+        path="app/reports/composer.py",
+        old='        services = len((investigation.get("network") or {}).get("findings") or [])\n',
+        new='        services = (investigation.get("overview") or {}).get("critical_issues", 0)\n',
+        tests="tests/test_reports.py",
+    ),
+    Mutation(
         name="stream-request-carries-no-credential",
         why=(
             "F29: the progress stream was an EventSource, which cannot send an "
