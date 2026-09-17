@@ -2244,7 +2244,7 @@ It is also the discipline that decays first: a passing suite feels like
 evidence, and a mutation not run leaves no trace.
 
 ```bash
-python scripts/mutation_check.py                   # 135 mutations
+python scripts/mutation_check.py                   # 136 mutations
 python scripts/mutation_check.py --suite frontend  # the console's, under vitest
 python scripts/mutation_check.py --suite terraform # `terraform test`, its own CI job
 python scripts/mutation_check.py --list

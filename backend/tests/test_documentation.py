@@ -44,6 +44,21 @@ def test_the_readme_links_nothing_that_does_not_exist():
     assert not dangling, f"the README links documents that do not exist: {dangling}"
 
 
+def test_the_readme_quotes_the_corpus_as_it_is():
+    """ "11 grounding cases" outlived two added cases, and "The agent path does
+    not have this problem" outlived the fix that moved the problem to the agent
+    path. The corpus counts are held against the files."""
+    text = README.read_text()
+    corpus = ROOT / "backend" / "evals" / "cases"
+    investigations = len(list((corpus / "investigations").glob("*.json")))
+    grounding = len(list((corpus / "grounding").glob("*.json")))
+    assert f"{investigations} golden investigations, {grounding} grounding cases" in text, (
+        f"the README should quote {investigations} golden investigations and "
+        f"{grounding} grounding cases"
+    )
+    assert "The agent path does not have this problem" not in text
+
+
 def test_the_readme_does_not_quote_a_test_count_that_has_drifted():
     """It said 438 backend and 47 frontend tests for six milestones, against
     real counts three and five times those. A number in a README is a claim
@@ -71,6 +86,14 @@ def test_the_readme_does_not_quote_a_test_count_that_has_drifted():
         (
             "Proposed fleet architecture",
             "M4 through M9 built it; the architecture document is a design record, not a roadmap",
+        ),
+        (
+            "nothing has run longer than a few minutes",
+            "hour-long soaks have run; see docs/PERFORMANCE_ENVELOPE.md",
+        ),
+        (
+            "only one of them has ever been run in anger",
+            "evals.live has scored gpt-4o-mini, claude-opus-5 and a local model",
         ),
     ],
 )
@@ -243,3 +266,19 @@ def test_the_chart_ships_the_version_the_application_reports():
         f"the chart's appVersion is {app_version.group(1)} and the platform is {VERSION}; "
         f"that is the tag an operator reads to know which image they deployed"
     )
+
+
+def test_the_console_package_carries_the_release_version():
+    """A fifth copy of the version, which sat at 0.1.0 through four releases.
+
+    Nothing reads it at runtime, which is why nothing noticed — but it is what a
+    visitor to `frontend/` sees, and "0.1.0" beside a v0.3.0 tag reads as a
+    console that was abandoned early."""
+    import json
+
+    from app.core.version import VERSION
+
+    package = json.loads((ROOT / "frontend" / "package.json").read_text())
+    lock = json.loads((ROOT / "frontend" / "package-lock.json").read_text())
+    assert package["version"] == VERSION
+    assert lock["version"] == VERSION and lock["packages"][""]["version"] == VERSION

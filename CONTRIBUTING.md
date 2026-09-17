@@ -5,7 +5,7 @@ Thanks for considering a contribution.
 ## Getting set up
 
 ```bash
-# Backend — use Python 3.12; the pinned pydantic has no 3.14 wheel
+# Backend — CI runs Python 3.12 and 3.13; 3.12 matches the Docker image
 cd backend
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt ruff
@@ -18,18 +18,24 @@ npm test
 npm run build     # tsc -b — the type gate
 ```
 
-`kubectl` must be on PATH. `OPENAI_API_KEY` is optional; without it the
-deterministic fallback runs and everything still works.
+`kubectl` must be on PATH. A model key is optional; without one the
+deterministic fallback runs and everything still works. The test suite ignores
+any key in `backend/.env`, so it never calls a model.
 
 ## Before opening a pull request
 
 ```bash
-cd backend  && ruff check . && ruff format --check . && python -m pytest -q
+cd backend  && ruff check . && ruff format --check . && python -m pytest -q && python -m evals
 cd frontend && npm test && npm run build
+python scripts/mutation_check.py --suite backend    # if you touched an invariant
 ```
 
-CI runs exactly this. Please do not weaken a test to make it pass — if a test is
-wrong, say so in the PR and fix the assertion deliberately.
+CI runs these and more: the mutation suites for the backend, console and
+Terraform, an integration job that stands the chart up on kind, a Terraform
+apply to kind, a dependency audit and a secret scan. Please do not weaken a test
+to make it pass — if a test is wrong, say so in the PR and fix the assertion
+deliberately. A fix to an invariant should come with a mutation pair in
+`scripts/mutation_check.py`: the defect it prevents, and the test that catches it.
 
 ## Design rules this codebase holds to
 
@@ -58,14 +64,18 @@ These are load-bearing. A change that breaks one needs an explicit argument.
 
 ## Where help is most wanted
 
-See [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md). The highest
-value items right now:
+See [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) and the
+*Known gaps* in [CHANGELOG.md](CHANGELOG.md). The highest value items right now:
 
-- **Authentication and Kubernetes impersonation** (F13) — the one remaining P0
-- **Paginated cluster reads** (F5) — currently unbounded on large clusters
-- **LLM evaluation harness** with golden investigations (F11)
-- **Real cluster fixtures** (kind/envtest) — everything currently runs against a
-  hand-built fake
+- **Running it for real** — a pilot deployment against a real cluster and real
+  incidents is the gap no amount of code closes
+- **Applying the AWS Terraform** (`deploy/terraform/aws`) and reporting what
+  broke
+- **Scale-out across hosts** — throughput is measured on one machine only
+- **Streaming decode on the agent path**, which still builds a whole list in
+  memory before capping it
+- **Model evaluation beyond OpenAI** — a full `evals.live` run against Claude
+  or a self-hosted model on the current grounding check
 
 ## Commit and PR style
 

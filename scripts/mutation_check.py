@@ -1844,6 +1844,17 @@ MUTATIONS = [
         tests="tests/test_hermetic_model_config.py::test_a_key_in_a_dotenv_file_does_not_reach_the_suite",
     ),
     Mutation(
+        name="readme-quotes-a-stale-corpus-count",
+        why=(
+            "The README said '11 grounding cases' after the corpus had grown to "
+            "13 — a number in a README is a claim about the project's rigour."
+        ),
+        path="../README.md",
+        old="20 golden investigations, 13 grounding cases",
+        new="20 golden investigations, 11 grounding cases",
+        tests="tests/test_documentation.py",
+    ),
+    Mutation(
         name="stream-request-carries-no-credential",
         why=(
             "F29: the progress stream was an EventSource, which cannot send an "

@@ -9,8 +9,9 @@ modify your cluster, and it will tell you what it could not see.
 
 > [!WARNING]
 > **No production deployment exists.** Every number in this repository was
-> measured on kind clusters and synthetic fleets — there is no install anywhere
-> that has run for a week, and no user but its author. The gaps that remain are
+> measured on kind clusters and synthetic fleets — the longest runs are
+> hour-long soaks, there is no install anywhere that has run for a week, and no
+> user but its author. The gaps that remain are
 > tracked honestly in
 > [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md), and
 > [SECURITY.md](SECURITY.md) lists what is still weak before you expose it.
@@ -109,6 +110,7 @@ kubectl ─► Evidence ─► Signals ─► Hypotheses ─┬─► Playbooks 
 | Tenancy & roles | Row-level security, four roles, audit log | [SSO_GROUP_MAPPING](docs/SSO_GROUP_MAPPING.md) |
 | Integrations | Alert-triggered investigations, signed egress, MCP tools | [MCP](docs/MCP.md) |
 | Operations | Probes, retention, backup, upgrade, SLOs | [UPGRADE](docs/UPGRADE.md) |
+| Deployment | Helm chart; Terraform for AWS state, secrets and DNS (Kubernetes half applied on kind in CI, AWS half never applied) | [Helm](deploy/helm/k8s-agent/README.md) · [Terraform](deploy/terraform/README.md) |
 
 ### Failure classes it investigates deeply
 
@@ -186,30 +188,37 @@ first time that person signs in.
 cd backend
 pip install -r requirements-dev.txt ruff
 ruff check . && ruff format --check .
-python -m pytest -q        # 1,436 tests
-python -m evals            # 20 golden investigations, 11 grounding cases
+python -m pytest -q        # 1,850+ tests; needs no database, cluster or model
+python -m evals            # 20 golden investigations, 13 grounding cases
 
 cd frontend
-npm test                   # 230 tests
+npm test                   # 310+ tests
 npm run build              # tsc -b — the type gate
 ```
 
 Two more that are worth knowing about, because they catch what the suites cannot:
 
 ```bash
-python scripts/mutation_check.py      # ~4s: 16 shipped defects vs the tests that catch them
+python scripts/mutation_check.py      # minutes: 130+ shipped defects vs the tests that catch them
 ./scripts/integration_verify.sh       # ~8min: kind + Helm + Prometheus + a real agent
+python scripts/terraform_verify.py --kind --context <kind-context>   # apply the Terraform's Kubernetes half;
+                                      # load a backend image into kind first (see the script's docstring)
+python -m evals.live                  # the corpus against a real model; needs a key — cents on a small
+                                      # model, more on a large one
 ```
 
-`mutation_check.py` re-runs every hand-made mutation test: it reverts a defect
-that actually shipped and fails if the test written to catch it still passes. A
-passing suite is not evidence until you have seen it fail.
+`mutation_check.py` re-runs every hand-made mutation test — backend, console and
+Terraform: it reverts a defect that actually shipped and fails if the test
+written to catch it still passes. A passing suite is not evidence until you have
+seen it fail.
 
 CI runs all of the above on every pull request — including the integration job,
-which stands the chart up on kind and makes 48 assertions against the live
-deployment plus 40 differential agent tests — alongside a dependency audit that
-**fails the build** on a known vulnerability, a secret scan, and both Docker
-builds.
+which stands the chart up on kind and makes 49 assertions against the live
+deployment plus 40 differential agent tests, and a Terraform job that applies to
+kind — alongside a dependency audit that **fails the build** on a known
+vulnerability, a secret scan, and both Docker builds. The live-model job runs
+only when an `EVAL_OPENAI_API_KEY` or `EVAL_ANTHROPIC_API_KEY` secret is set,
+and none is set on this repository.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the five design rules this codebase
 holds to. They are load-bearing rather than stylistic.
@@ -239,19 +248,23 @@ as a defect in this repository, not as harmless caution.
 
 - **Nobody has run this in production.** Not one deployment, not one user
   besides its author. Every performance number came from kind clusters and
-  synthetic fleets on one machine, and nothing has run longer than a few
-  minutes. That is the largest gap between this and something you should trust
-  with an incident, and no amount of further code closes it.
-- **Peak memory scales with cluster size** on the kubeconfig path. `kubectl`
-  assembles a whole list before writing it. Item counts are capped and
-  truncation is recorded as an evidence gap, but the ceiling needs a streaming
-  client. The agent path does not have this problem.
-- **No live-model evaluation in CI.** The golden corpus gates the deterministic
-  reasoning path — signals, hypotheses, ranking, grounding — on every push, and
-  the model path has been exercised against a real cluster by hand. It is not
-  gated automatically, so a prompt change that degrades a real model's answers
-  would not fail a build. Three providers exist (`openai`, `anthropic`, and any
-  OpenAI-compatible endpoint), but only one of them has ever been run in anger.
+  synthetic fleets on one machine, and the longest runs are hour-long soaks.
+  That is the largest gap between this and something you should trust with an
+  incident, and no amount of further code closes it.
+- **Peak memory on the agent path scales with cluster size.** A list read
+  through a kubeconfig is decoded as it arrives and holds flat at 8.4 MB from
+  5,000 to 25,000 pods; through an agent the whole payload is decoded at once
+  before the item cap applies. Unmeasured on that path.
+- **Real models are measured, not gated here.** `python -m evals.live` scores
+  the golden corpus against a configured model and fails below 80% of answers
+  surviving grounding. `gpt-4o-mini`: 20/20. `claude-opus-5` scored 11/20 until
+  the grounding check stopped reading English slashes as resource names; after
+  the fix only the two failed cases were re-run, so there is no full Claude run
+  on the final check. CI runs the gate only with a key secret, and this
+  repository has none — see [EVALUATION](docs/EVALUATION.md).
+- **The AWS Terraform has never been applied.** Its Kubernetes half is applied
+  to kind in CI; RDS, ElastiCache, Route 53 and the RDS CA bundle are
+  unobserved.
 - **`fix` and `prevention` are model-authored prose** and therefore
   influenceable by injected cluster text. Grounding constrains them; it is not a
   proof. Commands are never model-authored.
@@ -292,7 +305,9 @@ stops updating.
 [SSO group mapping](docs/SSO_GROUP_MAPPING.md) ·
 [Tenant usage reporting](docs/TENANT_USAGE_REPORTING.md) ·
 [Observability backends](docs/OBSERVABILITY.md) ·
-[What Prometheus must scrape](docs/OBSERVABILITY_INTEGRATIONS.md)
+[What Prometheus must scrape](docs/OBSERVABILITY_INTEGRATIONS.md) ·
+[Helm chart](deploy/helm/k8s-agent/README.md) ·
+[Terraform](deploy/terraform/README.md)
 
 **Trusting it**
 [Production readiness](docs/PRODUCTION_READINESS.md) — the backlog, honestly scored ·
