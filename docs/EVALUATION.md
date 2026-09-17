@@ -81,8 +81,16 @@ OPENAI_API_KEY=ollama LLM_BASE_URL=http://localhost:11434/v1/chat/completions \
 |---|---|---|---|
 | before per-workload hypothesis scoring (`1f1f874`) | 20/20 | 19/20 — one invented `network/registry` | — |
 | after (`05d7b26`, run twice) | 20/20 | 20/20, 20/20 | 10/12 |
+| **`gpt-4o-mini`**, hosted, at `d0adcb2` (2026-09-17) | 20/20 | 20/20 — no citation stripped, no warning logged | **11/12** |
 
-One run each on a nondeterministic model: the narrower hypothesis citations did
+The first rows are gemma4, a small local model — a floor. **The hosted row is
+the first real-provider measurement**: 84 seconds for the corpus, every answer
+grounded, and the one disagreement is the same case gemma4 chose differently —
+the node three failing pods share, over the crash loop on them — which the
+case's own description calls a defensible reading. Still one run, on one
+provider; Claude through `LLM_PROVIDER=anthropic` is unmeasured.
+
+On gemma4, one run each on a nondeterministic model: the narrower hypothesis citations did
 not reduce survival, and nothing here says they improved it. **`LLM_BASE_URL`
 is the full endpoint URL**, not the `/v1` base; the first attempt got 404 on
 every call and the program refused rather than reporting zero rejections.

@@ -62,7 +62,7 @@ python -m evals.live    # the same corpus, scored against the configured model
 
 **It refuses rather than skips.** No configured model is exit 2, never exit 0, and a run where every call failed is refused rather than reported as zero rejections — which is what it looks like. Both guards are unit-tested against a local HTTP stub speaking the chat-completions shape, reached through `LLM_BASE_URL`, so the gate is exercised on every CI run whether or not a key is set. The workflow decides whether the job runs; the program decides whether it passed.
 
-**First measured 2026-09-16** against a local gemma4 through Ollama (`LLM_BASE_URL` is the full `/v1/chat/completions` URL): 20/20 answered, 20/20 grounded, agreement 10 of 12 — reported as 53% until the summary named each disagreement and seven were against the truthy `<unset>` sentinel. See `docs/EVALUATION.md`.
+**First measured 2026-09-16** against a local gemma4 through Ollama (`LLM_BASE_URL` is the full `/v1/chat/completions` URL): 20/20 answered, 20/20 grounded, agreement 10 of 12 — reported as 53% until the summary named each disagreement and seven were against the truthy `<unset>` sentinel. See `docs/EVALUATION.md`. **Against a hosted model (`gpt-4o-mini`, 2026-09-17): 20/20 grounded, agreement 11 of 12**, the one difference the defensible node-versus-workload reading gemma4 also chose. Anthropic unmeasured.
 
 Two values must be read at their seams rather than from the diagnosis, and both were wrong first: a failed call and a rejected answer both return `ai_generated: false` carrying the *deterministic fallback's own* grounding block, so the payload cannot tell an outage from a reasoning regression — the first version scored a total provider outage as twenty perfectly grounded answers.
 
