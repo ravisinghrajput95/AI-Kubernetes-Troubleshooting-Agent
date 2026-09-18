@@ -79,6 +79,8 @@ ruff format --check .   # CI enforces formatting
 
 `requirements.txt` pins are kept current and audited — `pip-audit --strict` runs in CI and **fails the build**, because the original pins shipped known CVEs in PyJWT (which validates auth tokens) and Starlette.
 
+**All three stacks are audited now, and for most of the project's life one was.** The README said the build failed "on a known vulnerability" while CI ran `pip-audit` and nothing else, so the Go agent — the component that runs inside customer clusters — and the console's toolchain were never checked. A security review scanned the *published* v0.3.0 agent binary (`govulncheck -mode=binary`, pulled from GHCR) and found gRPC 1.83.0 and `x/text` 0.37.0 with reachable advisories. `govulncheck@v1.8.0` runs in the agent job and `npm audit` in the console job, both failing at any severity. **The Go version lives in one place, `toolchain` in `agent/go.mod`**, and both `setup-go` steps read it: they said `1.24` while `go.mod` said 1.26, so every CI build auto-downloaded go1.26.0, whose standard library carried four advisories the shipped image (built on 1.26.8) did not — the build CI tested was not the build that shipped.
+
 **Authentication configuration is validated at startup**, like every other
 setting. It was the only one checked lazily — the authenticator is built on
 first use, so a typo'd `AUTH_MODE`, a missing `OIDC_ISSUER` or `disabled`
@@ -2283,7 +2285,7 @@ It is also the discipline that decays first: a passing suite feels like
 evidence, and a mutation not run leaves no trace.
 
 ```bash
-python scripts/mutation_check.py                   # 139 mutations
+python scripts/mutation_check.py                   # 146 mutations
 python scripts/mutation_check.py --suite frontend  # the console's, under vitest
 python scripts/mutation_check.py --suite terraform # `terraform test`, its own CI job
 python scripts/mutation_check.py --list

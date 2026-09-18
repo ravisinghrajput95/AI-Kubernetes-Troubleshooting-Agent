@@ -25,6 +25,15 @@ from loguru import logger
 # to build a filesystem path or a database key.
 SAFE_ID = re.compile(r"^[0-9a-fA-F-]{8,64}$")
 
+
+def valid_investigation_id(investigation_id: str | None) -> bool:
+    """Whole-string match: `re.match` let "<id>\\n" through, because `$` matches
+    before a trailing newline. Not exploitable here — no file or row carries
+    such a name, so the lookup found nothing — but a validator that accepts
+    what it claims to refuse is one refactor from being the only check."""
+    return bool(SAFE_ID.fullmatch(investigation_id or ""))
+
+
 # Formats and the extension each is stored under.
 EXTENSIONS = {"pdf": "pdf", "json": "json", "markdown": "md"}
 
@@ -138,7 +147,7 @@ class FilesystemReportStore:
         extension = EXTENSIONS.get(report_format)
         if extension is None:
             return None
-        if not SAFE_ID.match(investigation_id or ""):
+        if not valid_investigation_id(investigation_id):
             logger.warning(
                 "Rejecting malformed investigation id: {id}", id=str(investigation_id)[:80]
             )
@@ -325,7 +334,7 @@ class PostgresReportStore:
             )
 
     def read(self, investigation_id: str, report_format: str) -> bytes | None:
-        if report_format not in EXTENSIONS or not SAFE_ID.match(investigation_id or ""):
+        if report_format not in EXTENSIONS or not valid_investigation_id(investigation_id):
             logger.warning(
                 "Rejecting malformed report request: {id}", id=str(investigation_id)[:80]
             )

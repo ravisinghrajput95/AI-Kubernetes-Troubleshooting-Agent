@@ -251,9 +251,13 @@ jobs:
       # kind cluster — and its evidence compared against the same reads made
       # through kubectl. That suite is M4's exit criterion and until now ran
       # nowhere, because nothing set `K8S_AGENT_CLUSTER_INTEGRATION`.
+      # From go.mod, whose `toolchain` line is the one place the Go version is
+      # decided. This said "1.24" while go.mod said 1.26, so every build here
+      # auto-downloaded go1.26.0 — a standard library with four advisories the
+      # shipped image (built on 1.26.8) did not have.
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version-file: agent/go.mod
           cache-dependency-path: agent/go.sum
 
       - uses: actions/setup-python@v6
@@ -299,9 +303,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # From go.mod, whose `toolchain` line is the one place the Go version is
+      # decided. This said "1.24" while go.mod said 1.26, so every build here
+      # auto-downloaded go1.26.0 — a standard library with four advisories the
+      # shipped image (built on 1.26.8) did not have.
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version-file: agent/go.mod
           cache-dependency-path: agent/go.sum
 
       - name: Format check
@@ -317,6 +325,14 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      # The agent runs inside customer clusters, and until this step nothing
+      # audited its dependencies: pip-audit covered one stack of three, while
+      # the README said the build failed on a known vulnerability. v0.3.0
+      # shipped gRPC 1.83.0 and x/text 0.37.0 with reachable advisories.
+      # Source mode, so a finding means a call path, not a module in go.sum.
+      - name: Dependency audit
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
 
   frontend:
@@ -336,6 +352,11 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - run: npm ci
+      # Every dependency, dev included: the build and test toolchain runs in
+      # CI and on every developer's machine. Fails at any severity, the same
+      # bar as `pip-audit --strict`.
+      - name: Dependency audit
+        run: npm audit
       - name: Type check and build
         run: npm run build
       - name: Tests
@@ -434,3 +455,21 @@ jobs:
         run: docker build -t ai-k8s-agent-backend:ci ./backend
       - name: Build frontend image
         run: docker build -t ai-k8s-agent-frontend:ci ./frontend
+      # What the image *does*, not what its Dockerfile says: it ran Vite's
+      # development server as root, published on every interface by compose.
+      # Asserted on the running container — its uid, a client-side route, and
+      # the development server's own module path answering with the app shell
+      # rather than source. The vacuity guard is the route: a container that
+      # served nothing would pass the other two.
+      - name: The console image serves files, not a development server
+        run: |
+          docker run -d --name console -p 18080:8080 ai-k8s-agent-frontend:ci
+          for _ in $(seq 1 20); do curl -fs http://127.0.0.1:18080/ >/dev/null && break; sleep 0.5; done
+          uid=$(docker exec console id -u)
+          test "$uid" != "0" || { echo "the console runs as root"; exit 1; }
+          curl -fs http://127.0.0.1:18080/investigations/0f1e2d3c | grep -q '<div id="root">' \
+            || { echo "a client-side route did not return the app shell"; exit 1; }
+          if curl -fs http://127.0.0.1:18080/@vite/client | grep -q 'import'; then
+            echo "the development server is running"; exit 1
+          fi
+          echo "uid $uid, app shell on client routes, no development server"

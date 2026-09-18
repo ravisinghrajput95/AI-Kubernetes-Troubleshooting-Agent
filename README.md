@@ -243,8 +243,9 @@ seen it fail.
 CI runs all of the above on every pull request — including the integration job,
 which stands the chart up on kind and makes 49 assertions against the live
 deployment plus 40 differential agent tests, and a Terraform job that applies to
-kind — alongside a dependency audit that **fails the build** on a known
-vulnerability, a secret scan, and both Docker builds. The live-model job runs
+kind — alongside dependency audits of all three stacks (`pip-audit`,
+`govulncheck`, `npm audit`) that **fail the build** on a known vulnerability, a
+secret scan, and both Docker builds. The live-model job runs
 only when an `EVAL_OPENAI_API_KEY` or `EVAL_ANTHROPIC_API_KEY` secret is set,
 and none is set on this repository.
 

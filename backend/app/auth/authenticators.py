@@ -42,6 +42,17 @@ class DisabledAuthenticator:
         return ANONYMOUS
 
 
+# Below this a static bearer token is guessable in a way no rate limit fixes.
+# A warning rather than a refusal: an existing deployment with a short token
+# must not stop booting on upgrade, and a weak secret is the operator's risk
+# to see and fix, like an unset per-tenant quota.
+MINIMUM_TOKEN_LENGTH = 24
+
+
+def weak_token_subjects(records: list[TokenRecord]) -> list[str]:
+    return [record.subject for record in records if len(record.token) < MINIMUM_TOKEN_LENGTH]
+
+
 class StaticTokenAuthenticator:
     """Shared bearer tokens mapped to identities.
 
@@ -77,6 +88,16 @@ class StaticTokenAuthenticator:
             require_tenant_id(tenant)
             records.append(
                 TokenRecord(token=parts[0], subject=parts[1], groups=groups, tenant=tenant)
+            )
+        for subject in weak_token_subjects(records):
+            # The subject, never the token: this line goes to the application
+            # log, which is exactly where a credential must not appear.
+            logger.warning(
+                "API token for {subject} is shorter than {minimum} characters; a "
+                "bearer token is the whole credential, so generate a long random one "
+                "(for example `openssl rand -hex 32`).",
+                subject=subject,
+                minimum=MINIMUM_TOKEN_LENGTH,
             )
         return cls(records)
 

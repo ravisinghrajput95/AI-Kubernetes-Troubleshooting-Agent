@@ -109,14 +109,17 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        # Fixed, and it agrees with the backend's fixed 8000 above. Overridable
+        # because `docker-compose.scale.yml` publishes a range, where no replica
+        # reliably lands on 8000. A build argument, because the console is a
+        # static bundle: changing it means rebuilding (`up --build frontend`).
+        react_PUBLIC_API_BASE_URL: ${react_PUBLIC_API_BASE_URL:-http://localhost:8000}
     container_name: ai-kubernetes-agent-frontend
     ports:
-      - "3000:3000"
-    environment:
-      # Fixed, and it agrees with the backend's fixed 8000 above. Overridable
-      # because `docker-compose.scale.yml` publishes a range, where no replica
-      # reliably lands on 8000.
-      react_PUBLIC_API_BASE_URL: ${react_PUBLIC_API_BASE_URL:-http://localhost:8000}
+      # Static files served by unprivileged nginx on 8080. It was Vite's
+      # development server running as root, published on every interface.
+      - "3000:8080"
     depends_on:
       - backend
 

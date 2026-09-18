@@ -10,6 +10,33 @@ to. A change that fixed a defect names the defect.
 
 ## [Unreleased]
 
+### Security
+
+From a review of the whole repository; nothing found was critically
+exploitable, and each fix carries a test and a mutation pair.
+
+- **The cluster agent's dependencies were never audited, and v0.3.0's image
+  shipped known-vulnerable ones.** gRPC 1.83.0 (heap exhaustion via fragmented
+  HTTP/2 frames, reachable — its only peer is the mTLS gateway) and `x/text`
+  0.37.0 (infinite loop, reachable). Now gRPC 1.83.2, `x/net` 0.58.0, `x/text`
+  0.41.0, the toolchain pinned to go1.26.8 in `go.mod`, and `govulncheck`
+  clean. **Rebuild or pull a newer agent image**; v0.3.0's is affected.
+- **CI audits all three stacks.** Only `pip-audit` ran; the README claimed more.
+  `govulncheck` and `npm audit` now fail the build. The console's tooling moved
+  to vitest 5 to clear the last npm advisory.
+- **The console container ran Vite's development server as root**, published
+  by compose on every host interface, serving transformed source. It is now a
+  static build served by unprivileged nginx (uid 101) on 8080; compose maps
+  `3000:8080` and passes the API address as a build argument, so changing it
+  means `up --build frontend`.
+- **A webhook signed over the timestamp `nan` never expired.** `float()`
+  accepts it and NaN compares false against the window. Non-finite timestamps
+  are refused.
+- **Cluster, tenant and investigation ids accepted a trailing newline**
+  (`re.match` with `$`), making lookalike identities. Validated whole now.
+- **A short `API_TOKENS` entry is warned about at startup**, naming the subject
+  and never the token. A warning, not a refusal, so no deployment stops booting.
+
 ### Fixed
 
 - **The live timeline listed every event emitted before the page attached

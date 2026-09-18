@@ -34,6 +34,7 @@ also means a source can only ever reach clusters its own tenant owns, because
 
 import hashlib
 import hmac
+import math
 from dataclasses import dataclass, field
 
 from app.auth.models import Principal
@@ -93,7 +94,11 @@ class EventSource:
         except (TypeError, ValueError) as exc:
             raise EventSourceError("Missing or unusable timestamp") from exc
 
-        if abs(now - sent_at) > SIGNATURE_TOLERANCE_SECONDS:
+        # `float()` accepts "nan", and every comparison with NaN is false — so
+        # `abs(now - nan) > tolerance` never held and a request signed over the
+        # timestamp "nan" passed the window check forever. Forging one still
+        # needs the secret; replaying one did not need anything.
+        if not math.isfinite(sent_at) or abs(now - sent_at) > SIGNATURE_TOLERANCE_SECONDS:
             raise EventSourceError("Request timestamp is outside the accepted window")
 
         if not hmac.compare_digest(self.signature(body, timestamp), provided or ""):

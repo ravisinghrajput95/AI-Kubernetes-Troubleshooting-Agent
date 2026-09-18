@@ -43,6 +43,10 @@ TENANT_PATH = "tenant"
 # a certificate subject, a database key and a log field. A value that can carry
 # `/`, whitespace or a control character could name one cluster in the
 # certificate and read as another everywhere else.
+# Checked with `fullmatch`, never `match`: in Python `$` also matches just before
+# a trailing newline, so `match` accepted "prod\n" — a second identity that
+# prints exactly like "prod" in every log line and listing. Same for the tenant
+# and investigation id patterns.
 CLUSTER_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,126}$")
 
 
@@ -51,7 +55,7 @@ class IdentityError(Exception):
 
 
 def valid_cluster_id(cluster_id: str) -> bool:
-    return bool(CLUSTER_ID.match(cluster_id))
+    return bool(CLUSTER_ID.fullmatch(cluster_id))
 
 
 def require_cluster_id(cluster_id: str) -> str:

@@ -1881,6 +1881,81 @@ MUTATIONS = [
         tests="src/services/download.test.ts",
     ),
     Mutation(
+        name="webhook-timestamp-nan-never-expires",
+        why=(
+            "float() accepts 'nan' and every comparison with NaN is false, so a "
+            "request signed over the timestamp 'nan' passed the freshness window "
+            "forever and could be replayed indefinitely."
+        ),
+        path="app/events/sources.py",
+        old="if not math.isfinite(sent_at) or abs(now - sent_at) > SIGNATURE_TOLERANCE_SECONDS:",
+        new="if abs(now - sent_at) > SIGNATURE_TOLERANCE_SECONDS:",
+        tests="tests/test_event_ingress.py",
+    ),
+    Mutation(
+        name="cluster-id-accepts-a-trailing-newline",
+        why=(
+            "re.match with ^...$ accepts a trailing newline, so 'prod\\n' was a "
+            "second cluster identity printing exactly like 'prod'."
+        ),
+        path="app/security/identity.py",
+        old="return bool(CLUSTER_ID.fullmatch(cluster_id))",
+        new="return bool(CLUSTER_ID.match(cluster_id))",
+        tests="tests/test_identifier_validation.py",
+    ),
+    Mutation(
+        name="tenant-id-accepts-a-trailing-newline",
+        why=(
+            "The same `$` rule on tenant ids, which can arrive in an identity "
+            "provider's claim: 'acme\\n' was a lookalike tenant."
+        ),
+        path="app/tenancy/models.py",
+        old='return bool(TENANT_ID.fullmatch(tenant_id or ""))',
+        new='return bool(TENANT_ID.match(tenant_id or ""))',
+        tests="tests/test_identifier_validation.py",
+    ),
+    Mutation(
+        name="report-id-accepts-a-trailing-newline",
+        why="The investigation id validated before building a report path had the same `$` gap.",
+        path="app/services/report_store.py",
+        old='return bool(SAFE_ID.fullmatch(investigation_id or ""))',
+        new='return bool(SAFE_ID.match(investigation_id or ""))',
+        tests="tests/test_identifier_validation.py",
+    ),
+    Mutation(
+        name="short-api-token-goes-unremarked",
+        why=(
+            "A static bearer token is the whole credential and nothing noticed "
+            "one of a few characters; the startup warning is the only signal."
+        ),
+        path="app/auth/authenticators.py",
+        old="if len(record.token) < MINIMUM_TOKEN_LENGTH]",
+        new="if len(record.token) < 0]",
+        tests="tests/test_identifier_validation.py",
+    ),
+    Mutation(
+        name="console-image-runs-as-root",
+        why=(
+            "The console image ran as root; a final stage on a root-by-default "
+            "base with no USER is that defect back."
+        ),
+        path="../frontend/Dockerfile",
+        old="FROM nginxinc/nginx-unprivileged:1.29-alpine",
+        new="FROM nginx:1.29-alpine",
+        tests="tests/test_console_image.py",
+    ),
+    Mutation(
+        name="console-image-runs-the-development-server",
+        why=(
+            "The console image ran Vite's development server, published by "
+            "compose on every interface, serving source and a live-reload socket."
+        ),
+        path="../frontend/Dockerfile",
+        old="EXPOSE 8080\n",
+        new='EXPOSE 8080\nCMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]\n',
+        tests="tests/test_console_image.py",
+    ),
+    Mutation(
         name="readme-shows-an-image-that-is-not-committed",
         why=(
             "README screenshots are served from the repository by relative path, "

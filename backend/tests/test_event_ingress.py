@@ -208,6 +208,30 @@ class TestSignatures:
 
         assert api.post("/events/alertmanager", content=body, headers=stale).status_code == 401
 
+    @pytest.mark.parametrize("timestamp", ["nan", "NaN", "-nan", "inf", "-inf"])
+    def test_a_timestamp_that_is_not_a_time_is_refused(self, api, timestamp):
+        """Correctly signed, and still refused: NaN compares false against the
+        window, so a request signed over "nan" never expired and could be
+        replayed indefinitely. The signature here is genuine — this is the
+        freshness check alone, which is the part that was open."""
+        body = alert_body()
+        signature = hmac.new(
+            SECRET.encode(), timestamp.encode() + b"." + body, hashlib.sha256
+        ).hexdigest()
+        headers = {
+            "X-K8sagent-Timestamp": timestamp,
+            "X-K8sagent-Signature": signature,
+            "Content-Type": "application/json",
+        }
+        assert api.post("/events/alertmanager", content=body, headers=headers).status_code == 401
+
+    def test_a_fresh_signed_request_is_still_accepted(self, api):
+        """The control: the finiteness check must not refuse a real timestamp."""
+        body = alert_body()
+        assert (
+            api.post("/events/alertmanager", content=body, headers=signed(body)).status_code == 202
+        )
+
     def test_the_comparison_is_constant_time(self):
         """Source inspection, because timing is not observable in a functional
         test — and a control with no guard at all is worse than a white-box one.

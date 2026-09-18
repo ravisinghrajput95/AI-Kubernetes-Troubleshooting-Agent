@@ -16,7 +16,7 @@ TENANT_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 
 def valid_tenant_id(tenant_id: str) -> bool:
-    return bool(TENANT_ID.match(tenant_id or ""))
+    return bool(TENANT_ID.fullmatch(tenant_id or ""))
 
 
 def require_tenant_id(tenant_id: str) -> str:
