@@ -1881,6 +1881,43 @@ MUTATIONS = [
         tests="src/services/download.test.ts",
     ),
     Mutation(
+        name="unconfigured-model-counted-as-a-failed-call",
+        why=(
+            "With no model configured every diagnosis was recorded as a failed "
+            "model call and `skipped` was never emitted, so the soundness gate "
+            "on outcome != skipped matched everything and every model-less "
+            "deployment read as 100% grounding rejections."
+        ),
+        path="app/ai/root_cause_analyzer.py",
+        old='        if not llm_result.attempted:\n            metrics.llm_call("skipped")\n        else:\n            metrics.llm_call("succeeded" if llm_result.success else "failed")\n',
+        new='        metrics.llm_call("succeeded" if llm_result.success else "failed")\n',
+        tests="tests/test_metrics.py",
+    ),
+    Mutation(
+        name="soundness-slo-counts-fallbacks-again",
+        why=(
+            "SLO 5 was fallback diagnoses over all diagnoses: 100% on every "
+            "deployment without a model, and a provider outage read as the model "
+            "fabricating citations."
+        ),
+        path="../docs/SLO.md",
+        old='sum(rate(k8sagent_grounding_rejections_total[28d]))\n/\nsum(rate(k8sagent_llm_calls_total{outcome="succeeded"}[28d]))',
+        new='sum(rate(k8sagent_diagnoses_total{path="fallback"}[28d]))\n/\nsum(rate(k8sagent_diagnoses_total[28d]))',
+        tests="tests/test_slo_attainment.py",
+    ),
+    Mutation(
+        name="alert-negates-a-label-value-never-emitted",
+        why=(
+            "A `!=` matcher on a value the platform never emits matches every "
+            "series while reading like a filter — the shape of the soundness "
+            "gate — and the label-value check matched `=` only."
+        ),
+        path="../deploy/alerts/k8s-agent-alerts.yaml",
+        old='            and\n            sum(rate(k8sagent_llm_calls_total{outcome="succeeded"}[6h])) > 0',
+        new='            and\n            sum(rate(k8sagent_llm_calls_total{outcome!="unset"}[6h])) > 0',
+        tests="tests/test_metrics.py",
+    ),
+    Mutation(
         name="webhook-timestamp-nan-never-expires",
         why=(
             "float() accepts 'nan' and every comparison with NaN is false, so a "

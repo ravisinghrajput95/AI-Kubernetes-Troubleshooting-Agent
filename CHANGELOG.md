@@ -8,6 +8,28 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
+## [Unreleased]
+
+### Fixed
+
+- **Every deployment without a model read as 100% grounding rejections, and
+  `GroundingRejectionRateHigh` would have fired on it permanently.** An
+  unconfigured model was recorded as a *failed* model call; `skipped` — which
+  the metric's help text described — was never emitted; and the soundness
+  objective and its alert were gated on `outcome!="skipped"`, which matched
+  everything. A provider outage also read as the model fabricating citations.
+  Unconfigured is `skipped` now, and SLO 5 is rejections over the answers the
+  model gave. Found the first time `docs/SLO.md` was evaluated against a real
+  Prometheus.
+- `GroundingNeverRejectsAnything` counted fallbacks, so one provider timeout in
+  its two-week window hid an inert validator. It counts rejections.
+
+### Added
+
+- `scripts/slo_attainment.py` evaluates the objectives in `docs/SLO.md` against
+  a Prometheus, reading each objective's PromQL from the document itself and
+  refusing any with an empty denominator.
+
 ## [0.3.1] — 2026-09-18
 
 A security release. **Upgrade the cluster agent**: v0.3.0's image carries gRPC

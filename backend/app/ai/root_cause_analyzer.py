@@ -66,7 +66,15 @@ class RootCauseAnalyzer:
         messages = self.prompt_builder.build_messages(investigation, analysis)
         llm_result = self.llm_client.complete(messages)
 
-        metrics.llm_call("succeeded" if llm_result.success else "failed")
+        # `skipped` for a deployment with no model. It was recorded as `failed`,
+        # the label set had no `skipped` at all, and the soundness objective and
+        # its alert were gated on `outcome!="skipped"` — a matcher on a value
+        # never emitted, so it matched everything: every model-less deployment
+        # read as 100% grounding rejections and the alert could never close.
+        if not llm_result.attempted:
+            metrics.llm_call("skipped")
+        else:
+            metrics.llm_call("succeeded" if llm_result.success else "failed")
 
         if llm_result.success:
             parsed = self._parse_llm_json(llm_result.content)

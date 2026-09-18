@@ -571,6 +571,20 @@ That rule is also what makes the endpoint safe to leave unauthenticated, and
 `tests/test_metrics.py` asserts it end to end — an investigation runs against a
 named cluster and the name must appear nowhere in the exposition.
 
+**A deployment without a model records `skipped`, never `failed`, and the
+soundness objective is over the model's *answers*.** Found the first time
+`docs/SLO.md` was evaluated against a real Prometheus
+(`scripts/slo_attainment.py`, which reads the published PromQL rather than a
+copy of it): an unconfigured model was recorded as a failed call, `skipped` —
+which the metric's own help text described — was never emitted, and SLO 5 and
+`GroundingRejectionRateHigh` were gated on `outcome!="skipped"`. A `!=` on a
+value never emitted matches every series while reading like a filter, so every
+model-less deployment read as 100% grounding rejections and would have been
+paged permanently, and a provider outage read as the model fabricating
+citations. `test_every_filtered_label_value_is_seeded` matched `label="` only,
+so negative matchers — and the SLO document's expressions — were never checked;
+it now reads each rule's `expr` and every `promql` block in `docs/SLO.md`.
+
 **Grounding rejection reasons are mapped to a closed category set**
 (`_rejection_category`). The raw reason quotes the model, which quotes cluster
 text, which is attacker-influenced; using it as a label would reopen at the
@@ -2285,7 +2299,7 @@ It is also the discipline that decays first: a passing suite feels like
 evidence, and a mutation not run leaves no trace.
 
 ```bash
-python scripts/mutation_check.py                   # 146 mutations
+python scripts/mutation_check.py                   # 149 mutations
 python scripts/mutation_check.py --suite frontend  # the console's, under vitest
 python scripts/mutation_check.py --suite terraform # `terraform test`, its own CI job
 python scripts/mutation_check.py --list

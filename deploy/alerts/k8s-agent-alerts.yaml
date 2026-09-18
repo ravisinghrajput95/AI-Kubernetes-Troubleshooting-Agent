@@ -147,18 +147,20 @@ spec:
               visible only here.
 
         # --- SLO 5: diagnosis soundness (<5% grounding rejections) ------------
-        # Gated on the model path being in use at all: without OPENAI_API_KEY
-        # every diagnosis is `fallback` by design and this would fire
-        # permanently on a completely healthy platform.
+        # Rejections over the answers the model gave. This was fallback over all
+        # diagnoses, gated on `outcome!="skipped"` — a value the platform never
+        # emitted, so the gate matched everything and every deployment without
+        # a model fired this permanently; a provider outage fired it too,
+        # reported as fabricated citations. No answers, no denominator, no alert.
         - alert: GroundingRejectionRateHigh
           expr: |
             (
-              sum(rate(k8sagent_diagnoses_total{path="fallback"}[6h]))
+              sum(rate(k8sagent_grounding_rejections_total[6h]))
               /
-              clamp_min(sum(rate(k8sagent_diagnoses_total[6h])), 0.001)
+              clamp_min(sum(rate(k8sagent_llm_calls_total{outcome="succeeded"}[6h])), 0.001)
             ) > 0.05
             and
-            sum(rate(k8sagent_llm_calls_total{outcome!="skipped"}[6h])) > 0
+            sum(rate(k8sagent_llm_calls_total{outcome="succeeded"}[6h])) > 0
           for: 30m
           labels:
             severity: ticket
@@ -177,10 +179,12 @@ spec:
         # The two-sided half. Zero rejections over a long window may mean the
         # grounding checks have been weakened into inertness — a failure that is
         # silent by construction, because an over-strict check is loud and an
-        # under-strict one simply accepts everything.
+        # under-strict one simply accepts everything. Counted on rejections, not
+        # on fallbacks: one provider timeout in two weeks is a fallback, and it
+        # used to hide an inert validator for the whole window.
         - alert: GroundingNeverRejectsAnything
           expr: |
-            sum(increase(k8sagent_diagnoses_total{path="fallback"}[14d])) == 0
+            sum(increase(k8sagent_grounding_rejections_total[14d])) == 0
             and
             sum(increase(k8sagent_diagnoses_total{path="grounded"}[14d])) > 500
           for: 1h

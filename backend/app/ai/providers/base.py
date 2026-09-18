@@ -50,6 +50,12 @@ class Completion:
     error: str = ""
     model: str = ""
     provider: str = ""
+    # False only when no model is configured, so nothing was called. Kept apart
+    # from `success` because the two mean different things to an operator:
+    # a failed call is an outage, an unattempted one is a deployment that chose
+    # to run without a model — and counting the second as the first made every
+    # such deployment read as a permanently failing provider.
+    attempted: bool = True
 
 
 @runtime_checkable
@@ -114,6 +120,7 @@ class HttpProvider:
                 success=False,
                 error=f"No API key configured for the {self.name} provider",
                 provider=self.name,
+                attempted=False,
             )
 
         last_error = ""

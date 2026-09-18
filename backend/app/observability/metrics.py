@@ -257,7 +257,7 @@ _KNOWN_LABELS: tuple[tuple[Counter, str, tuple[str, ...]], ...] = (
         "reason",
         ("signature", "malformed", "duplicate", "submit_failed"),
     ),
-    (llm_calls_total, "outcome", ("succeeded", "failed")),
+    (llm_calls_total, "outcome", ("succeeded", "failed", "skipped")),
     (diagnoses_total, "path", ("grounded", "fallback")),
     (
         grounding_rejections_total,

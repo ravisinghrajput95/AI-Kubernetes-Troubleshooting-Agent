@@ -134,15 +134,28 @@ and visible here.
 ### 5. Diagnosis soundness — grounding rejection rate < 5.0%
 
 ```promql
-sum(rate(k8sagent_diagnoses_total{path="fallback"}[28d]))
+sum(rate(k8sagent_grounding_rejections_total[28d]))
 /
-sum(rate(k8sagent_diagnoses_total[28d]))
+sum(rate(k8sagent_llm_calls_total{outcome="succeeded"}[28d]))
 ```
 
-**Only meaningful when `OPENAI_API_KEY` is set.** Without it every diagnosis is
-`fallback` by design and this SLO reads 100% while the platform is entirely
-healthy. Gate the alert on `k8sagent_llm_calls_total{outcome!="skipped"}` being
-non-zero.
+**Of the answers the model actually gave, the share grounding rejected.** A
+rejection is recorded once per answer refused, and an answer is a call that
+succeeded, so neither side counts a diagnosis the model never wrote.
+
+**It used to be `fallback / all diagnoses`, gated on
+`k8sagent_llm_calls_total{outcome!="skipped"}` — and neither half held**, which
+evaluating it against a real Prometheus showed the first time anyone did. The
+platform never emitted `skipped`: an unconfigured model was recorded as a
+*failed* call, so the gate matched everything, and every deployment running
+without a model — a supported configuration — read **100% rejections** and
+would have been paged by `GroundingRejectionRateHigh` permanently. And a model
+*outage* also sends every diagnosis to the fallback, so the old ratio reported a
+provider being down as the model fabricating citations — the same confusion
+`evals.live` had to be taught out of. An unconfigured model now records
+`skipped`; an outage is `llm_calls_total{outcome="failed"}`, an availability
+signal rather than a soundness one; and with no answers in the window there is
+no denominator and nothing to alert on.
 
 This is a **two-sided** objective, which is unusual and is the point.
 

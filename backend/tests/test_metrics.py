@@ -194,6 +194,48 @@ class TestGroundingReasonsAreCategories:
         assert "contradiction" in reasons
 
 
+class TestAnUnconfiguredModelIsSkippedNotFailed:
+    """A deployment without a model is supported, not a failing provider.
+
+    It was recorded as `llm_calls_total{outcome="failed"}` on every
+    investigation, and `skipped` — which the metric's own help text described —
+    was never emitted. The soundness objective's gate matched on it with `!=`,
+    so it matched everything and every model-less deployment read as 100%
+    grounding rejections. Found by evaluating docs/SLO.md against a real
+    Prometheus during a soak.
+    """
+
+    @staticmethod
+    def _delta(before: str, after: str, outcome: str) -> float:
+        label = f'outcome="{outcome}"'
+        return _value(after, "k8sagent_llm_calls_total", label) - _value(
+            before, "k8sagent_llm_calls_total", label
+        )
+
+    def test_no_configured_model_is_recorded_as_skipped(self, api):
+        before = scrape(api)
+        api.post("/investigate", json={"context": "test-cluster"})
+        after = scrape(api)
+
+        assert self._delta(before, after, "skipped") >= 1
+        assert self._delta(before, after, "failed") == 0, (
+            "a deployment with no model configured was counted as a failed model call"
+        )
+
+    def test_a_call_that_fails_is_still_failed(self, api, monkeypatch):
+        """The control: `skipped` must not swallow a real outage."""
+        monkeypatch.setattr(
+            "app.ai.llm_client.LLMClient.complete",
+            lambda self, messages: Completion(success=False, error="timed out"),
+        )
+        before = scrape(api)
+        api.post("/investigate", json={"context": "test-cluster"})
+        after = scrape(api)
+
+        assert self._delta(before, after, "failed") >= 1
+        assert self._delta(before, after, "skipped") == 0
+
+
 class TestQueueDepthSampling:
     """The consumer's sampler, reached directly.
 
@@ -613,18 +655,55 @@ class TestTheShippedAlertRulesMatchTheShippedMetrics:
             f"Such a rule evaluates successfully and fires never."
         )
 
+    SLO_DOC = Path(__file__).resolve().parents[2] / "docs" / "SLO.md"
+
+    def _published_expressions(self) -> list[str]:
+        """Every PromQL an operator is handed: each rule's `expr` — not the raw
+        file, whose comments quote expressions too — and each block in the SLO
+        document."""
+        import yaml
+
+        expressions = [
+            rule["expr"]
+            for document in yaml.safe_load_all(self.RULES.read_text())
+            if document and document.get("kind") == "PrometheusRule"
+            for group in document["spec"]["groups"]
+            for rule in group["rules"]
+        ]
+        expressions += re.findall(r"```promql\n(.*?)```", self.SLO_DOC.read_text(), re.S)
+        return expressions
+
     def test_every_filtered_label_value_is_seeded(self, api):
-        """A rule on an unseeded label value reads 'no data' while healthy."""
+        """A matcher on a label value the platform never emits is inert.
+
+        `=` on one reads "no data" while healthy and fires on the second
+        failure. **`!=` on one matches everything**, which is worse because it
+        looks like a filter: the soundness objective and its alert were gated on
+        `k8sagent_llm_calls_total{outcome!="skipped"}`, `skipped` was never
+        emitted, and every deployment without a model read as 100% grounding
+        rejections. This test matched `label="` only, so the `!=` form was
+        never checked — and the SLO document's expressions were never checked
+        at all.
+        """
         payload = self._exposition(api)
-        pairs = re.findall(r'(k8sagent_[a-z_]+)\{(\w+)="([^"]+)"', self.RULES.read_text())
-        assert pairs, "the rules must filter on some label values"
+        matchers = [
+            (metric, label, operator, value)
+            for expression in self._published_expressions()
+            for metric, inner in re.findall(r"(k8sagent_[a-z_]+)\{([^}]*)\}", expression)
+            for label, operator, value in re.findall(r'(\w+)\s*(!=|=~|!~|=)\s*"([^"]*)"', inner)
+            if operator in ("=", "!=")
+        ]
+        assert any(op == "=" for *_, op, _ in matchers), "expected some equality matchers"
 
         missing = [
-            f'{metric}{{{label}="{value}"}}'
-            for metric, label, value in pairs
-            if not re.search(rf"{metric}\{{[^}}]*{label}=\"{value}\"", payload)
+            f'{metric}{{{label}{operator}"{value}"}}'
+            for metric, label, operator, value in matchers
+            if not re.search(rf'{metric}\{{[^}}]*{label}="{re.escape(value)}"', payload)
         ]
-        assert not missing, f"alert rules filter on series that are never seeded: {missing}"
+        assert not missing, (
+            f"published expressions match on label values the platform never emits: {missing}. "
+            f"An `=` there reads 'no data'; a `!=` matches every series."
+        )
 
     def test_no_rule_can_reference_an_identifying_label(self):
         """The cardinality and disclosure rule, restated where it is easy to break.
