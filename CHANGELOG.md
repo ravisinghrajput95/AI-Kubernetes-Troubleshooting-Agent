@@ -8,7 +8,12 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
-## [Unreleased]
+## [0.3.1] — 2026-09-18
+
+A security release. **Upgrade the cluster agent**: v0.3.0's image carries gRPC
+and `x/text` versions with reachable advisories, and this is the first release
+whose image does not. No configuration has to change; the console container is
+the one thing that behaves differently (*Upgrading* in `docs/UPGRADE.md`).
 
 ### Security
 

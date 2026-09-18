@@ -140,6 +140,26 @@ whose rows have moved on. Empty is correct.
 These change what the platform *does* without any configuration changing. They
 are the ones that surprise people.
 
+### Upgrading into v0.3.1 (agent dependencies, the console container)
+
+A security release; no configuration has to change.
+
+1. **Pull the new agent image.** `ghcr.io/<owner>/k8s-ops-agent:0.3.1` (also
+   `0.3` and `latest`). v0.3.0's image carries gRPC 1.83.0 and `x/text` 0.37.0,
+   both with reachable advisories. The agent's wire protocol is unchanged, so
+   agents can be upgraded cluster by cluster against any v0.3.x platform.
+2. **The console container is a static build now** — only if you run it through
+   `docker compose`. It serves files through unprivileged nginx on 8080, which
+   compose still publishes as 3000, so the address is unchanged. What changed is
+   `react_PUBLIC_API_BASE_URL`: it is baked in at build time, so after changing
+   it run `docker compose up -d --build frontend`, not just a restart. The
+   Helm chart does not deploy the console and is unaffected.
+3. **A webhook with a non-finite timestamp (`nan`, `inf`) is refused with
+   401.** No real sender uses one.
+4. **An `API_TOKENS` entry shorter than 24 characters logs a warning at
+   startup**, naming its subject. It still works; replace it with
+   `openssl rand -hex 32` when convenient.
+
 ### Upgrading into v0.3.0 (root causes, reconnect grace, verifying TLS)
 
 No configuration has to change, and nothing stops an existing deployment. Four
