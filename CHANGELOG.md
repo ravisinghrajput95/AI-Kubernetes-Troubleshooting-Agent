@@ -8,6 +8,33 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
+## [Unreleased]
+
+### Fixed
+
+- **The live timeline listed every event emitted before the page attached
+  twice.** Starting an investigation from the console navigates to its address;
+  the page seeded its timeline from `GET /investigations/{id}` and then opened
+  the stream, which replays its backlog from the beginning by design, and the
+  console appended both copies. Every run started from the console opened with
+  "Investigation queued / Investigation started" twice. The console now drops
+  an event it already holds by sequence, as the backend's `EventSequencer`
+  does. Found in a screenshot taken for the README.
+- **A long evidence line rendered below its own bullet in the report.** A
+  summary quoting an image reference is one unbreakable token, so the row
+  wrapped rather than overflowing, and no width check could see it.
+
+### Changed
+
+- `scripts/console_journey.mjs` now fails on a duplicated lifecycle row and on
+  a report row sitting below its bullet, each confirmed to fire against the
+  defect as it shipped. Its progress-row threshold counts every row rather than
+  a keyword subset and is a floor, not a test of the transport: measured, the
+  row count does not separate streaming from polling on a fast run, and the
+  requests the browser made already do.
+- The README shows the console: a GIF of an investigation and three stills,
+  under `docs/images/`, each pinned by a test.
+
 ## [0.3.0] — 2026-09-17
 
 Seventy commits, no breaking configuration change — but **investigations now
