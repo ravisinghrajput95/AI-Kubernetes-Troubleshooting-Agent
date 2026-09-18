@@ -2427,7 +2427,7 @@ procedures, so read them before changing the thing they describe:
 | `docs/SSO_GROUP_MAPPING.md` | Okta and Entra worked examples; **Entra's >200-group overage silently empties the claim**, so those users get `RBAC_DEFAULT_ROLE` — `admin` on a default install |
 | `docs/RUNBOOK_BACKUP_RESTORE.md` | The CA private key is the one irreplaceable file; losing only the enrolment store silently forgets revocations |
 | `docs/DATA_PROTECTION.md` | What is stored, why there is no application-layer blob encryption, retention gaps, residency |
-| `docs/SLO.md` | Proposed targets, **not measured attainment**; soundness is two-sided and queue depth means "add workers, not slots" |
+| `docs/SLO.md` | Proposed targets; **measured once, 19 minutes on one host** (six met, soundness unmeasured — the Mac idle-slept; run soaks under `caffeinate -i`), not production attainment; soundness is two-sided and queue depth means "add workers, not slots" |
 | `docs/TENANT_USAGE_REPORTING.md` | Chargeback needs a `BYPASSRLS` role; the application role produces a clean empty report instead of an error |
 | `docs/UPGRADE.md` | Forward-only migrations, what the drain does and does not cover, and the per-milestone behaviour changes |
 | `deploy/helm/k8s-agent/README.md` | The chart reproduces the platform's startup refusals at render time; **the kubeconfig identity needs the `impersonate` verb** or every investigation fails pointing at the user's RBAC. Probes must stay on `/health/live` and `/health/ready` — they were on `/health` once, which made the whole readiness split inert in a Helm deployment — and the `preStop` sleep is what covers the Endpoints propagation window |

@@ -301,8 +301,10 @@ as a defect in this repository, not as harmless caution.
   investigation spawns ~15 kubectl processes and process creation is a host
   resource. Add workers on an agent fleet, add hosts on a kubeconfig fleet.
   Cross-host is unmeasured.
-- **`docs/SLO.md` proposes targets; it does not report attainment.** There is no
-  production signal to measure against.
+- **`docs/SLO.md` proposes targets and has been measured once**: 19 minutes on
+  one Mac against one kind cluster, where six of seven were met and soundness
+  went unmeasured. That is evidence the expressions work, not production
+  attainment; there is no production signal to measure against.
 
 The full backlog, with severity and effort, is in
 [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md); the measured

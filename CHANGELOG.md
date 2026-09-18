@@ -26,6 +26,11 @@ to. A change that fixed a defect names the defect.
 
 ### Added
 
+- **The SLOs have been measured, once and briefly**: 19 minutes on one Mac
+  against one kind cluster, 360 investigations — success, latency, submission
+  availability, completeness, fleet visibility and queue depth all met;
+  soundness unmeasured because the Mac idle-slept through its phase. Recorded
+  in `docs/SLO.md` with what it cannot say.
 - `scripts/slo_attainment.py` evaluates the objectives in `docs/SLO.md` against
   a Prometheus, reading each objective's PromQL from the document itself and
   refusing any with an empty denominator.

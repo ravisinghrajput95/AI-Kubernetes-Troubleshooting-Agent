@@ -11,6 +11,70 @@ from measuring rather than reasoning. Nothing here has been observed over a
 traffic yet. Adopt them as targets, then revise them against what you observe —
 and treat the first month as calibration rather than as a breach.
 
+## Measured once: 19 minutes on one host
+
+**The only observation of these objectives, and it is small.** It says the
+published expressions evaluate against a real Prometheus and that a working
+platform clears the targets under a sustained synthetic load. It does not say
+what a production deployment attains.
+
+| # | Objective | Target | Measured | Sample |
+|---|---|---|---|---|
+| 1 | Investigation success rate | ≥ 99.0% | **100%** | 360 investigations |
+| 2 | Investigation latency p95 | < 30 s | **≤ 0.5 s** (0.56 s at the client) | 360 |
+| 3 | Submission availability | ≥ 99.9% | **100%** | 362 submissions |
+| 4 | Evidence completeness | ≥ 95.0% | **100%** | 9,889 evidence records |
+| 5 | Grounding rejection rate | < 5.0% | **not measured** | — |
+| 6 | Fleet visibility | ≥ 99.0% | **100%** | 74 samples |
+| 7 | Queue depth below capacity | ≥ 99.0% of samples | **100%** | 74 samples |
+
+**Conditions**, 2026-09-18, 13:22:00–13:40:30 UTC: one Apple Silicon Mac under
+Docker Desktop; two workers on Postgres and Redis; one kind cluster carrying the
+nine induced faults of `docs/qa/audit-faults.yaml`; one Go agent reading as the
+caller through impersonation, and every investigation collected through it; the
+F18 collection cache at its defaults; no model; `scripts/soak_bench.py
+--concurrency 2 --pause 12`. Evaluated with
+
+```bash
+python scripts/slo_attainment.py --start 2026-09-18T13:22:00Z --end 2026-09-18T13:40:30Z \
+    --runs soak.json --enrolled 1
+```
+
+which reads each objective's PromQL out of this document rather than a copy of
+it, so the expressions above are the ones measured.
+
+**What it cannot say:**
+
+- **Nineteen minutes is not 28 days**, and the run was meant to be two hours.
+  The Mac idle-slept at minute 19 (`pmset -g log`: "Entering Sleep state due to
+  'Idle'"), waking only for maintenance for the rest of the window; the soak's
+  own guard refused the full run for a 15-minute gap with nothing completing,
+  and the evaluation is limited to the window before the sleep. **Run a soak
+  under `caffeinate -i`, on power, lid open.**
+- **One friendly cluster is not customers' clusters.** Success rate and
+  completeness read 100% because nothing here was unreachable, refusing reads,
+  or running an older agent — the failures SLO 1 is set at 99% to absorb.
+- **Latency is bounded, not resolved.** Every investigation fell in
+  `k8sagent_investigation_duration_seconds`' lowest bucket (0.5 s), so the p95
+  Prometheus reports, 0.47 s, is interpolation inside that bucket. The client's
+  own end-to-end timings give p95 0.56 s — including its polling interval; the
+  median over the event stream was 0.08 s. For a 30 s objective the resolution
+  is enough; for tracking regressions below half a second it is not.
+- **SLO 3 is measured at the load generator**, which is the vantage point this
+  document prescribes (an ingress); the platform has no per-route status series.
+- **SLO 5 has no measurement.** Its phase — the same load with a local gemma4
+  answering — started while the Mac was asleep; four investigations timed out
+  and the soak refused the phase. `docs/EVALUATION.md` has the model-answer
+  measurements that exist (20/20 grounded, gemma4 and `gpt-4o-mini`), which are
+  the same ratio over a golden corpus rather than live load.
+
+**What it found** is the part that made it worth running. Evaluating SLO 5 as
+published reported **100% grounding rejections on a deployment with no model**:
+an unconfigured model was recorded as a failed call, the gate matched on a label
+value the platform never emitted, and `GroundingRejectionRateHigh` would have
+fired permanently on every such deployment. Fixed before this measurement was
+recorded — see objective 5 below.
+
 ## Why the objectives are shaped the way they are
 
 Two constraints from the architecture drive everything below.
