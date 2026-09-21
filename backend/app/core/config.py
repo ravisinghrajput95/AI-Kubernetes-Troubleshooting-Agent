@@ -505,6 +505,31 @@ class Settings(BaseSettings):
     # unchanged.
     agent_cert_ttl_hours: float = Field(default=24 * 90, validation_alias="AGENT_CERT_TTL_HOURS")
 
+    # The largest evidence message the gateway will accept, in bytes.
+    #
+    # **gRPC defaults this to 4 MiB and nothing here ever set it**, which put
+    # the transport's ceiling an order of magnitude below the platform's own:
+    # `MAX_LIST_ITEMS` allows 2,000 objects and a pod list crosses 4 MiB at
+    # roughly 4,700, so a large cluster's list read was refused
+    # `RESOURCE_EXHAUSTED` — and the refusal **ends the Connect stream**, so the
+    # agent reconnects and the whole collection fails rather than that one read
+    # degrading. Measured against a real gateway: 3.7 MB accepted, 11.2 MB
+    # refused with "Received message larger than max (11160087 vs. 4194304)".
+    #
+    # 32 MiB is chosen against the platform's own ceiling rather than picked for
+    # roundness: 25,000 pods — ten times the default cap — is 21.9 MB of JSON.
+    # It is bounded on purpose. An agent is a customer's process and its
+    # payload is attacker-influenced, so "as large as it likes" is not the
+    # alternative; a fleet of agents each sending unbounded messages is the
+    # failure this number exists to bound.
+    #
+    # What it does *not* do is bound what arrives: the payload is still one
+    # message. Chunked evidence would fix that and is a wire change — see
+    # docs/PERFORMANCE_ENVELOPE.md.
+    agent_max_message_bytes: int = Field(
+        default=32 * 1024 * 1024, validation_alias="AGENT_MAX_MESSAGE_BYTES"
+    )
+
     # How often the gateway re-reads the revocation list and drops any live
     # stream whose certificate has since been revoked. Revocation that only
     # took effect at reconnect would mean nothing against a stream designed to

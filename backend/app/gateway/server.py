@@ -361,8 +361,22 @@ class AgentGateway:
             return await self._start_plaintext()
         return await self._start_mtls()
 
+    @staticmethod
+    def _server_options() -> list[tuple[str, int]]:
+        """Message sizes, which gRPC otherwise defaults to 4 MiB.
+
+        Unset, the transport refused any evidence message above that and ended
+        the stream with it — below the platform's own `MAX_LIST_ITEMS` ceiling,
+        on the path built for real fleets.
+        """
+        limit = settings.agent_max_message_bytes
+        return [
+            ("grpc.max_receive_message_length", limit),
+            ("grpc.max_send_message_length", limit),
+        ]
+
     async def _start_plaintext(self) -> int:
-        server = grpc.aio.server()
+        server = grpc.aio.server(options=self._server_options())
         agent_pb2_grpc.add_AgentGatewayServicer_to_server(
             AgentGatewayService(self._registry, None), server
         )
@@ -389,7 +403,7 @@ class AgentGateway:
         # Requires and verifies a client certificate. `Connect` is only
         # reachable here, which is what makes an unverified stream impossible
         # rather than merely refused.
-        gateway = grpc.aio.server()
+        gateway = grpc.aio.server(options=self._server_options())
         agent_pb2_grpc.add_AgentGatewayServicer_to_server(
             AgentGatewayService(self._registry, self._identity), gateway
         )
@@ -406,7 +420,7 @@ class AgentGateway:
 
         # Requests no client certificate, because an enrolling agent has none.
         # The only thing reachable here is `Register` with a bootstrap token.
-        enrolment = grpc.aio.server()
+        enrolment = grpc.aio.server(options=self._server_options())
         agent_pb2_grpc.add_AgentGatewayServicer_to_server(
             AgentGatewayService(self._registry, self._identity), enrolment
         )

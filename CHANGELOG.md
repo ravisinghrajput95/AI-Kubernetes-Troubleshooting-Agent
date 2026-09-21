@@ -12,6 +12,14 @@ to. A change that fixed a defect names the defect.
 
 ### Fixed
 
+- **A list read past roughly 4,700 objects failed outright through an agent,
+  and took the stream with it.** The gateway passed no options to
+  `grpc.aio.server()`, so gRPC's 4 MiB default was the transport's ceiling —
+  below the platform's own `MAX_LIST_ITEMS`. Measured against a real gateway:
+  3.7 MB accepted, 11.2 MB refused with `RESOURCE_EXHAUSTED`, and a refusal
+  there ends the `Connect` stream rather than degrading one read.
+  `AGENT_MAX_MESSAGE_BYTES` (32 MiB) is the ceiling now, bounded on purpose.
+
 - **A list read through an agent decoded every item before the cap dropped
   any**, so `MAX_LIST_ITEMS` bounded what that path kept and never what it
   held — on the transport the platform is built around, while the kubeconfig

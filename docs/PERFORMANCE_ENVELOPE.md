@@ -300,6 +300,21 @@ bytes either way. What is gone is the decoded expansion of every item past the
 cap, which was the term that grew with the cluster. Bounding the message itself
 needs a streaming `Collect`, which is a wire change and is not built.
 
+**And the message had a ceiling nobody had set.** `grpc.aio.server()` defaults
+the receive limit to 4 MiB, the gateway passed no options, and a pod list
+crosses 4 MiB at roughly **4,700 objects** — below the 2,000-object cap's own
+headroom and far below any large cluster. Measured against a real gateway with
+an enrolled agent: **3.7 MB accepted, 11.2 MB refused** with
+`RESOURCE_EXHAUSTED: Received message larger than max (11160087 vs. 4194304)`.
+A refusal there is not a degraded read: it **ends the Connect stream**, so the
+agent reconnects and everything in flight for that cluster is lost. The
+transport built for real fleets could not carry a real fleet's list read.
+
+`AGENT_MAX_MESSAGE_BYTES` (32 MiB) is the ceiling now — chosen against the
+platform's own, since 25,000 pods is 21.9 MB — and it stays a number rather
+than becoming unlimited, because an agent is a customer's process and its
+payload is attacker-influenced.
+
 **These numbers are `tracemalloc` on the decode**, not process RSS, so they are
 not comparable with the 8.4 MB above — that is the executor measured end to end
 through a real subprocess. The comparable pair is the two right-hand columns,

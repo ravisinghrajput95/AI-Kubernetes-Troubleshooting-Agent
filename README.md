@@ -284,13 +284,16 @@ as a defect in this repository, not as harmless caution.
   synthetic fleets on one machine, and the longest runs are hour-long soaks.
   That is the largest gap between this and something you should trust with an
   incident, and no amount of further code closes it.
-- **A list read arrives whole over the agent link, even though it is now
-  decoded as it is read.** Both providers use the same streaming reader, so
-  peak decode is flat past `MAX_LIST_ITEMS` on either — 12.2 MB against 128.4
-  MB before, at 25,000 pods. What is not bounded is the message: the agent
-  sends one protobuf payload, 21.9 MB of JSON at that size, and a worker holds
-  it. A streaming `Collect` would fix that and is a wire change nobody has
-  needed yet.
+- **A list read arrives whole over the agent link**, even though it is now
+  decoded as it is read. Peak decode is flat past `MAX_LIST_ITEMS` on either
+  provider — 12.2 MB against 128.4 MB before, at 25,000 pods — but the agent
+  still sends one protobuf message, 21.9 MB of JSON at that size, and a worker
+  holds it. Until this release the gateway also kept gRPC's **4 MiB default**,
+  so a list past roughly 4,700 pods was refused outright *and the refusal ended
+  the Connect stream*; the limit is now `AGENT_MAX_MESSAGE_BYTES` (32 MiB), far
+  above the platform's own ceiling and still bounded, because an agent's
+  payload is attacker-influenced. Bounding what *arrives* needs chunked
+  evidence, which is a wire change nobody has needed yet.
 - **Real models are measured, not gated here.** `python -m evals.live` scores
   the golden corpus against a configured model and fails below 80% of answers
   surviving grounding. `gpt-4o-mini`: 20/20. `claude-opus-5` scored 11/20 until

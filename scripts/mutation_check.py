@@ -1943,6 +1943,20 @@ MUTATIONS = [
         tests="tests/test_documentation.py",
     ),
     Mutation(
+        name="gateway-keeps-grpc-4mib-default",
+        why=(
+            "gRPC defaults the receive limit to 4 MiB and the gateway never set "
+            "it, so an evidence message above that was refused RESOURCE_EXHAUSTED "
+            "— and the refusal ends the Connect stream, so the agent reconnects "
+            "and the whole collection fails. A pod list crosses 4 MiB at about "
+            "4,700 objects, below the platform's own MAX_LIST_ITEMS ceiling."
+        ),
+        path="app/gateway/server.py",
+        old="        gateway = grpc.aio.server(options=self._server_options())",
+        new="        gateway = grpc.aio.server()",
+        tests="tests/test_agent_message_size.py",
+    ),
+    Mutation(
         name="agent-payload-is-built-whole-then-trimmed",
         why=(
             "The agent path decoded the whole list and capped after, so "
