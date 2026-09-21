@@ -1,0 +1,109 @@
+# Publishes the platform image the Helm chart deploys.
+#
+# The chart references this image by name, and until it existed anywhere that
+# reference was a path nobody could pull: `helm install` with the chart's own
+# defaults rendered cleanly and sat in ImagePullBackOff. Every path in this
+# repository builds its own image — the kind verification, both Terraform
+# roots, the chart tests — so the published name was the one configuration
+# nothing exercised.
+#
+# A mirror of `agent-image.yml`, deliberately: same triggers, same tag set,
+# same provenance. The two images are the two halves of a deployment and an
+# operator should not have to learn two publishing stories.
+
+name: Backend image
+
+on:
+  push:
+    branches: [main]
+    # Only when something that ends up inside the image changes. The generated
+    # wire bindings live under `backend/`, so a schema change is covered here.
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-image.yml"
+  # Releases are what an operator pins to; `main` builds are `edge`. A separate
+  # trigger rather than a tag filter on `push`, because `paths` would apply to
+  # the tag push too and skip the release build whenever the tag happened to
+  # contain no backend changes.
+  release:
+    types: [published]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository_owner }}/k8s-agent-backend
+
+jobs:
+  publish:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required to push to GHCR with the automatic token.
+      packages: write
+      # Lets the build attach provenance attestations to the published image.
+      id-token: write
+      attestations: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # The image holds a kubeconfig and reads customer clusters, so it is
+      # built only from a tree that already passed the platform's own checks —
+      # the same reasoning that gates the agent image on `go test`.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Lint and test
+        working-directory: backend
+        run: |
+          pip install -r requirements.txt -r requirements-dev.txt
+          ruff check .
+          ruff format --check .
+          python -m pytest -q
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=edge,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+
+      # arm64 as well as amd64, for the same reason as the agent: Graviton and
+      # Ampere node pools are ordinary now. The Dockerfile already resolves
+      # kubectl by `TARGETARCH`, so the pinned binary follows the platform.
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # An operator installing this into their own cluster can verify where it
+      # was built from, which is the least a supply chain should offer.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
