@@ -5,6 +5,8 @@
 variables {
   auth              = { mode = "token", tokens_secret_name = "k8s-agent-tokens" }
   state_secret_name = "k8s-agent-state"
+  # Required: no backend image is published, so every caller names its own.
+  image_repository = "registry.example.com/k8s-agent-backend"
 }
 
 run "state_comes_from_one_secret_for_both_urls" {

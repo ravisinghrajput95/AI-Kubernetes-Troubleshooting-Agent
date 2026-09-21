@@ -55,6 +55,7 @@ variables {
   private_subnet_ids         = ["subnet-aaaa", "subnet-bbbb"]
   workload_security_group_id = "sg-0workloads"
   auth                       = { mode = "token", tokens_secret_name = "k8s-agent-tokens" }
+  image_repository           = "registry.example.com/k8s-agent-backend"
 }
 
 run "the_database_url_is_encrypted_and_names_the_instance" {

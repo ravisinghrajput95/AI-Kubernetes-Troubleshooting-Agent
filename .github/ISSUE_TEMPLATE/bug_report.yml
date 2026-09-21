@@ -1,0 +1,49 @@
+name: Bug report
+description: Something the platform did that it should not have, or did not do that it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **If this is a security issue, do not open an issue.** `SECURITY.md` says
+        how to report one privately.
+
+        What is most useful here is the correlation id and what the platform
+        said, rather than a description of what it seemed to do. Every response
+        carries `X-Correlation-ID`, and it is the investigation id wherever one
+        exists, so it ties a request to the logs of whichever worker ran it.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what you expected instead
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The exact command, request or click. A cluster state that triggers it helps more than a description of one.
+      placeholder: |
+        curl -X POST localhost:8000/investigations -H 'Authorization: Bearer …' -d '{"context":"prod"}'
+    validations:
+      required: true
+  - type: input
+    id: correlation
+    attributes:
+      label: Correlation id
+      description: From the `X-Correlation-ID` response header, or the investigation id.
+  - type: textarea
+    id: deployment
+    attributes:
+      label: Version and shape
+      description: The release or commit; single process or fleet; kubeconfig or agent; `AUTH_MODE`; whether a model is configured.
+      placeholder: |
+        v0.3.1, fleet (Postgres + Redis, 2 workers), agent path, AUTH_MODE=oidc, no model configured
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: What the platform reported
+      description: Log lines, the investigation's `error`, or the evidence records it could not collect. Redact anything from your cluster you would not publish.
+      render: text

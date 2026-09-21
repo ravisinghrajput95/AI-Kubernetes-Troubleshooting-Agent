@@ -1,5 +1,9 @@
 # AI Kubernetes Troubleshooting Agent
 
+[![CI](https://github.com/ravisinghrajput95/AI-Kubernetes-Troubleshooting-Agent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ravisinghrajput95/AI-Kubernetes-Troubleshooting-Agent/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ravisinghrajput95/AI-Kubernetes-Troubleshooting-Agent?sort=semver)](https://github.com/ravisinghrajput95/AI-Kubernetes-Troubleshooting-Agent/releases)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 Investigates Kubernetes incidents the way an experienced SRE does — gather
 evidence, form hypotheses, gather more evidence to test them, then explain the
 conclusion with citations back to the commands that produced it.

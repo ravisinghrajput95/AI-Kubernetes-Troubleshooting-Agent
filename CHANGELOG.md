@@ -24,6 +24,17 @@ to. A change that fixed a defect names the defect.
 - `GroundingNeverRejectsAnything` counted fallbacks, so one provider timeout in
   its two-week window hid an inert validator. It counts rejections.
 
+### Changed
+
+- **The Helm chart requires `image.repository` and refuses to render without
+  it.** It defaulted to `ghcr.io/…/k8s-agent-backend`, which no workflow
+  publishes and which anonymous pulls answer 403 — so an install with the
+  chart's own defaults rendered cleanly and sat in ImagePullBackOff. No working
+  deployment changes: that default could never have pulled. The Terraform
+  modules require it for the same reason, and the AWS root now passes one
+  rather than inheriting the unpublished default. Build `backend/Dockerfile`
+  and push it somewhere your cluster can read.
+
 ### Added
 
 - **The SLOs have been measured, once and briefly**: 19 minutes on one Mac

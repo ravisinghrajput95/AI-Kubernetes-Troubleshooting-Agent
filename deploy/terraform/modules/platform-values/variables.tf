@@ -88,8 +88,17 @@ variable "replica_count" {
 }
 
 variable "image_repository" {
-  type    = string
-  default = "ghcr.io/ravisinghrajput95/k8s-agent-backend"
+  description = <<-EOT
+    The backend image, which you build and push: none is published. This
+    defaulted to an unpublished ghcr.io path, so a deployment that named no
+    image rendered cleanly and then sat in ImagePullBackOff.
+  EOT
+  type        = string
+
+  validation {
+    condition     = length(trimspace(var.image_repository)) > 0
+    error_message = "image_repository is required: build backend/Dockerfile and push it to a registry the cluster can pull from."
+  }
 }
 
 variable "image_tag" {

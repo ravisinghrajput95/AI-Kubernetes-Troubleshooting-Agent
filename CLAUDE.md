@@ -2299,7 +2299,7 @@ It is also the discipline that decays first: a passing suite feels like
 evidence, and a mutation not run leaves no trace.
 
 ```bash
-python scripts/mutation_check.py                   # 149 mutations
+python scripts/mutation_check.py                   # 152 mutations
 python scripts/mutation_check.py --suite frontend  # the console's, under vitest
 python scripts/mutation_check.py --suite terraform # `terraform test`, its own CI job
 python scripts/mutation_check.py --list
@@ -2337,7 +2337,7 @@ never delete it.
 
 The `integration-verify` CI job stands the chart up on kind — ingress-nginx,
 metrics-server, a prometheus-operator Prometheus, and Postgres and Redis
-deployed *beside* the chart because it bundles neither — then asserts 32
+deployed *beside* the chart because it bundles neither — then asserts 49
 properties against the live deployment. **Required, not opt-in**: a job allowed
 to fail is the same as no job, and this defect class has reached `main` four
 times with a green suite.

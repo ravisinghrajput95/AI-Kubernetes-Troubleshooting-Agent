@@ -64,6 +64,8 @@ MODULES = [
 SCENARIOS: dict[str, dict] = {
     "token-single-tenant": {
         "inputs": {
+            # Required: no backend image is published.
+            "image_repository": "registry.example.com/k8s-agent-backend",
             "auth": {"mode": "token", "tokens_secret_name": "k8s-agent-tokens"},
             "state_secret_name": "k8s-agent-state",
             "hostname": "agent.example.com",
@@ -78,6 +80,8 @@ SCENARIOS: dict[str, dict] = {
     },
     "oidc-shared-with-gateway": {
         "inputs": {
+            # Required: no backend image is published.
+            "image_repository": "registry.example.com/k8s-agent-backend",
             "auth": {
                 "mode": "oidc",
                 "oidc_issuer": "https://idp.example.com",

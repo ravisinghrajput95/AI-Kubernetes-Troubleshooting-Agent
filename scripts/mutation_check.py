@@ -1918,6 +1918,42 @@ MUTATIONS = [
         tests="tests/test_metrics.py",
     ),
     Mutation(
+        name="ci-assertion-count-drifts-between-documents",
+        why=(
+            "CLAUDE.md said the integration job asserts 32 properties while it "
+            "asserted 49 and the README said so; a number kept in two documents "
+            "disagrees with itself unless something compares them."
+        ),
+        path="../CLAUDE.md",
+        old="then asserts 49\nproperties against the live deployment",
+        new="then asserts 32\nproperties against the live deployment",
+        tests="tests/test_documentation.py",
+    ),
+    Mutation(
+        name="status-badge-names-a-workflow-that-does-not-exist",
+        why=(
+            "A badge for a renamed workflow renders the word 'invalid' at the top "
+            "of the README and nothing in the suite would notice."
+        ),
+        path="../README.md",
+        old="/actions/workflows/ci.yml/badge.svg?branch=main",
+        new="/actions/workflows/build.yml/badge.svg?branch=main",
+        tests="tests/test_documentation.py",
+    ),
+    Mutation(
+        name="chart-defaults-to-an-unpublished-image",
+        why=(
+            "The chart defaulted image.repository to a ghcr.io path no workflow "
+            "publishes, so an install with its own defaults rendered cleanly and "
+            "sat in ImagePullBackOff. Every path in the repo sets its own image, "
+            "so the default was the one configuration nothing exercised."
+        ),
+        path="../deploy/helm/k8s-agent/values.yaml",
+        old='  repository: ""\n  tag: ""',
+        new='  repository: ghcr.io/ravisinghrajput95/k8s-agent-backend\n  tag: ""',
+        tests="tests/test_helm_chart.py",
+    ),
+    Mutation(
         name="webhook-timestamp-nan-never-expires",
         why=(
             "float() accepts 'nan' and every comparison with NaN is false, so a "

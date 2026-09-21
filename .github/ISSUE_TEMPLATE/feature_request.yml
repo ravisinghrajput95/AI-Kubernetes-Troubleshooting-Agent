@@ -1,0 +1,29 @@
+name: Feature or change request
+description: Something it should do, or should do differently
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `docs/PRODUCTION_READINESS.md` is the backlog with severity and effort,
+        and `README.md` has a *Known limitations* section — both are kept
+        current, so the thing you want may already be there with a reason
+        attached.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem, as it appears during an incident
+      description: What you were trying to find out, and where the platform left you.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would have it do
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: How anyone would know it worked
+      description: This repository holds features to a check that can fail — a test through the seam, a measurement, or a run against a real cluster. What would yours be?

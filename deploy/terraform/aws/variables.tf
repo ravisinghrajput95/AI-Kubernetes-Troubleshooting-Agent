@@ -82,9 +82,15 @@ variable "replica_count" {
   default = 2
 }
 
+variable "image_repository" {
+  description = "The backend image you built and pushed; none is published."
+  type        = string
+}
+
 variable "image_tag" {
-  type    = string
-  default = ""
+  description = "Empty uses the chart's appVersion."
+  type        = string
+  default     = ""
 }
 
 variable "openai_api_key_secret_name" {

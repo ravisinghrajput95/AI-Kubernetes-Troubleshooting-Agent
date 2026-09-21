@@ -8,6 +8,27 @@ an apply-able manifest.
 helm install k8s-agent deploy/helm/k8s-agent -f my-values.yaml
 ```
 
+## It needs an image you built
+
+**No backend image is published**, so `image.repository` is required and the
+chart refuses to render without it:
+
+```bash
+docker build -t <registry>/k8s-agent-backend:0.3.1 backend
+docker push <registry>/k8s-agent-backend:0.3.1
+helm install k8s-agent deploy/helm/k8s-agent \
+    --set image.repository=<registry>/k8s-agent-backend -f my-values.yaml
+```
+
+`image.tag` follows the chart's `appVersion` when unset. The *agent* is
+different: it is published, and the enrolment manifest already names
+`ghcr.io/ravisinghrajput95/k8s-ops-agent`.
+
+This value used to default to that same account's `k8s-agent-backend`, which
+nothing publishes — so a default install rendered cleanly and then sat in
+ImagePullBackOff. Every path in this repository sets its own image, so the
+default was the one configuration never exercised.
+
 ## Two things this chart deliberately does not do
 
 **It does not bundle Postgres or Redis.** A subchart database is a database

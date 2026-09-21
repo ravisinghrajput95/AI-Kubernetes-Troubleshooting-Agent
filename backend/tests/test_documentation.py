@@ -61,6 +61,43 @@ def test_every_image_the_readme_shows_is_in_the_repository():
     assert not missing, f"the README shows images that do not exist: {missing}"
 
 
+def test_the_readme_and_the_guide_agree_on_what_ci_asserts():
+    """Both quote the integration job's assertion count, and they drifted: the
+    README said 49 (what the job prints) while CLAUDE.md said 32 for several
+    milestones. A number in two documents is one that will disagree with itself
+    unless something compares them."""
+    guide = (ROOT / "CLAUDE.md").read_text()
+    readme = README.read_text()
+    pattern = r"(?:asserts|makes)\s+(\d+)\s*\n?\s*(?:properties|assertions)"
+
+    in_readme = set(re.findall(pattern, readme))
+    in_guide = set(re.findall(pattern, guide))
+    assert in_readme and in_guide, "both documents should quote the count"
+    assert in_readme == in_guide, (
+        f"README says {sorted(in_readme)} assertions, CLAUDE.md says {sorted(in_guide)}"
+    )
+
+
+def test_every_status_badge_names_something_that_exists():
+    """A badge for a renamed workflow renders the word "invalid" and nothing in
+    the suite would notice — the README's front door reading as broken.
+
+    Only the workflow badge is checkable offline; the release and licence
+    badges are shields.io reading the GitHub API, and a network call does not
+    belong in this suite.
+    """
+    text = README.read_text()
+    workflows = set(re.findall(r"/actions/workflows/([A-Za-z0-9_.-]+)/badge\.svg", text))
+    assert workflows, (
+        "the README shows no CI badge — this test is checking nothing. It was "
+        "added with one; if it was deliberately removed, remove this too."
+    )
+    missing = sorted(
+        name for name in workflows if not (ROOT / ".github/workflows" / name).is_file()
+    )
+    assert not missing, f"status badges name workflows that do not exist: {missing}"
+
+
 def test_the_readme_quotes_the_corpus_as_it_is():
     """ "11 grounding cases" outlived two added cases, and "The agent path does
     not have this problem" outlived the fix that moved the problem to the agent

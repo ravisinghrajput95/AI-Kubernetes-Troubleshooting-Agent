@@ -200,6 +200,7 @@ module "release" {
     tenancy_mode               = var.tenancy_mode
     rbac_default_role          = var.rbac_default_role
     replica_count              = var.replica_count
+    image_repository           = var.image_repository
     image_tag                  = var.image_tag
     openai_api_key_secret_name = var.openai_api_key_secret_name
     hostname                   = var.hostname

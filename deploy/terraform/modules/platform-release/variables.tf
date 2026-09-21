@@ -76,7 +76,7 @@ variable "platform" {
     tenancy_mode               = optional(string, "single")
     rbac_default_role          = optional(string, "viewer")
     replica_count              = optional(number, 2)
-    image_repository           = optional(string, "ghcr.io/ravisinghrajput95/k8s-agent-backend")
+    image_repository           = optional(string, "")
     image_tag                  = optional(string, "")
     openai_api_key_secret_name = optional(string, "")
     hostname                   = optional(string, "")
@@ -90,4 +90,12 @@ variable "platform" {
       service_annotations = optional(map(string), {})
     }), {})
   })
+  # No backend image is published, so there is nothing to default to — and the
+  # default that used to sit here named an unpublished repository, which renders
+  # and then ImagePullBackOffs.
+  validation {
+    condition     = length(trimspace(var.platform.image_repository)) > 0
+    error_message = "platform.image_repository is required: build backend/Dockerfile and push it to a registry the cluster can pull from."
+  }
+
 }

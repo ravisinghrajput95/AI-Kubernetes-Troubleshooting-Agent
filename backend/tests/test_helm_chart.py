@@ -31,6 +31,9 @@ if shutil.which("helm") is None:
     pytest.skip("helm is not installed", allow_module_level=True)
 
 
+IMAGE = "registry.example.test/k8s-agent-backend"
+
+
 def render(*overrides: str) -> list[dict]:
     result = subprocess.run(
         [
@@ -44,6 +47,9 @@ def render(*overrides: str) -> list[dict]:
             "auth.tokensSecret.name=tokens",
             "--set",
             "replicaCount=1",
+            # Required, like every other caller: no backend image is published.
+            "--set",
+            f"image.repository={IMAGE}",
             *[item for value in overrides for item in ("--set", value)],
         ],
         capture_output=True,
@@ -55,6 +61,50 @@ def render(*overrides: str) -> list[dict]:
 
 def configmap(*overrides: str) -> dict[str, str]:
     return next(item for item in render(*overrides) if item["kind"] == "ConfigMap")["data"]
+
+
+def test_the_chart_refuses_to_render_without_an_image():
+    """There is no published backend image, so there is nothing to default to.
+
+    It defaulted to an unpublished `ghcr.io` path: the chart rendered cleanly
+    and the pods sat in ImagePullBackOff, which is the failure this chart's
+    other refusals exist to convert into a message at install time. Nothing in
+    this repository exercised it, because every path here — the verify values,
+    both Terraform roots, this file — sets its own image.
+    """
+    result = subprocess.run(
+        [
+            "helm",
+            "template",
+            "t",
+            str(CHART),
+            "--set",
+            "auth.mode=token",
+            "--set",
+            "auth.tokensSecret.name=tokens",
+            "--set",
+            "replicaCount=1",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0, "the chart rendered with no image to pull"
+    assert "image.repository" in result.stderr, (
+        f"the refusal must name the value to set; got {result.stderr[:200]!r}"
+    )
+
+
+def test_the_image_given_is_the_image_deployed():
+    """The control: with a repository the chart renders, and the tag follows
+    appVersion — so this cannot be satisfied by a chart that refuses everything.
+    """
+    chart = yaml.safe_load((CHART / "Chart.yaml").read_text())
+    deployment = next(item for item in render() if item["kind"] == "Deployment")
+    containers = deployment["spec"]["template"]["spec"]["containers"]
+
+    assert [c["image"] for c in containers] == [f"{IMAGE}:{chart['appVersion']}"]
 
 
 @pytest.mark.parametrize(
