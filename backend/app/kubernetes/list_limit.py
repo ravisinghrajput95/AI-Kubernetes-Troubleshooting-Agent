@@ -28,11 +28,18 @@ implementations of one rule drift — the same argument that made the history
 index call the renderer's derivations instead of repeating them, and that
 `tests/test_metrics_parity.py` exists to enforce for `kubectl top`.
 
-**What it bounds is the payload, not the spike.** Both callers cap a document
-that has already been built in full — `json.loads` on the kubeconfig path, the
-decoded protobuf payload on the agent path — which is exactly what
-`docs/PRODUCTION_READINESS.md` records about F5's remaining half. Capping here
-does not change that, and is not claimed to.
+**What it bounds is what is kept, and neither caller now builds the document
+first.** It used to: `json.loads` on the kubeconfig path and the decoded
+protobuf payload on the agent path, so the cap trimmed a list that had already
+been expanded in full. Both paths stream through
+`app/kubernetes/json_stream.read_capped_list` now — the executor since F5, the
+agent provider since the measurement in `docs/PERFORMANCE_ENVELOPE.md` (128.4
+MB at 25,000 pods, flat 12.2 MB after).
+
+This function survives for the reads that are *not* streamed — a payload
+already in hand — and to keep one statement of the rule. `_truncation` in
+`app/providers/remote_agent.py` emits the identical record from the streamed
+count, because two shapes of the same evidence gap would eventually disagree.
 """
 
 from typing import Any

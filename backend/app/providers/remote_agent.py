@@ -12,6 +12,7 @@ the agent already knows how to collect, and there is no field in which anything
 else can be smuggled. An agent that does not recognise a kind refuses it.
 """
 
+import io
 from collections.abc import Sequence
 from typing import Any
 
@@ -19,7 +20,7 @@ from loguru import logger
 
 from app.core.config import settings
 from app.gateway.session import AgentSession
-from app.kubernetes.list_limit import cap_items
+from app.kubernetes.json_stream import JsonStreamError, read_capped_list
 from app.providers.base import (
     OutputFormat,
     ProviderResult,
@@ -27,6 +28,7 @@ from app.providers.base import (
     ReadVerb,
     ResourceRequest,
 )
+from app.wire.codec import WireDecodeError
 from app.wire.gen.agent.v1 import collection_pb2, evidence_pb2
 
 # `ResourceRequest` → the kind of evidence an agent is asked for.
@@ -178,6 +180,34 @@ def spec_for(request: ResourceRequest) -> collection_pb2.EvidenceSpec:
     return collection_pb2.EvidenceSpec(kind=kind, target=target, parameters=parameters)
 
 
+def _decode_streaming(payload: bytes, limit: int) -> tuple[Any, int]:
+    """Decode an agent payload with the executor's reader; keep at most `limit`.
+
+    Returns the document and how many items the cluster returned, which is what
+    a truncation record has to quote — the number *kept* is the cap, and saying
+    a read returned 2,000 of 2,000 would hide the gap it is there to record.
+
+    `limit <= 0` keeps everything, matching `cap_items`. A payload that is not a
+    JSON document at all raises, exactly as it did through `decode_payload`:
+    inventing a plausible record to paper over a protocol bug is what the
+    evidence spine exists to prevent.
+    """
+    if not payload:
+        return None, 0
+    stream = io.TextIOWrapper(io.BytesIO(payload), encoding="utf-8")
+    try:
+        return read_capped_list(stream, limit)
+    except JsonStreamError as error:
+        raise WireDecodeError(f"Evidence payload is not valid JSON: {error}") from error
+
+
+def _truncation(command: str, returned: int, limit: int) -> dict[str, Any] | None:
+    """The record `cap_items` used to build, in the shape both providers emit."""
+    if limit <= 0 or returned <= limit:
+        return None
+    return {"command": command, "returned": returned, "retained": limit}
+
+
 class RemoteAgentProvider:
     """A `ClusterProvider` served by an agent inside the cluster."""
 
@@ -290,7 +320,6 @@ class RemoteAgentProvider:
         record: evidence_pb2.EvidenceRecord,
         request: ResourceRequest | None = None,
     ) -> ProviderResult:
-        from app.wire.codec import decode_payload
 
         command = record.equivalent_command if record.HasField("equivalent_command") else ""
         if command:
@@ -303,7 +332,26 @@ class RemoteAgentProvider:
                 equivalent_command=command,
             )
 
-        payload = decode_payload(record.payload)
+        # **Decoded as it is read, and capped while reading.** `decode_payload`
+        # built the whole document first and `cap_items` dropped items after —
+        # so the cap bounded what was *kept* and never what was *held*, and the
+        # agent path allocated in proportion to the cluster. Measured on one
+        # pod list, peak allocation for the decode: 25.7 MB at 5,000 pods,
+        # 51.3 MB at 10,000, 128.4 MB at 25,000, against a flat 12.4 MB for the
+        # kubeconfig path, which has streamed since F5 — 10.4x at 25,000, on the
+        # transport the platform is built around. README recorded it as
+        # unmeasured; this is the measurement and the fix.
+        #
+        # The reader is the executor's, so there is one decoder and one set of
+        # edge cases — a value that parses is not necessarily finished, and that
+        # fuzz-tested rule now covers both providers rather than one.
+        #
+        # The limit is applied **only to a list read**, which is F25's parity
+        # rule: `kubectl top` is text through a kubeconfig and a metrics list
+        # through an agent, so capping it on shape alone truncated one provider
+        # and not the other. A non-list read streams with no cap.
+        limit = settings.max_list_items if request is not None and request.is_list else 0
+        payload, returned = _decode_streaming(record.payload, limit)
         text = ""
         data: Any = payload
         if isinstance(payload, dict) and "text" in payload and len(payload) == 1:
@@ -333,7 +381,7 @@ class RemoteAgentProvider:
             # records against the kubeconfig path's four. `is_list` is the
             # counterpart of the executor's `_is_list_read`, so both providers
             # bound exactly the same set of reads.
-            data, truncation, _total = cap_items(data, command, settings.max_list_items)
+            truncation = _truncation(command, returned, limit)
             if truncation is not None:
                 logger.warning(
                     "Capping an agent list response at {limit} of {total} items: {command}",

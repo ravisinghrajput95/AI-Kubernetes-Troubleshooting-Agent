@@ -672,11 +672,13 @@ MUTATIONS = [
             "returned 3 pods and four truncation records, the agent returned 10 "
             "and none. The same cluster read two ways disagreed about how many "
             "pods it has, and the transport real fleets use was the unbounded "
-            "one. This removes the cap from the agent path again."
+            "one. This removes the cap from the agent path again — re-anchored "
+            "when that path moved to the streaming reader, where the cap is the "
+            "limit handed to it."
         ),
         path="app/providers/remote_agent.py",
-        old="            data, truncation, _total = cap_items(data, command, settings.max_list_items)",
-        new="            truncation = None",
+        old="        limit = settings.max_list_items if request is not None and request.is_list else 0",
+        new="        limit = 0",
         tests="tests/test_list_limit_parity.py",
     ),
     Mutation(
@@ -1939,6 +1941,22 @@ MUTATIONS = [
         old="/actions/workflows/ci.yml/badge.svg?branch=main",
         new="/actions/workflows/build.yml/badge.svg?branch=main",
         tests="tests/test_documentation.py",
+    ),
+    Mutation(
+        name="agent-payload-is-built-whole-then-trimmed",
+        why=(
+            "The agent path decoded the whole list and capped after, so "
+            "MAX_LIST_ITEMS bounded what was kept and never what was held: "
+            "128.4 MB peak at 25,000 pods against a flat 12.4 MB on the "
+            "kubeconfig path, which has streamed since F5."
+        ),
+        path="app/providers/remote_agent.py",
+        old="    payload, returned = _decode_streaming(record.payload, limit)",
+        new="    from app.wire.codec import decode_payload\n"
+        "        payload = decode_payload(record.payload)\n"
+        "        returned = len(payload.get('items', [])) if isinstance(payload, dict) else 0\n"
+        "        payload, _drop, _t = cap_items(payload, command, limit)",
+        tests="tests/test_agent_payload_memory.py",
     ),
     Mutation(
         name="chart-defaults-to-an-image-nobody-publishes",

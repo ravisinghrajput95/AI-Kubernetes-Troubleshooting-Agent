@@ -273,6 +273,39 @@ worth removing is the one with no ceiling; a constant 2.4 MB at the cap is not.
 list is read rather than after it. Investigating a namespace rather than a
 cluster remains the larger lever.
 
+#### The same read through an agent
+
+The streaming reader was the kubeconfig path's, and the agent path still built
+the whole document (`decode_payload`) and dropped items after (`cap_items`) —
+so `MAX_LIST_ITEMS` bounded what that path *kept* and never what it *held*, on
+the transport the platform is built around. This document recorded it as
+unmeasured for four milestones. Peak allocation for the decode of one pod
+list, `tracemalloc`, cap 2,000:
+
+| pods | wire bytes | agent, before | agent, now | kubeconfig |
+|---|---|---|---|---|
+| 500 | 0.4 MB | 2.6 MB | 3.0 MB | 3.2 MB |
+| 2,000 | 1.8 MB | 10.3 MB | 12.0 MB | 12.2 MB |
+| 5,000 | 4.4 MB | 25.7 MB | **12.2 MB** | 12.4 MB |
+| 10,000 | 8.8 MB | 51.3 MB | **12.2 MB** | 12.4 MB |
+| 25,000 | 21.9 MB | **128.4 MB** | **12.2 MB** | 12.4 MB |
+
+Both providers now use the same reader, so both are flat past the cap and the
+same trade applies at or below it — about 15% more at 2,000 pods, for the same
+reason per-element decoding costs more than one `json.loads`.
+
+**It bounds the decode, not the transport.** The payload still arrives whole in
+one protobuf message — 21.9 MB of JSON at 25,000 pods — so a worker holds those
+bytes either way. What is gone is the decoded expansion of every item past the
+cap, which was the term that grew with the cluster. Bounding the message itself
+needs a streaming `Collect`, which is a wire change and is not built.
+
+**These numbers are `tracemalloc` on the decode**, not process RSS, so they are
+not comparable with the 8.4 MB above — that is the executor measured end to end
+through a real subprocess. The comparable pair is the two right-hand columns,
+measured the same way in the same run
+(`backend/tests/test_agent_payload_memory.py` holds the property).
+
 ### Routing
 
 ```bash

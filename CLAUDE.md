@@ -823,6 +823,20 @@ deadlocks. `text` on a JSON read is now the capped document rather than
 kubectl's full output, which is what the collection cache re-parses, so the two
 can never disagree about what the read returned.
 
+**Both providers stream now, and the agent path was the one left.** It decoded
+the whole payload (`decode_payload`) and capped after (`cap_items`), so the
+ceiling bounded what it kept and never what it held: **128.4 MB peak decode at
+25,000 pods against a flat 12.4 MB through a kubeconfig**, 10.4x, on the
+transport built for real fleets — and `README.md` carried it as *unmeasured*
+for four milestones. `RemoteAgentProvider` now reads the payload through the
+same `read_capped_list`, flat at 12.2 MB from 5,000 pods to 25,000. The cap is
+applied **only when `request.is_list`**, which is F25's parity rule — capping on
+shape alone truncates `kubectl top` on one provider and not the other. What it
+does not bound is the *message*: one protobuf payload still carries 21.9 MB at
+25,000 pods, and bounding that needs a streaming `Collect`. The test measures
+through `_to_result` rather than the helper, because a mutation of the call site
+survives a test that calls the helper — watched to survive, then fixed.
+
 **The trade is real and is stated rather than buried**: at or below the cap
 streaming costs about 40% more (8.3 MB against 5.9 MB at 2,000 pods), because
 decoding 2,000 elements individually costs 8.51 MB where one `json.loads` of
@@ -2299,7 +2313,7 @@ It is also the discipline that decays first: a passing suite feels like
 evidence, and a mutation not run leaves no trace.
 
 ```bash
-python scripts/mutation_check.py                   # 152 mutations
+python scripts/mutation_check.py                   # 153 mutations
 python scripts/mutation_check.py --suite frontend  # the console's, under vitest
 python scripts/mutation_check.py --suite terraform # `terraform test`, its own CI job
 python scripts/mutation_check.py --list

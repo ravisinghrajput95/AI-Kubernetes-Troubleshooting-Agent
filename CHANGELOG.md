@@ -8,6 +8,19 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
+## [Unreleased]
+
+### Fixed
+
+- **A list read through an agent decoded every item before the cap dropped
+  any**, so `MAX_LIST_ITEMS` bounded what that path kept and never what it
+  held — on the transport the platform is built around, while the kubeconfig
+  path had streamed since F5. Peak decode at 25,000 pods: **128.4 MB → 12.2
+  MB**, flat past the cap, matching the kubeconfig path's 12.4 MB measured the
+  same way. Both providers use the same fuzz-tested reader now. The payload
+  still *arrives* whole (21.9 MB at that size), which is a wire change, not
+  this one; `README.md` says so.
+
 ## [0.3.2] — 2026-09-21
 
 A presentation and supply-chain release: the platform image is published, so
