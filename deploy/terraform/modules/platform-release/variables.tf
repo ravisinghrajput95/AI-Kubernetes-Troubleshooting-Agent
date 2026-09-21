@@ -76,7 +76,7 @@ variable "platform" {
     tenancy_mode               = optional(string, "single")
     rbac_default_role          = optional(string, "viewer")
     replica_count              = optional(number, 2)
-    image_repository           = optional(string, "")
+    image_repository           = optional(string, "ghcr.io/ravisinghrajput95/k8s-agent-backend")
     image_tag                  = optional(string, "")
     openai_api_key_secret_name = optional(string, "")
     hostname                   = optional(string, "")

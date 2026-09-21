@@ -1941,16 +1941,18 @@ MUTATIONS = [
         tests="tests/test_documentation.py",
     ),
     Mutation(
-        name="chart-defaults-to-an-unpublished-image",
+        name="chart-defaults-to-an-image-nobody-publishes",
         why=(
             "The chart defaulted image.repository to a ghcr.io path no workflow "
-            "publishes, so an install with its own defaults rendered cleanly and "
+            "published, so an install with its own defaults rendered cleanly and "
             "sat in ImagePullBackOff. Every path in the repo sets its own image, "
-            "so the default was the one configuration nothing exercised."
+            "so the default was the one configuration nothing exercised. The "
+            "test now holds the default against the image backend-image.yml "
+            "publishes."
         ),
         path="../deploy/helm/k8s-agent/values.yaml",
-        old='  repository: ""\n  tag: ""',
-        new='  repository: ghcr.io/ravisinghrajput95/k8s-agent-backend\n  tag: ""',
+        old="  repository: ghcr.io/ravisinghrajput95/k8s-agent-backend",
+        new="  repository: ghcr.io/ravisinghrajput95/k8s-agent-platform",
         tests="tests/test_helm_chart.py",
     ),
     Mutation(

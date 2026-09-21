@@ -83,8 +83,9 @@ variable "replica_count" {
 }
 
 variable "image_repository" {
-  description = "The backend image you built and pushed; none is published."
+  description = "The backend image. Defaults to the published one."
   type        = string
+  default     = "ghcr.io/ravisinghrajput95/k8s-agent-backend"
 }
 
 variable "image_tag" {

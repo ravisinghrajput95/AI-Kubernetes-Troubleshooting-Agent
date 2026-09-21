@@ -8,7 +8,12 @@ Entries record *why* a change was made and, where it matters, what it cost —
 which is the same standard the rest of this repository's documentation is held
 to. A change that fixed a defect names the defect.
 
-## [Unreleased]
+## [0.3.2] — 2026-09-21
+
+A presentation and supply-chain release: the platform image is published, so
+the Helm chart can be installed without building one first. It also carries the
+grounding-metric fix and the first SLO measurement.
+
 
 ### Fixed
 
@@ -26,17 +31,26 @@ to. A change that fixed a defect names the defect.
 
 ### Changed
 
-- **The Helm chart requires `image.repository` and refuses to render without
-  it.** It defaulted to `ghcr.io/…/k8s-agent-backend`, which no workflow
-  publishes and which anonymous pulls answer 403 — so an install with the
-  chart's own defaults rendered cleanly and sat in ImagePullBackOff. No working
-  deployment changes: that default could never have pulled. The Terraform
-  modules require it for the same reason, and the AWS root now passes one
-  rather than inheriting the unpublished default. Build `backend/Dockerfile`
-  and push it somewhere your cluster can read.
+- **The chart's default image is published now, so `helm install` can pull it.**
+  `image.repository` named `ghcr.io/…/k8s-agent-backend` for several milestones
+  while **no workflow published it** and anonymous pulls answered 403: the chart
+  rendered cleanly and the pods sat in ImagePullBackOff. Nothing here noticed,
+  because every path in this repository — the kind verification, both Terraform
+  roots, the chart tests — sets its own image, so the default was the one
+  configuration never exercised. A test now holds the default against the image
+  the workflow publishes, and an emptied value is still refused at render time.
+  The AWS Terraform root passed no image at all and inherited that default; it
+  passes one now.
 
 ### Added
 
+- **The platform image is published**:
+  `ghcr.io/ravisinghrajput95/k8s-agent-backend`, multi-arch (amd64 and arm64),
+  by `.github/workflows/backend-image.yml` — a mirror of the agent's workflow,
+  with the same triggers, tag set and provenance attestation, gated on the
+  backend's own lint and tests. `edge` from `main`, semver tags and `latest`
+  from a release. The two images are the two halves of a deployment and now
+  have one publishing story.
 - **The SLOs have been measured, once and briefly**: 19 minutes on one Mac
   against one kind cluster, 360 investigations — success, latency, submission
   availability, completeness, fleet visibility and queue depth all met;

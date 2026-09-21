@@ -8,26 +8,26 @@ an apply-able manifest.
 helm install k8s-agent deploy/helm/k8s-agent -f my-values.yaml
 ```
 
-## It needs an image you built
+## The image it deploys
 
-**No backend image is published**, so `image.repository` is required and the
-chart refuses to render without it:
+`image.repository` defaults to `ghcr.io/ravisinghrajput95/k8s-agent-backend`,
+published multi-arch by `.github/workflows/backend-image.yml`, and `image.tag`
+follows the chart's `appVersion` — so a given chart version pulls the image
+that version published. The *agent* image is published the same way, and the
+enrolment manifest names it.
+
+To run your own build instead, point the value at it:
 
 ```bash
 docker build -t <registry>/k8s-agent-backend:0.3.1 backend
 docker push <registry>/k8s-agent-backend:0.3.1
-helm install k8s-agent deploy/helm/k8s-agent \
-    --set image.repository=<registry>/k8s-agent-backend -f my-values.yaml
+helm install k8s-agent deploy/helm/k8s-agent --set image.repository=<registry>/k8s-agent-backend -f my-values.yaml
 ```
 
-`image.tag` follows the chart's `appVersion` when unset. The *agent* is
-different: it is published, and the enrolment manifest already names
-`ghcr.io/ravisinghrajput95/k8s-ops-agent`.
-
-This value used to default to that same account's `k8s-agent-backend`, which
-nothing publishes — so a default install rendered cleanly and then sat in
-ImagePullBackOff. Every path in this repository sets its own image, so the
-default was the one configuration never exercised.
+That default named the same path for several milestones while **nothing
+published it**: a default install rendered cleanly and then sat in
+ImagePullBackOff, and no path in this repository noticed, because every one of
+them sets its own image. Emptying the value is refused at render time.
 
 ## Two things this chart deliberately does not do
 

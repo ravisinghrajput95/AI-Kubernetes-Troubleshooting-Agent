@@ -21,7 +21,8 @@ import yaml
 
 from app.core.config import Settings
 
-CHART = Path(__file__).resolve().parents[2] / "deploy" / "helm" / "k8s-agent"
+ROOT = Path(__file__).resolve().parents[2]
+CHART = ROOT / "deploy" / "helm" / "k8s-agent"
 
 if shutil.which("helm") is None:
     if os.environ.get("CI"):
@@ -63,14 +64,14 @@ def configmap(*overrides: str) -> dict[str, str]:
     return next(item for item in render(*overrides) if item["kind"] == "ConfigMap")["data"]
 
 
-def test_the_chart_refuses_to_render_without_an_image():
-    """There is no published backend image, so there is nothing to default to.
+def test_the_chart_refuses_an_empty_image():
+    """The default is published now, so this refuses an *emptied* value.
 
-    It defaulted to an unpublished `ghcr.io` path: the chart rendered cleanly
-    and the pods sat in ImagePullBackOff, which is the failure this chart's
-    other refusals exist to convert into a message at install time. Nothing in
-    this repository exercised it, because every path here — the verify values,
-    both Terraform roots, this file — sets its own image.
+    It is kept because the shape it refuses shipped: the default named an
+    unpublished `ghcr.io` path for several milestones, so the chart rendered
+    cleanly and the pods sat in ImagePullBackOff. Nothing here noticed, because
+    every path in this repository — the verify values, both Terraform roots,
+    this file — sets its own image.
     """
     result = subprocess.run(
         [
@@ -84,6 +85,8 @@ def test_the_chart_refuses_to_render_without_an_image():
             "auth.tokensSecret.name=tokens",
             "--set",
             "replicaCount=1",
+            "--set",
+            "image.repository=",
         ],
         capture_output=True,
         text=True,
@@ -96,10 +99,27 @@ def test_the_chart_refuses_to_render_without_an_image():
     )
 
 
+def test_the_default_image_is_the_one_ci_publishes():
+    """The chart's default and the workflow that publishes it must name the
+    same image, or the default is a path nobody pushes to — which is exactly
+    what shipped, for several milestones, with no published image at all."""
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "backend-image.yml").read_text())
+    published = workflow["env"]["IMAGE"].split("/")[-1]
+    values = yaml.safe_load((CHART / "values.yaml").read_text())
+    default = values["image"]["repository"]
+
+    assert default.endswith(f"/{published}"), (
+        f"the chart defaults to {default!r}, which is not the {published!r} image "
+        f"backend-image.yml publishes"
+    )
+    assert default.startswith(f"{workflow['env']['REGISTRY']}/"), (
+        f"the chart defaults to {default!r}, not the registry the workflow pushes to"
+    )
+
+
 def test_the_image_given_is_the_image_deployed():
-    """The control: with a repository the chart renders, and the tag follows
-    appVersion — so this cannot be satisfied by a chart that refuses everything.
-    """
+    """With a repository the chart renders, and the tag follows appVersion — so
+    a chart version pulls the image that version published."""
     chart = yaml.safe_load((CHART / "Chart.yaml").read_text())
     deployment = next(item for item in render() if item["kind"] == "Deployment")
     containers = deployment["spec"]["template"]["spec"]["containers"]

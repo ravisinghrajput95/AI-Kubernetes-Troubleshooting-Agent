@@ -17,12 +17,13 @@
 replicaCount: 2
 
 image:
-  # Required: no backend image is published, so there is nothing to default to.
-  # A default pointing at an unpublished registry path renders fine and then
-  # ImagePullBackOffs, which is the failure this chart exists to convert into a
-  # message at install time. Build backend/Dockerfile and push it somewhere your
-  # cluster can pull from.
-  repository: ""
+  # Published by .github/workflows/backend-image.yml, multi-arch, and the tag
+  # below follows the chart's appVersion — so a release of this chart names an
+  # image that release published. This default pointed at the same path for
+  # several milestones while *nothing* published it: the chart rendered cleanly
+  # and the pods sat in ImagePullBackOff. Override it with your own build and
+  # registry if you would rather not pull from ghcr.io.
+  repository: ghcr.io/ravisinghrajput95/k8s-agent-backend
   tag: ""            # defaults to .Chart.AppVersion
   pullPolicy: IfNotPresent
 imagePullSecrets: []

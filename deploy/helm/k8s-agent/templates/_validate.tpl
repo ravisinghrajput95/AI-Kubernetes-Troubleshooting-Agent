@@ -17,17 +17,16 @@ same mistake with a longer reach.
 {{- define "k8s-agent.validate" -}}
 
 {{/*
-There is no published backend image, so there is no default that could work.
-This shipped as `ghcr.io/<the author>/k8s-agent-backend`, which no workflow
-publishes and which anonymous pulls answer 403 — so an install with the chart's
-own defaults reached ImagePullBackOff, one of the least legible failures
-Kubernetes has, having rendered perfectly. CI never caught it because every
-in-repo path (deploy/verify/values.yaml, the Terraform roots) sets a locally
-built image instead, so the default was the one configuration nothing exercised.
-Build and push `backend/Dockerfile` to a registry your cluster can read.
+An image is published now, so this catches an *emptied* value rather than a
+missing default — and it is kept because the shape it refuses actually shipped:
+the default named `ghcr.io/<the author>/k8s-agent-backend` for several
+milestones while no workflow published it, anonymous pulls answered 403, and an
+install with the chart's own defaults rendered perfectly and then sat in
+ImagePullBackOff. Nothing here noticed, because every path in this repository
+sets its own image.
 */}}
 {{- if not .Values.image.repository -}}
-{{- fail "image.repository is not set and this chart has no image to default to: no backend image is published. Build backend/Dockerfile, push it to a registry your cluster can pull from, and set image.repository (with image.tag, which otherwise follows the chart's appVersion)." -}}
+{{- fail "image.repository is empty. Leave it at the chart's default to pull the published image, or set it to your own build in a registry the cluster can read (image.tag otherwise follows the chart's appVersion)." -}}
 {{- end -}}
 
 {{- $mode := .Values.auth.mode -}}

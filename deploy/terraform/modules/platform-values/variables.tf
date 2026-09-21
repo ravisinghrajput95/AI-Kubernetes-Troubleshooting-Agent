@@ -89,11 +89,13 @@ variable "replica_count" {
 
 variable "image_repository" {
   description = <<-EOT
-    The backend image, which you build and push: none is published. This
-    defaulted to an unpublished ghcr.io path, so a deployment that named no
-    image rendered cleanly and then sat in ImagePullBackOff.
+    The backend image. The default is the published one; override it with your
+    own build. This named the same path while nothing published it, so a
+    deployment that set no image rendered cleanly and then sat in
+    ImagePullBackOff — hence the validation below, which refuses an empty one.
   EOT
   type        = string
+  default     = "ghcr.io/ravisinghrajput95/k8s-agent-backend"
 
   validation {
     condition     = length(trimspace(var.image_repository)) > 0

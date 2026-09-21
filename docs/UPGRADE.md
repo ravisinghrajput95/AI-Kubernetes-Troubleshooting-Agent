@@ -140,6 +140,18 @@ whose rows have moved on. Empty is correct.
 These change what the platform *does* without any configuration changing. They
 are the ones that surprise people.
 
+### Upgrading into v0.3.2 (a published platform image)
+
+Nothing has to change. What is new is that `helm install` no longer needs an
+image built by hand: `image.repository` defaults to
+`ghcr.io/ravisinghrajput95/k8s-agent-backend` and `image.tag` follows the
+chart's `appVersion`, so chart 0.3.2 pulls the 0.3.2 image this release
+published. Keep your own build by setting `image.repository`, exactly as
+before — the value is unchanged in shape, only its default now resolves.
+
+If you deploy through the Terraform modules, the same default applies and the
+AWS root passes it rather than inheriting it.
+
 ### Upgrading into v0.3.1 (agent dependencies, the console container)
 
 A security release; no configuration has to change.
